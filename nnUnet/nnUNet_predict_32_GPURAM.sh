@@ -20,4 +20,4 @@ source activate nUnet
 nvdia-smi
 #nnUNetv2_predict --verbose -chk checkpoint_final.pth -f all "$@"  #-i INPUT_FOLDER -o OUTPUT_FOLDER -d DATASET_NAME_OR_ID -c CONFIGURATION --save_probabilities
 
-nnUNetv2_predict --verbose -chk checkpoint_latest.pth -f all "$@"  #-i INPUT_FOLDER -o OUTPUT_FOLDER -d DATASET_NAME_OR_ID -c CONFIGURATION --save_probabilities
+nnUNet_n_proc_DA=0 nnUNetv2_predict --verbose -chk checkpoint_latest.pth -f all "$@"  #-i INPUT_FOLDER -o OUTPUT_FOLDER -d DATASET_NAME_OR_ID -c CONFIGURATION --save_probabilities
