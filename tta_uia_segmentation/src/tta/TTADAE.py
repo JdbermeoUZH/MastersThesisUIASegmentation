@@ -179,7 +179,7 @@ class TTADAE:
             # Update Pseudo label, with DAE or Atlas, depending on which has a better agreement
             if step % update_dae_output_every == 0:
                 
-                label_dataloader = self.generate_pseudo_labels(
+                _, _, label_dataloader = self.generate_pseudo_labels(
                     dae_dataloader=dae_dataloader,
                     label_batch_size=label_batch_size,
                     bg_suppression_opts_tta=bg_suppression_opts_tta,
@@ -383,7 +383,7 @@ class TTADAE:
         device: Union[str, torch.device],
         num_workers: int,
         dataset_repetition: int
-    ) -> DataLoader:  
+    ) -> tuple[float, float, DataLoader]:  
         
         masks = []
         for x, _, _, _, bg_mask in dae_dataloader:
@@ -434,14 +434,16 @@ class TTADAE:
         if self.metrics_best['best_score'] < dice:
             self.norm_dict['best_score'] = copy.deepcopy(self.norm.state_dict())
             self.metrics_best['best_score'] = dice
-
-        return DataLoader(
+            
+        pl_dataloader =  DataLoader(
             ConcatDataset([TensorDataset(target_labels.cpu())] * dataset_repetition), 
             batch_size=label_batch_size,
             shuffle=False,
             num_workers=num_workers,
             drop_last=True, 
             )
+        
+        return dice_denoised, dice_atlas, pl_dataloader
         
     def load_state_dict_norm(self, state_dict: dict) -> None:
         self.norm.load_state_dict(state_dict)

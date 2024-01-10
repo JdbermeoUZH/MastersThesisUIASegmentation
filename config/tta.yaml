@@ -76,6 +76,8 @@ dae_and_diffusion:
   dddpm_loss_beta: 1.0
   dae_loss_alpha: 0.5
 
+  use_ddpm_after_step: null # 500
+  use_ddpm_after_dice: null # 0.5
   minibatch_size_ddpm: 2
   frac_vol_diffusion_tta: 0.25
   min_t_diffusion_tta: 0
@@ -92,7 +94,7 @@ dae_and_diffusion:
   update_dae_output_every: 25
   calculate_dice_every: 25  # 25 for brain, 135 for wmh (nuhs, umc, vu)
   alpha: 1.0
-  beta: 0.5 # 0.25
+  beta: 0.25 
   use_atlas_only_for_intit: True
   learning_rate: 0.001
   accumulate_over_volume: False
@@ -100,7 +102,7 @@ dae_and_diffusion:
   const_aug_per_volume: False
   
   bg_suppression_opts:
-    type: fixed_value  # possible values: none, fixed_value, random_value
+    type: none  # possible values: none, fixed_value, random_value
     bg_value: -0.5
     bg_value_min: -0.5
     bg_value_max: 1

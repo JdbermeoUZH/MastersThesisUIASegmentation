@@ -59,6 +59,8 @@ def preprocess_cmd_args() -> argparse.Namespace:
     parser.add_argument('--dddpm_loss_beta', type=float, help='Weight for DDPM loss. Default: 1.0')
     parser.add_argument('--dae_loss_alpha', type=float, help='Weight for DAE loss. Default: 1.0')
     parser.add_argument('--frac_vol_diffusion_tta', type=float, help='Fraction of volume to diffuse. Default: 0.5')
+    parser.add_argument('--use_ddpm_after_step', type=int, help='Use DDPM after x steps. Default: None')
+    parser.add_argument('--use_ddpm_after_dice', type=float, help='Use DDPM after dice is below x. Default: None')
     
     # Seg model params
     parser.add_argument('--seg_dir', type=str, help='Path to directory where segmentation checkpoints are saved')
@@ -303,7 +305,8 @@ if __name__ == '__main__':
     use_x_norm_for_ddpm_loss    = tta_config[tta_mode]['use_x_norm_for_ddpm_loss']
     use_y_pred_for_ddpm_loss    = tta_config[tta_mode]['use_y_pred_for_ddpm_loss']
     use_x_cond_gt               = tta_config[tta_mode]['use_x_cond_gt']
-
+    use_ddpm_after_step         = tta_config[tta_mode]['use_ddpm_after_step']
+    use_ddpm_after_dice         = tta_config[tta_mode]['use_ddpm_after_dice']
     
     tta = TTADAEandDDPM(
         norm                    = norm,
@@ -328,6 +331,8 @@ if __name__ == '__main__':
         use_x_norm_for_ddpm_loss=use_x_norm_for_ddpm_loss,
         use_y_pred_for_ddpm_loss=use_y_pred_for_ddpm_loss,
         use_x_cond_gt           = use_x_cond_gt,
+        use_ddpm_after_step     = use_ddpm_after_step,
+        use_ddpm_after_dice     = use_ddpm_after_dice
     )
     
     # Do TTA with a DAE

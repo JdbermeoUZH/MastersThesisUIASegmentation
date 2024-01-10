@@ -31,6 +31,8 @@ class TTADAEandDDPM(TTADAE):
         use_x_norm_for_ddpm_loss: bool = True,
         use_y_pred_for_ddpm_loss: bool = False,
         use_x_cond_gt: bool = False,    # Of course use only for debugging
+        use_ddpm_after_step: Optional[int] = None,
+        use_ddpm_after_dice: Optional[float] = None,
         **kwargs
         ) -> None:
         
@@ -64,6 +66,16 @@ class TTADAEandDDPM(TTADAE):
         # Setup the custom metrics and steps wandb
         if self.wandb_log:
             self._define_custom_wandb_metrics() 
+            
+        # Set the step at which to use the DDPM
+        assert use_ddpm_after_dice is None or use_ddpm_after_step is None, \
+            'Only one of use_ddpm_after_dice or use_ddpm_after_step can be set'
+
+        self.use_ddpm_after_step = use_ddpm_after_step
+        self.use_ddpm_after_dice = use_ddpm_after_dice
+        
+        # If a flag is not set, use the DDPM at every step
+        self.use_ddpm_loss = use_ddpm_after_dice is None and use_ddpm_after_step is None
     
     def tta(
         self,
@@ -133,6 +145,11 @@ class TTADAEandDDPM(TTADAE):
             volume_dataset.dataset.set_augmentation(False)
             
             step_min, step_max = np.inf, -np.inf
+            
+            if self.use_ddpm_after_step is not None and not self.use_ddpm_loss:      
+                self.use_ddpm_loss = step >= self.use_ddpm_after_step
+                if self.use_ddpm_loss:
+                    print('---------Start using DDPM loss ---------')
     
             # Test performance during adaptation.
             if step % calculate_dice_every == 0 and calculate_dice_every != -1:
@@ -157,7 +174,7 @@ class TTADAEandDDPM(TTADAE):
                 #  if the beta is less than 1.0
 
                 if step == 0 or self.beta <= 1.0:
-                    label_dataloader = self.generate_pseudo_labels(
+                    dice_atlas, dice_dae, label_dataloader = self.generate_pseudo_labels(
                         dae_dataloader=dae_dataloader,
                         label_batch_size=label_batch_size,
                         bg_suppression_opts_tta=bg_suppression_opts_tta,
@@ -166,6 +183,11 @@ class TTADAEandDDPM(TTADAE):
                         num_workers=num_workers,
                         dataset_repetition=dataset_repetition
                     )
+                    
+            if self.use_ddpm_after_dice is not None and not self.use_ddpm_loss:
+                self.use_ddpm_loss = dice_dae >= self.use_ddpm_after_dice
+                if self.use_ddpm_loss:
+                    print('---------Start using DDPM loss ---------')
 
             tta_loss = 0
             step_dae_loss = 0
@@ -212,7 +234,7 @@ class TTADAEandDDPM(TTADAE):
                 n_samples += x.shape[0]
                 
                 # Calculate gradients from the noise estimation loss
-                if b_i in b_i_for_diffusion_loss and self.ddpm_loss_beta > 0:
+                if b_i in b_i_for_diffusion_loss and self.ddpm_loss_beta > 0 and self.use_ddpm_loss:
                     n_samples_diffusion += x.shape[0] 
                     
                     x_norm = self.norm(x)
