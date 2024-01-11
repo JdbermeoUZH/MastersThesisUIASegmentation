@@ -1,0 +1,25 @@
+bias_field_correction:            True
+bias_field_correction_params:
+  max_iterations: [50, 50, 50]
+  shrink_factor: 1
+
+
+resampling:                       True
+resampling_params:
+  new_spacing: [0.3, 0.3, 0.6]
+  order: 3
+  save_resampled: True
+
+
+registration:                     True
+registration_params:
+  path_to_target_image:           '/scratch_net/biwidl319/jbermeo/data/raw/USZ/10745241-MCA-new/10745241-MCA-new_tof.nii.gz'
+  registration_type: 'rigid'
+  save_registered: True
+
+
+skull_stripping:                  True
+skull_stripping_params:
+  save_skull_stripped: True
+
+save_logs: True

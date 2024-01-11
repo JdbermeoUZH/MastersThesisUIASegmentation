@@ -5,6 +5,7 @@ It is used to resample the different TOF-MRA images to the same resolution
 """
 import os
 import tqdm
+from typing import Optional
 from datetime import datetime
 import logging
 import argparse
@@ -16,25 +17,13 @@ import nibabel.processing
 import skimage.transform as ski_trf
 
 
-from utils import (
-    get_USZ_filepaths,
-    get_ADAM_filepaths,
-    get_Laussane_filepaths
-)
+from utils import get_filepaths
 
 
 #---------- paths & hyperparameters
-# hardcode them for now. Later maybe replace them.
-multi_proc                = True
-n_threads                 = 2
-voxel_size                = np.array([0.3, 0.3, 0.6]) # hyper parameters to be set
-save_logs                 = True
-
-path_to_logs              = '/scratch_net/biwidl319/jbermeo/MastersThesisUIASegmentation/logs/preprocessing/resampling'
-path_to_USZ_dataset       = '/scratch_net/biwidl319/jbermeo/data/raw/USZ'
-path_to_ADAM_dataset      = '/scratch_net/biwidl319/jbermeo/data/raw/ADAM'
-path_to_Laussane_tof      = '/scratch_net/biwidl319/jbermeo/data/raw/Lausanne/original_images'
-path_to_Laussane_seg      = '/scratch_net/biwidl319/jbermeo/data/raw/Lausanne/skull_stripped_and_aneurysm_mask'
+voxel_size_default          = np.array([0.3, 0.3, 0.6]) # hyper parameters to be set
+save_logs                   = True
+path_to_logs                = '/scratch_net/biwidl319/jbermeo/MastersThesisUIASegmentation/logs/preprocessing/resampling'
 path_to_save_processed_data = '/scratch_net/biwidl319/jbermeo/data/preprocessed/0_resampled'
 #----------
 
@@ -47,12 +36,23 @@ log = logging.Logger('Resampling')
 
 def preprocess_cmd_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description='Resampling of images')
-    parser.add_argument('--voxel_size', type=float, nargs='+', default=voxel_size)  
-    parser.add_argument('--dataset', type=str, choices=['USZ', 'ADAM', 'Laussane'], default='USZ')
-    parser.add_argument('--multi_proc', action='store_true', default=multi_proc)
-    parser.add_argument('--n_threads', type=int, default=n_threads)
+    parser.add_argument('--voxel_size', type=float, nargs='+', default=voxel_size_default, required=True)
+    parser.add_argument('--order', type=int, default=3)  
+   
+    parser.add_argument('--preprocessed', action='store_true', default=False)
+    parser.add_argument('--path_to_dir', type=str)
+    
+    parser.add_argument('--dataset', type=str, choices=['USZ', 'ADAM', 'Laussane', None])
+    parser.add_argument('--path_to_tof_dir', type=str, required=True)
+    parser.add_argument('--fp_pattern_tof', type=str, nargs='+')
+    parser.add_argument('--path_to_seg_dir', type=str)
+    parser.add_argument('--fp_pattern_seg', type=str, nargs='+')
+    parser.add_argument('--level_of_dir_with_id', type=int, default=-2)
+    parser.add_argument('--not_every_scan_has_seg', action='store_true', default=False)
+    
     parser.add_argument('--path_to_save_processed_data', type=str, default=path_to_save_processed_data)   
-    parser.add_argument('--path_to_logs', type=str, default=path_to_logs)    
+    parser.add_argument('--path_to_logs', type=str, default=path_to_logs)   
+    
     
     return parser.parse_args()
 
@@ -127,14 +127,21 @@ def resample(
     return new_nii_img
 
 
-def resample_image_and_segmentation_mask(output_dir, scans_dict, voxel_size):
-    os.makedirs(output_dir, exist_ok=True)
+def resample_image_and_segmentation_mask(
+    scans_dict: dict[str, dict[str, str]],
+    voxel_size: tuple[float, float, float],
+    save_output: bool = False, 
+    output_dir: Optional[str] = None
+    ):
+    if save_output: os.makedirs(output_dir, exist_ok=True)
     
     # For now let's do it sequentially. Later we can parallelize it
     for img_id, img_dict in tqdm.tqdm(scans_dict.items()):
         log.info(f"Resampling scan {img_id}")
-        img_output_dir = os.path.join(output_dir, img_id)
-        os.makedirs(img_output_dir, exist_ok=True)
+        
+        if save_output:
+            img_output_dir = os.path.join(output_dir, img_id)
+            os.makedirs(img_output_dir, exist_ok=True)
         
         # Load the TOF scan
         tof_scan = nib.load(img_dict['tof'])
@@ -143,7 +150,8 @@ def resample_image_and_segmentation_mask(output_dir, scans_dict, voxel_size):
         resampled_tof_scan = resample(tof_scan, voxel_size)
         
         # Save the resampled TOF scan
-        nib.save(resampled_tof_scan, os.path.join(img_output_dir, f'{img_id}_tof.nii.gz'))
+        if save_output:
+            nib.save(resampled_tof_scan, os.path.join(img_output_dir, f'{img_id}_tof.nii.gz'))
         
         # If the scan has a segmentation mask, resample it
         if 'seg' in img_dict.keys():
@@ -151,7 +159,8 @@ def resample_image_and_segmentation_mask(output_dir, scans_dict, voxel_size):
             resampled_seg_mask = resample(seg_mask, voxel_size, is_segmenation=True)
             
             # Save the resampled segmentation mask
-            nib.save(resampled_seg_mask, os.path.join(img_output_dir, f'{img_id}_seg.nii.gz'))
+            if save_output:
+                nib.save(resampled_seg_mask, os.path.join(img_output_dir, f'{img_id}_seg.nii.gz'))
             
         log.info(f"Scan {img_id} resampled")
 
@@ -161,16 +170,23 @@ if __name__ == '__main__':
     args = preprocess_cmd_args()
     pprint(args)
     
-    # Load dictionary with filepaths of the scans and their respective segmentation masks
-    if args.dataset == 'USZ':
-        scans_dict = get_USZ_filepaths(path_to_USZ_dataset, include_segmentation_masks=True)
-    elif args.dataset == 'ADAM':
-        scans_dict = get_ADAM_filepaths(path_to_ADAM_dataset, include_segmentation_masks=True)
-    elif args.dataset == 'Laussane':
-        scans_dict = get_Laussane_filepaths(path_to_Laussane_tof, path_to_Laussane_seg)
-    else:
-        raise ValueError(f"No function to load filepaths of Dataset {args.dataset} "
-                        "has been implemented")
+    # path_to_USZ_dataset       = '/scratch_net/biwidl319/jbermeo/data/raw/USZ'
+    # path_to_ADAM_dataset      = '/scratch_net/biwidl319/jbermeo/data/raw/ADAM'
+    # path_to_Laussane_tof      = '/scratch_net/biwidl319/jbermeo/data/raw/Lausanne/original_images'
+    # path_to_Laussane_seg      = '/scratch_net/biwidl319/jbermeo/data/raw/Lausanne/skull_stripped_and_aneurysm_mask'
+
+    # Get filepaths of the the dataset
+    scans_dict = get_filepaths(
+        preprocessed=args.preprocessed,
+        path_to_dir=args.path_to_dir,
+        dataset=args.dataset,
+        path_to_tof_dir=args.path_to_tof_dir,
+        fp_pattern_tof=args.fp_pattern_tof,
+        path_to_seg_dir=args.path_to_seg_dir,
+        fp_pattern_seg=args.fp_pattern_seg,
+        level_of_dir_with_id=args.level_of_dir_with_id,
+        every_scan_has_seg=not args.not_every_scan_has_seg
+    )
     
     # Create folder to save the resampled scans
     dataset_output_dir = os.path.join(args.path_to_save_processed_data, args.dataset)
