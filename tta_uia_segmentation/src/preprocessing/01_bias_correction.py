@@ -18,7 +18,7 @@ from utils import get_filepaths
 #---------- paths & hyperparameters
 shrink_factor_default       = 1
 max_num_iters_default       = [50, 50, 50] 
-path_to_logs                = '/scratch_net/biwidl319/jbermeo/MastersThesisUIASegmentation/logs/preprocessing/resampling''
+path_to_logs                = '/scratch_net/biwidl319/jbermeo/MastersThesisUIASegmentation/logs/preprocessing/resampling'
 path_to_save_processed_data = '/scratch_net/biwidl319/jbermeo/data/preprocessed/0_bias_corrected'
 #----------
 
@@ -50,6 +50,7 @@ def preprocess_cmd_args() -> argparse.Namespace:
     parser.add_argument('--path_to_save_processed_data', type=str, default=path_to_save_processed_data)   
     parser.add_argument('--path_to_logs', type=str, default=path_to_logs)   
     
+    args = parser.parse_args()
     
     if args.preprocessed:
         if args.path_to_dir is None:
@@ -64,7 +65,7 @@ def preprocess_cmd_args() -> argparse.Namespace:
                 parser.error('--fp_pattern_seg is required when --path_to_seg_dir is not None')
         
         if args.dataset is None:
-            if args.fp_pattern_tof is None
+            if args.fp_pattern_tof is None:
                 parser.error('--fp_pattern_tof is required when --dataset is None')
             
             if args.path_to_seg_dir is not None and args.fp_pattern_seg is None:
@@ -73,7 +74,7 @@ def preprocess_cmd_args() -> argparse.Namespace:
         if args.dataset == 'Lausanne' and args.path_to_seg_dir is None:
             parser.error('--path_to_seg_dir is required when --dataset is Lausanne')        
         
-    return parser.parse_args()
+    return args
 
 
 def N4bias_correction_filter(
@@ -103,6 +104,10 @@ def N4bias_correction_filter(
 
     if max_num_iterations != None:
         corrector.SetMaximumNumberOfIterations(max_num_iterations)
+    
+    # This part actually executes the n4 bias correction    
+    if image_mask != None: _ = corrector.Execute(image, image_mask)
+    else:                  _ = corrector.Execute(image)
     
     log_bias_field  = corrector.GetLogBiasFieldAsImage(inputImg)
     log_bias_field  = sitk.Cast(log_bias_field, sitk.sitkFloat64)
