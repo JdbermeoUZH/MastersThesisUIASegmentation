@@ -36,14 +36,14 @@ log = logging.Logger('Resampling')
 
 def preprocess_cmd_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description='Resampling of images')
-    parser.add_argument('--voxel_size', type=float, nargs='+', default=voxel_size_default, required=True)
+    parser.add_argument('--voxel_size', type=float, nargs='+', default=voxel_size_default)
     parser.add_argument('--order', type=int, default=3)  
    
     parser.add_argument('--preprocessed', action='store_true', default=False)
     parser.add_argument('--path_to_dir', type=str)
     
     parser.add_argument('--dataset', type=str, choices=['USZ', 'ADAM', 'Laussane', None])
-    parser.add_argument('--path_to_tof_dir', type=str, required=True)
+    parser.add_argument('--path_to_tof_dir', type=str)
     parser.add_argument('--fp_pattern_tof', type=str, nargs='+')
     parser.add_argument('--path_to_seg_dir', type=str)
     parser.add_argument('--fp_pattern_seg', type=str, nargs='+')
@@ -166,14 +166,12 @@ def resample_image_and_segmentation_mask(
 
 
 if __name__ == '__main__':
-    
-    args = preprocess_cmd_args()
-    pprint(args)
-    
     # path_to_USZ_dataset       = '/scratch_net/biwidl319/jbermeo/data/raw/USZ'
     # path_to_ADAM_dataset      = '/scratch_net/biwidl319/jbermeo/data/raw/ADAM'
     # path_to_Laussane_tof      = '/scratch_net/biwidl319/jbermeo/data/raw/Lausanne/original_images'
     # path_to_Laussane_seg      = '/scratch_net/biwidl319/jbermeo/data/raw/Lausanne/skull_stripped_and_aneurysm_mask'
+    
+    args = preprocess_cmd_args()
 
     # Get filepaths of the the dataset
     scans_dict = get_filepaths(
@@ -188,12 +186,11 @@ if __name__ == '__main__':
         every_scan_has_seg=not args.not_every_scan_has_seg
     )
     
-    # Create folder to save the resampled scans
-    dataset_output_dir = os.path.join(args.path_to_save_processed_data, args.dataset)
-
     resample_image_and_segmentation_mask(
-        output_dir=dataset_output_dir,
         scans_dict=scans_dict,
-        voxel_size=args.voxel_size
-        )
+        voxel_size=args.voxel_size,
+        save_output=True,
+        output_dir=args.path_to_save_processed_data,
+    )
+    print('Done!')
     
