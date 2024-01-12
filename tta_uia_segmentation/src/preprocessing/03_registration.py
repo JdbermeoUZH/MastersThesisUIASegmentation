@@ -77,6 +77,7 @@ def rigid_registration(
     fixed_image_path: str, 
     moving_image_path: str, 
     image_segmentation_mask_path: Optional[str] = None,
+    use_geometrical_center_mode: bool = True
     ) -> Union[sitk.Image, tuple[sitk.Image, sitk.Image]]:
     """
     Perform rigid registration between a fixed image and a moving image using SimpleITK.
@@ -120,9 +121,12 @@ def rigid_registration(
     registration_method.SetOptimizerScalesFromPhysicalShift()
 
     # Set the initial transformation
+    centering_mode = sitk.CenteredTransformInitializerFilter.GEOMETRY if use_geometrical_center_mode \
+        else sitk.CenteredTransformInitializerFilter.MOMENTS
+    
     initial_transform = sitk.CenteredTransformInitializer(fixed_image, moving_image, 
                                                           sitk.Euler3DTransform(), 
-                                                          sitk.CenteredTransformInitializerFilter.GEOMETRY)
+                                                          centering_mode)
     registration_method.SetInitialTransform(initial_transform)
 
     # Set the interpolator
@@ -135,12 +139,13 @@ def rigid_registration(
     resampled_image = sitk.Resample(moving_image, fixed_image, final_transform, sitk.sitkLinear, 0.0, moving_image.GetPixelID())
     
     # Apply the final transformation to the segmentation mask, if provided
+    #  The resampling should be of order zero, so that the segmentation mask is not interpolated
     if image_segmentation_mask is not None:
         resampled_image_segmentation_mask = sitk.Resample(
-            image_segmentation_mask, 
-            fixed_image, 
+            image_segmentation_mask,
+            fixed_image,
             final_transform,
-            sitk.sitkLinear,
+            sitk.sitkNearestNeighbor,
             0.0,
             image_segmentation_mask.GetPixelID()
         )
