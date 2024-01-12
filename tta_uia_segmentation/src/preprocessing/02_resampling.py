@@ -52,9 +52,33 @@ def preprocess_cmd_args() -> argparse.Namespace:
     
     parser.add_argument('--path_to_save_processed_data', type=str, default=path_to_save_processed_data)   
     parser.add_argument('--path_to_logs', type=str, default=path_to_logs)   
+        
+    args = parser.parse_args()
+
+    if args.preprocessed:
+        if args.path_to_dir is None:
+            parser.error('--path_to_dir is required when --preprocessed is specified')  
     
+    else:
+        if args.path_to_tof_dir is None:
+            parser.error('--path_to_tof_dir is required when --preprocessed is not specified')
+                    
+        if args.path_to_seg_dir is not None:
+            if args.fp_pattern_seg is None:
+                parser.error('--fp_pattern_seg is required when --path_to_seg_dir is not None')
+        
+        if args.dataset is None:
+            if args.fp_pattern_tof is None:
+                parser.error('--fp_pattern_tof is required when --dataset is None')
+            
+            if args.path_to_seg_dir is not None and args.fp_pattern_seg is None:
+                parser.error('--fp_pattern_seg is required when --path_to_seg_dir is not None and --dataset is None')
+                    
+        if args.dataset == 'Lausanne' and args.path_to_seg_dir is None:
+            parser.error('--path_to_seg_dir is required when --dataset is Lausanne')        
+        
     
-    return parser.parse_args()
+    return args
 
 
 def resize_segmentation(segmentation:np.ndarray, new_shape: tuple[int, ...], order: int = 3):

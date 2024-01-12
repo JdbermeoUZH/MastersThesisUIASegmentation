@@ -44,7 +44,7 @@ def preprocess_cmd_args() -> argparse.Namespace:
     parser.add_argument('--path_to_dir', type=str)
     
     parser.add_argument('--dataset', type=str, choices=['USZ', 'ADAM', 'Laussane', None])
-    parser.add_argument('--path_to_tof_dir', type=str, required=True)
+    parser.add_argument('--path_to_tof_dir', type=str)
     parser.add_argument('--fp_pattern_tof', type=str, nargs='+')
     parser.add_argument('--path_to_seg_dir', type=str)
     parser.add_argument('--fp_pattern_seg', type=str, nargs='+')
