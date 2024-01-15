@@ -1,0 +1,6 @@
+dae:
+  n_classes:                        15  
+  channel_size:                     [16, 32, 64]
+  channels_bottleneck:              128
+  skips:                            [False, True, True]
+  n_dimensions:                     3

@@ -24,7 +24,7 @@ from utils import get_filepaths
 voxel_size_default          = np.array([0.3, 0.3, 0.6]) # hyper parameters to be set
 save_logs                   = True
 path_to_logs                = '/scratch_net/biwidl319/jbermeo/MastersThesisUIASegmentation/logs/preprocessing/resampling'
-path_to_save_processed_data = '/scratch_net/biwidl319/jbermeo/data/preprocessed/0_resampled'
+path_to_save_processed_data = '/scratch_net/biwidl319/jbermeo/data/preprocessed/1_resampled'
 #----------
 
 date_now = datetime.now().strftime("%Y%m%d-%H%M%S")
