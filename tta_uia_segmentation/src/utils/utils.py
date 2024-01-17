@@ -1,8 +1,20 @@
-import numpy as np
 import os
 import random
-import torch
 
+import torch
+import numpy as np
+
+
+def define_device(device: str) -> torch.device:
+    if device == 'cuda' and not torch.cuda.is_available():
+        device = torch.device('cpu')
+        print('No GPU available, using CPU instead')
+    else:
+        device = torch.device(device)
+
+    print(f'Using Device {device}')
+    
+    return device
 
 def assert_in(value, name, possible_values):
     assert value in possible_values, \

@@ -1,26 +1,44 @@
-import csv
-import numbers
-import imageio
-from matplotlib import pyplot as plt
-import numpy as np
 import os
+import csv
 import pickle
-import torch
+import numbers
+import argparse
+
 import yaml
+import torch
+import imageio
+import numpy as np
+from matplotlib import pyplot as plt
 
 from utils.utils import assert_in
 
-
+##############################
+# Things I know are being used
 def load_config(path):
     with open(path, 'r') as file:
         cfg = yaml.load(file, Loader=yaml.FullLoader)
     return cfg
 
 
+def rewrite_config_arguments(
+    config: dict,
+    args: argparse.Namespace, 
+    config_name: str
+    ) -> dict:
+    for key, value in vars(args).items():
+        if value is not None:
+            if key in config:
+                config[key] = value
+            else:
+                print(f'Argument {key} not found in {config_name} config.')
+    
+    return config
+
+
 def dump_config(path, cfg):
     with open(path, 'w') as file:
         yaml.dump(cfg, file, indent=4)
-
+        
 
 def print_config(params, keys=None):
     if keys is None:
@@ -33,7 +51,9 @@ def print_config(params, keys=None):
     print(yaml.dump(
         {k: params[k] for k in keys}, 
         indent=4, explicit_start=True, explicit_end=True
-    ))
+    ))   
+##############################
+
     
 
 # Function taken from https://stackoverflow.com/a/43621819

@@ -1,15 +1,19 @@
 import os
+import sys
 import tqdm
 import logging
 import argparse
 import multiprocessing as mp
-from typing import Optional, Union
 from datetime import datetime
 
 import numpy as np
 import SimpleITK as sitk
 
-from utils import get_filepaths
+sys.path.append(os.path.normpath(os.path.dirname(__file__), '..', '..', 'tta_uia_segmentation', 'src'))
+
+from preprocessing.registration import rigid_registration
+from preprocessing.utils import get_filepaths
+
 
 #---------- paths & hyperparameters
 mmi_n_bins_default              = 50
@@ -24,7 +28,7 @@ n_threads_default               = 4
 
 
 def preprocess_cmd_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description='Bias correction of scans')
+    parser = argparse.ArgumentParser(description='Registratin of scans')
     
     parser.add_argument('--fixed_image_path', type=str, default=fixed_image_path_default)  
     parser.add_argument('--mmi_n_bins', type=int, default=mmi_n_bins_default)   
@@ -78,94 +82,6 @@ def preprocess_cmd_args() -> argparse.Namespace:
     
     return args
 
-import SimpleITK as sitk
-
-
-def rigid_registration(
-    fixed_image_path: str, 
-    moving_image_path: str, 
-    image_segmentation_mask_path: Optional[str] = None,
-    use_geometrical_center_mode: bool = True,
-    mmi_n_bins: int = mmi_n_bins_default,
-    learning_rate: float = learning_rate_default,
-    number_of_iterations: int = number_of_iterations_default,
-    ) -> Union[sitk.Image, tuple[sitk.Image, sitk.Image]]:
-    """
-    Perform rigid registration between a fixed image and a moving image using SimpleITK.
-
-    Parameters
-    ----------
-    fixed_image_path : str
-        Path to the fixed image.
-    
-    moving_image_path : str
-        Path to the moving image.
-        
-    output_image_path : str, optional
-        Path to save the registered image. If None, the image is not saved.
-        
-    Returns
-    -------
-    resampled_image : SimpleITK.Image
-        The registered image.
-    """
-
-    # Read the images
-    fixed_image = sitk.ReadImage(fixed_image_path, sitk.sitkFloat32)
-    moving_image = sitk.ReadImage(moving_image_path, sitk.sitkFloat32)
-    
-    # Read the segmentation mask, if provided
-    if image_segmentation_mask_path is not None:
-        image_segmentation_mask = sitk.ReadImage(image_segmentation_mask_path, sitk.sitkFloat32)
-    else:
-        image_segmentation_mask = None
-
-    # Initialize the registration method
-    registration_method = sitk.ImageRegistrationMethod()
-
-    # Set the metric
-    registration_method.SetMetricAsMattesMutualInformation(numberOfHistogramBins=mmi_n_bins)
-
-    # Set the optimizer
-    registration_method.SetOptimizerAsGradientDescent(learningRate=learning_rate, numberOfIterations=number_of_iterations,
-                                                      convergenceMinimumValue=1e-6, convergenceWindowSize=10)
-    registration_method.SetOptimizerScalesFromPhysicalShift()
-
-    # Set the initial transformation
-    centering_mode = sitk.CenteredTransformInitializerFilter.GEOMETRY if use_geometrical_center_mode \
-        else sitk.CenteredTransformInitializerFilter.MOMENTS
-    
-    initial_transform = sitk.CenteredTransformInitializer(fixed_image, moving_image, 
-                                                          sitk.Euler3DTransform(), 
-                                                          centering_mode)
-    registration_method.SetInitialTransform(initial_transform)
-
-    # Set the interpolator
-    registration_method.SetInterpolator(sitk.sitkLinear)
-
-    # Execute the registration
-    final_transform = registration_method.Execute(fixed_image, moving_image)
-
-    # Apply the final transformation
-    resampled_image = sitk.Resample(moving_image, fixed_image, final_transform, sitk.sitkBSpline, 0.0, moving_image.GetPixelID())
-    
-    # Apply the final transformation to the segmentation mask, if provided
-    #  The resampling should be of order zero, so that the segmentation mask is not interpolated
-    if image_segmentation_mask is not None:
-        resampled_image_segmentation_mask = sitk.Resample(
-            image_segmentation_mask,
-            fixed_image,
-            final_transform,
-            sitk.sitkNearestNeighbor,
-            0.0,
-            image_segmentation_mask.GetPixelID()
-        )
-        
-        return resampled_image, resampled_image_segmentation_mask
-    
-    else:
-        return resampled_image
-
 
 def rigid_registration_sequential(
     scans_dict: dict[str, dict[str, str]],
@@ -174,27 +90,26 @@ def rigid_registration_sequential(
     mmi_n_bins: int = mmi_n_bins_default,
     learning_rate: float = learning_rate_default,
     number_of_iterations: int = number_of_iterations_default,
-    save_output: bool = False, 
-    output_dir: Optional[str] = None
+    output_dir: str = path_to_save_processed_data
 ):
      # For now let's do it sequentially. Later we can parallelize it
-    os.makedirs(args.path_to_save_processed_data, exist_ok=True)
+    os.makedirs(output_dir, exist_ok=True)
         
     for img_id, img_dict in tqdm.tqdm(scans_dict.items()):
         log.info(f"Registering scan {img_id}")
         
         registered_tof_scan, registered_seg_mask = rigid_registration(
-            fixed_image_path=args.fixed_image_path,
+            fixed_image_path=fixed_image_path,
             moving_image_path=img_dict['tof'],
             image_segmentation_mask_path=img_dict['seg'] if 'seg' in img_dict.keys() else None,
-            use_geometrical_center_mode=not args.not_use_geometrical_center_mode,
-            mmi_n_bins=args.mmi_n_bins,
-            learning_rate=args.learning_rate,
-            number_of_iterations=args.number_of_iterations
+            use_geometrical_center_mode=use_geometrical_center_mode,
+            mmi_n_bins=mmi_n_bins,
+            learning_rate=learning_rate,
+            number_of_iterations=number_of_iterations
         )
         
         # Save the registered TOF scan and registered segmentation mask
-        img_output_dir = os.path.join(args.path_to_save_processed_data, img_id)
+        img_output_dir = os.path.join(output_dir, img_id)
         os.makedirs(img_output_dir, exist_ok=True)
         
         sitk.WriteImage(registered_tof_scan, os.path.join(img_output_dir, f'{img_id}_tof.nii.gz'))
@@ -215,8 +130,7 @@ def rigid_registration_multiprocess(
     mmi_n_bins: int = mmi_n_bins_default,
     learning_rate: float = learning_rate_default,
     number_of_iterations: int = number_of_iterations_default,
-    save_output: bool = False, 
-    output_dir: Optional[str] = None
+    output_dir: str = path_to_save_processed_data
 ):
     
     with lock:
@@ -231,18 +145,18 @@ def rigid_registration_multiprocess(
         log.info(f"Registering scan {img_id}")
         
         registered_tof_scan, registered_seg_mask = rigid_registration(
-            fixed_image_path=args.fixed_image_path,
+            fixed_image_path=fixed_image_path,
             moving_image_path=img_dict['tof'],
             image_segmentation_mask_path=img_dict['seg'] if 'seg' in img_dict.keys() else None,
-            use_geometrical_center_mode=not args.not_use_geometrical_center_mode,
-            mmi_n_bins=args.mmi_n_bins,
-            learning_rate=args.learning_rate,
-            number_of_iterations=args.number_of_iterations
+            use_geometrical_center_mode=use_geometrical_center_mode,
+            mmi_n_bins=mmi_n_bins,
+            learning_rate=learning_rate,
+            number_of_iterations=number_of_iterations
         )
         
         # Save the registered TOF scan and registered segmentation mask
         with lock:
-            img_output_dir = os.path.join(args.path_to_save_processed_data, img_id)
+            img_output_dir = os.path.join(output_dir, img_id)
             os.makedirs(img_output_dir, exist_ok=True)
         
         sitk.WriteImage(registered_tof_scan, os.path.join(img_output_dir, f'{img_id}_tof.nii.gz'))
@@ -252,6 +166,7 @@ def rigid_registration_multiprocess(
         
         log.info(f"Scan {img_id} registered") 
         
+
 
 if __name__ == '__main__':
     args = preprocess_cmd_args()
@@ -311,7 +226,6 @@ if __name__ == '__main__':
                         args.mmi_n_bins,
                         args.learning_rate,
                         args.number_of_iterations,
-                        True,
                         args.path_to_save_processed_data
                     )
                 )
@@ -328,7 +242,6 @@ if __name__ == '__main__':
             mmi_n_bins=args.mmi_n_bins,
             learning_rate=args.learning_rate,
             number_of_iterations=args.number_of_iterations,
-            save_output=True,
             output_dir=args.path_to_save_processed_data
         )
         
