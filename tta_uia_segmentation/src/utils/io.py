@@ -29,9 +29,7 @@ def rewrite_config_arguments(
         if value is not None:
             if key in config:
                 config[key] = value
-            else:
-                print(f'Argument {key} not found in {config_name} config.')
-    
+
     return config
 
 

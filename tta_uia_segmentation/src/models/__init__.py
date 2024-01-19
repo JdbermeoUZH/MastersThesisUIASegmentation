@@ -1,2 +1,2 @@
-from UNet import UNet
-from .normalization import Normalization
+from models.UNet import UNet
+from models.normalization import Normalization

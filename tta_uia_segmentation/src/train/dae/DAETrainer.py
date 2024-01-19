@@ -130,7 +130,7 @@ class DAETrainer:
             if (epoch + 1) % validate_every != 0 and epoch != epochs - 1:
                 continue
 
-            if val_dataloader is None:
+            if val_dataloader is not None:
                 # Evaluation
                 print(f'Validating for epoch {epoch}')
                 validation_loss, validation_score = self.evaluate(val_dataloader, device=device)
@@ -161,8 +161,8 @@ class DAETrainer:
             if wandb_log:
                 wandb.log({
                     'training_loss': training_loss,
-                    'validation_loss': validation_loss,
-                    'validation_score': validation_score,
+                    'validation_loss': validation_loss if val_dataloader is not None else None,
+                    'validation_score': validation_score if val_dataloader is not None else None,
                 }, step=epoch)
                 wandb.save(os.path.join(wandb_dir, checkpoint_last), base_path=wandb_dir)
                 wandb.save(os.path.join(wandb_dir, checkpoint_best), base_path=wandb_dir)

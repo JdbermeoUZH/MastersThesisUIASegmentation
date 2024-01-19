@@ -1,9 +1,12 @@
 import os
+import sys
 import argparse
 
 import wandb
 import numpy as np
 from torch.utils.data import DataLoader, ConcatDataset
+
+sys.path.append(os.path.normpath(os.path.join(os.path.dirname(__file__), '..', '..', '..', 'tta_uia_segmentation', 'src')))
 
 from dataset.dataset import get_datasets
 from models import UNet
@@ -23,16 +26,17 @@ def preprocess_cmd_args() -> argparse.Namespace:
     """
     parser = argparse.ArgumentParser(description="Train DAE")
     
+    parser.add_argument('dataset_config_file', type=str, help='Path to yaml config file with parameters that define the dataset.')
     parser.add_argument('model_config_file', type=str, help='Path to yaml config file with parameters that define the model.')
     parser.add_argument('train_config_file', type=str, help='Path to yaml config file with parameters for training.')
     
     # Training parameters. If provided, overrides default parameters from config file.
     # :================================================================================================:
-    parser.add_argument('--resume', action='store_true', 
+    parser.add_argument('--resume', type=lambda s: s.strip().lower() == 'true', 
                         help='Resume training from last checkpoint. Default: True.') 
     parser.add_argument('--logdir', type=str, 
                         help='Path to directory where logs and checkpoints are saved. Default: logs')  
-    parser.add_argument('--wandb_log', action='store_true', 
+    parser.add_argument('--wandb_log', type=lambda s: s.strip().lower() == 'true', 
                         help='Log training to wandb. Default: False.')
 
     # Model parameters
@@ -51,8 +55,8 @@ def preprocess_cmd_args() -> argparse.Namespace:
     parser.add_argument('--batch_size', type=int, help='Batch size for training. Default: 4')
     parser.add_argument('--num_workers', type=int, help='Number of workers for dataloader. Default: 0')
     parser.add_argument('--validate_every', type=int, help='Validate every n epochs. Default: 1')
-    parser.add_argument('--seed', type=int, help='Seed for random number generators.', default=0)   
-    parser.add_argument('--device', type=str, help='Device to use for training.', default='gpu')
+    parser.add_argument('--seed', type=int, help='Seed for random number generators. Default: 0')   
+    parser.add_argument('--device', type=str, help='Device to use for training. Default cuda', )
     parser.add_argument('--checkpoint_last', type=str, help='Name of last checkpoint file. Default: checkpoint_last.pth')
     parser.add_argument('--checkpoint_best', type=str, help='Name of best checkpoint file. Default: checkpoint_best.pth')
     
@@ -66,20 +70,20 @@ def preprocess_cmd_args() -> argparse.Namespace:
     
     # Augmentations
     parser.add_argument('--da_ratio', type=float, help='Ratio of images to apply DA to. Default: 0.25')
-    parser.add_argument('sigma', type=float, help='augmentation. Default: 20') #TODO: specify what this is
-    parser.add_argument('alpha', type=float, help='augmentation. Default: 1000') #TODO: specify what this is
-    parser.add_argument('trans_min', type=float, help='Minimum value for translation augmentation. Default: -10')
-    parser.add_argument('trans_max', type=float, help='Maximum value for translation augmentation. Default: 10')
-    parser.add_argument('rot_min', type=float, help='Minimum value for rotation augmentation. Default: -10')
-    parser.add_argument('rot_max', type=float, help='Maximum value for rotation augmentation. Default: 10') 
-    parser.add_argument('scale_min', type=float, help='Minimum value for zooming augmentation. Default: 0.9') 
-    parser.add_argument('scale_max', type=float, help='Maximum value for zooming augmentation. Default: 1.1')
-    parser.add_argument('gamma_min', type=float, help=' augmentation. Default: 1.0') #TODO: specify what this is
-    parser.add_argument('gamma_max', type=float, help=' augmentation. Default: 1.0') #TODO: specify what this is
-    parser.add_argument('brightness_min', type=float, help='Minimum value for brightness augmentation. Default: 0.0') 
-    parser.add_argument('brightness_max', type=float, help='Maximum value for brightness augmentation. Default: 0.0')   
-    parser.add_argument('noise_mean', type=float, help='Mean value for noise augmentation. Default: 0.0')
-    parser.add_argument('noise_std', type=float, help='Standard deviation value for noise augmentation. Default: 0.0') 
+    parser.add_argument('--sigma', type=float, help='augmentation. Default: 20') #TODO: specify what this is
+    parser.add_argument('--alpha', type=float, help='augmentation. Default: 1000') #TODO: specify what this is
+    parser.add_argument('--trans_min', type=float, help='Minimum value for translation augmentation. Default: -10')
+    parser.add_argument('--trans_max', type=float, help='Maximum value for translation augmentation. Default: 10')
+    parser.add_argument('--rot_min', type=float, help='Minimum value for rotation augmentation. Default: -10')
+    parser.add_argument('--rot_max', type=float, help='Maximum value for rotation augmentation. Default: 10') 
+    parser.add_argument('--scale_min', type=float, help='Minimum value for zooming augmentation. Default: 0.9') 
+    parser.add_argument('--scale_max', type=float, help='Maximum value for zooming augmentation. Default: 1.1')
+    parser.add_argument('--gamma_min', type=float, help=' augmentation. Default: 1.0') #TODO: specify what this is
+    parser.add_argument('--gamma_max', type=float, help=' augmentation. Default: 1.0') #TODO: specify what this is
+    parser.add_argument('--brightness_min', type=float, help='Minimum value for brightness augmentation. Default: 0.0') 
+    parser.add_argument('--brightness_max', type=float, help='Maximum value for brightness augmentation. Default: 0.0')   
+    parser.add_argument('--noise_mean', type=float, help='Mean value for noise augmentation. Default: 0.0')
+    parser.add_argument('--noise_std', type=float, help='Standard deviation value for noise augmentation. Default: 0.0') 
     
     # Deformation or Corruptions
     parser.add_argument('--mask_type', type=str, help='Type of mask to use for deformation. Default: squares_jigsaw',
@@ -87,15 +91,18 @@ def preprocess_cmd_args() -> argparse.Namespace:
     parser.add_argument('--mask_radius', type=int, help='Radius of mask for deformation. Default: 10') 
     parser.add_argument('--mask_squares', type=int, help='Number of squares for mask. Default: 200') 
     parser.add_argument('--is_num_masks_fixed', type=lambda s: s.strip().lower() == 'true', help='Whether to use jigsaw mask. Default: False')
-    parser.add_argument('-is_size_masks_fixed', type=lambda s: s.strip().lower() == 'true', help='Whether to use jigsaw mask. Default: False')
+    parser.add_argument('--is_size_masks_fixed', type=lambda s: s.strip().lower() == 'true', help='Whether to use jigsaw mask. Default: False')
     
     args = parser.parse_args()
     
     return args
 
 
-def get_configuration_arguments() -> tuple[dict, dict]:
+def get_configuration_arguments() -> tuple[dict, dict, dict]:
     args = preprocess_cmd_args()
+    
+    dataset_config = load_config(args.dataset_config_file)
+    dataset_config = rewrite_config_arguments(dataset_config, args, 'dataset')
     
     model_config = load_config(args.model_config_file)
     model_config = rewrite_config_arguments(model_config, args, 'model')
@@ -112,7 +119,7 @@ def get_configuration_arguments() -> tuple[dict, dict]:
     train_config['dae']['deformation'] = rewrite_config_arguments(
         train_config['dae']['deformation'], args, 'train, dae, deformation')
     
-    return model_config, train_config
+    return dataset_config, model_config, train_config
 
 
 def save_atlas(train_dataset, num_workers, logdir):
@@ -142,15 +149,16 @@ if __name__ == '__main__':
     
     # Loading general parameters
     # :=========================================================================:
-    model_config, train_config = get_configuration_arguments()
+    dataset_config, model_config, train_config = get_configuration_arguments()
     
-    params          = {'model': model_config, 'training': train_config}
+    params          = {'datset': dataset_config, 'model': model_config,
+                       'training': train_config}
     resume          = train_config['resume']
     seed            = train_config['seed']
     device          = train_config['device']
-    logdir          = train_config['logdir']
     wandb_log       = train_config['wandb_log']
-    wandb_project   = train_config['wandb_project']
+    logdir          = train_config['dae']['logdir']
+    wandb_project   = train_config['dae']['wandb_project']
     
     # Write or load parameters to/from logdir, used if a run is resumed.
     # :=========================================================================:
@@ -175,24 +183,24 @@ if __name__ == '__main__':
     # :=========================================================================:
     print('Defining dataset')
     seed_everything(seed)
-    device      = define_device(device)
-    dataset     = train_config['dae']['dataset']
-    n_classes   = train_config['dae']['n_classes']
-    batch_size      = deep_get(params, 'training', 'dae', 'batch_size')
-    num_workers     = deep_get(params, 'training', 'dae', 'num_workers', default=0)
+    device              = define_device(device)
+    dataset             = train_config['dae']['dataset']
+    n_classes           = train_config['dae']['n_classes']
+    batch_size          = train_config['dae']['batch_size']
+    num_workers         = train_config['dae']['num_workers']
     
     # Dataset definition
     train_dataset, val_dataset = get_datasets(
-        paths           = deep_get(params, 'datasets', dataset, 'paths_processed'),
-        paths_original  = deep_get(params, 'datasets', dataset, 'paths_original'),
+        paths           = dataset_config[dataset]['paths_processed'],
+        paths_original  = dataset_config[dataset]['paths_original'],
         splits          = ['train', 'val'],
-        image_size      = deep_get(params, 'training', 'dae', 'image_size'),
-        resolution_proc = deep_get(params, 'datasets', dataset, 'resolution_proc'),
-        rescale_factor  = deep_get(params, 'training', 'dae', 'rescale_factor', default=None),
-        dim_proc        = deep_get(params, 'datasets', dataset, 'dim'),
+        image_size      = train_config['dae']['image_size'],
+        resolution_proc = dataset_config[dataset]['resolution_proc'],
+        rescale_factor  = train_config['dae']['rescale_factor'],
+        dim_proc        = dataset_config[dataset]['dim'],
         n_classes       = n_classes,
-        aug_params      = deep_get(params, 'training', 'dae', 'augmentation', default=None),
-        deformation     = deep_get(params, 'training', 'dae', 'deformation', default=None),
+        aug_params      = train_config['dae']['augmentation'],
+        deformation     = train_config['dae']['deformation'],
         load_original   = False,
     )
 
@@ -212,17 +220,17 @@ if __name__ == '__main__':
     dae = UNet(
         in_channels             = n_classes,
         n_classes               = n_classes,
-        channels                = model_config['channel_size'],
-        channels_bottleneck     = model_config['channels_bottleneck'],
-        skips                   = model_config['skips'],
-        n_dimensions            = model_config['n_dimensions']
+        channels                = model_config['dae']['channel_size'],
+        channels_bottleneck     = model_config['dae']['channels_bottleneck'],
+        skips                   = model_config['dae']['skips'],
+        n_dimensions            = model_config['dae']['n_dimensions']
     ).to(device)
 
     # Define the Trainer that will be used to train the model
     # :=========================================================================:
     print('Defining trainer: training loop, optimizer and loss')
     dae_trainer = DAETrainer(
-        model                   = dae,
+        dae                     = dae,
         learning_rate           = train_config['dae']['learning_rate'],
         device                  = device,
         loss_func               = DiceLoss(),
@@ -230,7 +238,6 @@ if __name__ == '__main__':
         checkpoint_last         = train_config['checkpoint_last'],
         checkpoint_best         = train_config['checkpoint_best'],
         logdir                  = logdir,
-        device                  = device,
         wandb_log               = wandb_log,
     )
     

@@ -6,8 +6,8 @@ bias_field_correction_params:
 
 resampling:                       True
 resampling_params:
-  new_spacing: [0.3, 0.3, 0.6]
-  order: 3
+  new_spacing:                    [0.3, 0.3, 0.6]
+  order: ```````````````3
   save_resampled: True
 
 

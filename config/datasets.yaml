@@ -7,6 +7,10 @@ USZ:
     fp_pattern_seg_mask:  ['*', '*_seg.nii.gz']
     every_scan_has_seg:   True
     level_of_dir_with_id: -2
+
+  preprocessed:
+    paths_processed:      '/scratch_net/biwidl319/jbermeo/data/preprocessed/USZ/1_resampled'
+    paths_original:       '/scratch_net/biwidl319/jbermeo/data/raw/USZ'
       
 
 ADAM:
@@ -19,6 +23,12 @@ ADAM:
     every_scan_has_seg:   True
     level_of_dir_with_id: -2
 
+  preprocessed:
+    paths_processed:      '/scratch_net/biwidl319/jbermeo/data/preprocessed/ADAM/1_resampled'
+    paths_original:       '/scratch_net/biwidl319/jbermeo/data/raw/ADAM'
+
+
+
 Lausanne:
   raw:
     path_to_tof_dir:     '/scratch_net/biwidl319/jbermeo/data/raw/Lausanne/original_images'
@@ -28,3 +38,22 @@ Lausanne:
     fp_pattern_seg_mask: ['*', '*', '*', '*Lesion_1_mask.nii.gz']
     every_scan_has_seg:   False
     level_of_dir_with_id: -4
+
+  preprocessed:
+    paths_processed:      '/scratch_net/biwidl319/jbermeo/data/preprocessed/Lausanne/5_h5'
+    paths_original:       '/scratch_net/biwidl319/jbermeo/data/raw/Lausanne'
+
+
+
+hcp_t1:
+  n_classes: 15
+  resolution_proc: [0.7, 0.7, 0.7]  # voxel size of processed dataset in [mm] (xyz)
+  dim: [256, 256, 256]  # DHW (= zxy)
+  paths_processed:
+      train: /scratch_net/biwidl319/jbermeo/data/HCP/preprocessed/T1/data_T1_2d_size_256_256_depth_256_res_0.7_0.7_from_0_to_20.hdf5
+      test: /scratch_net/biwidl319/jbermeo/data/HCP/preprocessed/T1/data_T1_2d_size_256_256_depth_256_res_0.7_0.7_from_50_to_70.hdf5
+      val: /scratch_net/biwidl319/jbermeo/data/HCP/preprocessed/T1/data_T1_2d_size_256_256_depth_256_res_0.7_0.7_from_20_to_25.hdf5
+  paths_original:
+      train: /scratch_net/biwidl319/jbermeo/data/HCP/preprocessed/T1/data_T1_original_depth_256_from_0_to_20.hdf5
+      test: /scratch_net/biwidl319/jbermeo/data/HCP/preprocessed/T1/data_T1_original_depth_256_from_50_to_70.hdf5
+      val: /scratch_net/biwidl319/jbermeo/data/HCP/preprocessed/T1/data_T1_original_depth_256_from_20_to_25.hdf5

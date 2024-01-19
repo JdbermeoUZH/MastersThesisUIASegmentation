@@ -1,1 +1,1 @@
-from dae.DAETrainer import DAETrainer
+from train.dae.DAETrainer import DAETrainer

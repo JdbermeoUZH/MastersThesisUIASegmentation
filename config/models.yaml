@@ -1,6 +1,24 @@
 dae:
-  n_classes:                        15  
+  n_classes:                        15  # 15 for brain, 2 for WMH, 21 or 3 for UIA
   channel_size:                     [16, 32, 64]
   channels_bottleneck:              128
   skips:                            [False, True, True]
+  n_dimensions:                     3
+
+
+segmentation_2D:
+  image_channels:                   1
+  n_classes: `                      15  # 15 for brain, 2 for WMH
+  channel_size:                     [16, 32, 64]
+  channels_bottleneck:              128
+  skips:                            [True, True, True]
+  n_dimensions:                     2
+
+
+segmentation_3D:
+  image_channels:                   1
+  n_classes:                        15  # 15 for brain, 2 for WMH, 21 or 3 for UIA
+  channel_size:                     [16, 32, 64]
+  channels_bottleneck:              128
+  skips:                            [True, True, True]
   n_dimensions:                     3
