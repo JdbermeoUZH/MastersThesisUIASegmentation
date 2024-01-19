@@ -8,35 +8,39 @@ import numpy as np
 from torch.utils.data import DataLoader
 
 from models import UNet
+from models.normalization import background_suppression
 from utils.loss import DiceLoss, dice_score
 from utils.io import save_checkpoint
 
 
-class DAETrainer:
+class NormSegTrainer:
     """
-    Trainer for the DAE.
-    
-    It executes the training and evaluation loops, 
-    it also tracks the state (losses, scores, checkpoints)
+    Train a segmentation network that is preceded by a shalow image normalization network.
     
     Methods
     -------
-    train(train_dataloader, epochs, validate_every, checkpoint_best, checkpoint_last, logdir, val_dataloader, device, wandb_log)
-        Executes the training loop.
+    __init__(norm, seg, bg_suppression_opts, learning_rate, device, loss_func,
+            is_resumed, checkpoint_last, checkpoint_best, logdir, wandb_log, wandb_dir)
+            
+        Paramaters
+        ----------
+        norm : torch.nn.Module
+            The normalization network.
+            
+        seg : Union[UNet, torch.nn.Module]
+            The segmentation network.
         
-    evaluate(val_dataloader, device)
-        Executes the evaluation loop. Returns the loss and score over the entire val dataset.
+        bg_suppression_opts : dict
+            The options or parameters for background suppression.    
         
-    _load_checkpoint(checkpoint_path)
-        Loads a checkpoint to resume trainin. Usually called at initialization of the class
         
-    _start_from_scratch(checkpoint_path)
-        Stores a checkpoint with the initial state.
-
     """
+    
     def __init__(
         self,
-        dae: Union[UNet, torch.nn.Module],
+        norm: torch.nn.Module,
+        seg: Union[UNet, torch.nn.Module],
+        bg_suppression_opts: dict,
         learning_rate: float,
         device: torch.device,
         loss_func: torch.nn.Module = DiceLoss(),
@@ -47,17 +51,23 @@ class DAETrainer:
         wandb_log: bool = True,
         wandb_dir: str = 'wandb',
         ):
-
+        
         self.device = device
-        self.dae = dae
+        self.norm = norm
+        self.seg = seg
+        self.bg_suppression_opts = bg_suppression_opts
         self.optimizer = torch.optim.Adam(
-            self.dae.parameters(),
+            list(self.norm.parameters()) + list(self.seg.parameters()),
             lr=learning_rate
         )    
+        
         if is_resumed:
             self._load_checkpoint(os.path.join(logdir, checkpoint_last))
+        
         else:
-            self._start_from_scratch(os.path.join(logdir, checkpoint_last))
+            print('Starting training from scratch.')
+            self.best_validation_loss = np.inf
+            self._save_checkpoint(os.path.join(logdir, checkpoint_last))
         
         self.loss_func = loss_func
         
@@ -103,14 +113,18 @@ class DAETrainer:
             training_loss = 0
             n_samples_train = 0
 
-            self.dae.train()
+            self.norm.train()
+            self.seg.train()
 
             print(f'Training for epoch {epoch}')
-            for _, y, x, _, _ in train_dataloader:
+            for x, y, _, _, bg_mask in train_dataloader:
                 x = x.to(device).float()
                 y = y.to(device)
+                bg_mask = bg_mask.to(device)
 
-                y_pred, _ = self.dae(x)
+                x_norm = self.norm(x)
+                x_norm = background_suppression(x_norm, bg_mask, self.bg_suppression_opts)
+                y_pred, _ = self.seg(x_norm)
 
                 loss = self.loss_func(y_pred, y)
 
@@ -138,25 +152,13 @@ class DAETrainer:
                 self.validation_scores.append(validation_score.item())
 
                 # Checkpoint last state
-                save_checkpoint(
-                    path=os.path.join(logdir, checkpoint_last),
-                    epoch=epoch,
-                    dae_state_dict=self.dae.state_dict(),
-                    optimizer_state_dict=self.optimizer.state_dict(),
-                    best_validation_loss=self.best_validation_loss,
-                )
-
+                self._save_checkpoint(os.path.join(logdir, checkpoint_last))
+                
                 if validation_loss < self.best_validation_loss:
                     self.best_validation_loss = validation_loss
 
                     # Checkpoint best state
-                    save_checkpoint(
-                        path=os.path.join(logdir, checkpoint_best),
-                        epoch=epoch,
-                        dae_state_dict=self.dae.state_dict(),
-                        optimizer_state_dict=self.optimizer.state_dict(),
-                        best_validation_loss=self.best_validation_loss,
-                    )
+                    self._save_checkpoint(os.path.join(logdir, checkpoint_best))
             
             if wandb_log:
                 wandb.log({
@@ -178,17 +180,21 @@ class DAETrainer:
         validation_score = 0
         n_samples_val = 0
         
-        self.dae.eval()
+        self.norm.eval()
+        self.seg.eval()
 
         with torch.no_grad():
-            for _, y, x, _, _ in val_dataloader:
+            for x, y, _, _, bg_mask in val_dataloader:
                 x = x.to(device).float()
                 y = y.to(device)
+                bg_mask = bg_mask.to(device)
 
-                y_pred, _ = self.dae(x)
-
+                x_norm = self.norm(x)
+                x_norm = background_suppression(x_norm, bg_mask, self.bg_suppression_opts)
+                y_pred, _ = self.seg(x_norm)
+                
                 loss = self.loss_func(y_pred, y)
-                dice, dice_fg = dice_score(y_pred, y, soft=False, reduction='mean')
+                _, dice_fg = dice_score(y_pred, y, soft=False, reduction='mean')
 
                 validation_loss += loss * x.shape[0]
                 validation_score += dice_fg * x.shape[0]
@@ -205,21 +211,22 @@ class DAETrainer:
         print(f'Resuming training at epoch {checkpoint["epoch"] + 1}.')
         
         self.continue_from_epoch = checkpoint['epoch'] + 1
-        self.dae.load_state_dict(checkpoint['dae_state_dict'])
+        self.norm.load_state_dict(checkpoint['norm_state_dict'])
+        self.seg.load_state_dict(checkpoint['seg_state_dict'])
         self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         self.best_validation_loss = checkpoint['best_validation_loss']
 
         del checkpoint
         
-    def _start_from_scratch(self, checkpoint_path: str):
-        print('Starting from scratch.')
+    def _save_checkpoint(self, checkpoint_path: str):
         
         save_checkpoint(
             path=checkpoint_path,
             epoch=-1,
-            dae_state_dict=self.dae.state_dict(),
+            norm_state_dict=self.norm.state_dict(),
+            seg_state_dict=self.seg.state_dict(),
             optimizer_state_dict=self.optimizer.state_dict(),
-            best_validation_loss=np.inf,
+            best_validation_loss=self.best_validation_loss,
         )
     
     def get_last_checkpoint_name(self):
@@ -247,3 +254,5 @@ class DAETrainer:
         return self.validation_scores
 
 
+       
+        

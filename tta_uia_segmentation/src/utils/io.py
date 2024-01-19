@@ -3,6 +3,7 @@ import csv
 import pickle
 import numbers
 import argparse
+from typing import Optional
 
 import yaml
 import torch
@@ -23,10 +24,12 @@ def load_config(path):
 def rewrite_config_arguments(
     config: dict,
     args: argparse.Namespace, 
-    config_name: str
+    config_name: str,
+    prefix_to_remove: Optional[str] = None, 
     ) -> dict:
     for key, value in vars(args).items():
         if value is not None:
+            key = key.replace(prefix_to_remove, '') if prefix_to_remove is not None else key
             if key in config:
                 config[key] = value
 

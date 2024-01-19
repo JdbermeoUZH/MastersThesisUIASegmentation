@@ -1,1 +1,2 @@
-from train.dae.DAETrainer import DAETrainer
+from train.DAETrainer import DAETrainer
+from train.NormSegTrainer import NormSegTrainer
