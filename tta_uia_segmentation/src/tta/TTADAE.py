@@ -186,13 +186,14 @@ class TTADAE:
             save_checkpoint(
                 path=os.path.join(logdir, 'checkpoints',
                                 f'checkpoint_tta_{dataset_name}_{index:02d}.pth'),
-                norm_state_dict=norm_dict['best_score'],
+                norm_state_dict=self.norm_dict['best_score'],
                 seg_state_dict=self.seg.state_dict(),
             )
 
         os.makedirs(os.path.join(logdir, 'metrics'), exist_ok=True)
 
         os.makedirs(os.path.join(logdir, 'tta_score'), exist_ok=True)
+        
         write_to_csv(
             os.path.join(logdir, 'tta_score', f'{dataset_name}_{index:03d}.csv'),
             np.array([self.test_scores]).T,
@@ -200,7 +201,7 @@ class TTADAE:
             mode='w',
         )
 
-        return norm, norm_dict, metrics_best
+        return self.norm, self.norm_dict, self.metrics_best
 
     
     def test_volume(

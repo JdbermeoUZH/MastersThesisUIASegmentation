@@ -13,6 +13,7 @@ import numpy as np
 sys.path.append(os.path.normpath(os.path.join(
     os.path.dirname(__file__), '..', '..', '..', 'tta_uia_segmentation', 'src')))
 
+from tta import TTADAE
 from dataset.dataset import get_datasets
 from models import Normalization, UNet
 from models.normalization import background_suppression
@@ -259,13 +260,21 @@ if __name__ == '__main__':
     dae.eval()
 
     
-    # Define the Trainer that will be used to train the model
-    # :=========================================================================:
-    
-    
-    # Do TTA
+    # Define the TTADAE object that does the test time adapatation
     # :=========================================================================:
     learning_rate               = tta_config[tta_mode]['learning_rate']
+
+    dae_tta = TTADAE(
+        norm                    = norm,
+        seg                     = seg,
+        dae                     = dae,
+        atlas                   = atlas,
+        loss_func               = DiceLoss(),
+        learning_rate           = learning_rate
+    )
+    
+    # Do TTA with a DAE
+    # :=========================================================================:
     bg_suppression_opts_tta     = tta_config[tta_mode]['bg_suppression_opts_tta']
     alpha                       = tta_config[tta_mode]['alpha']
     beta                        = tta_config[tta_mode]['beta']
@@ -295,46 +304,39 @@ if __name__ == '__main__':
 
         norm.load_state_dict(norm_state_dict)
 
-        norm, norm_dict, metrics_best = tta_dae(
-            volume_dataset=volume_dataset,
-            dataset=dataset,
-            atlas=atlas,
-            logdir=logdir,
-            norm=norm,
-            seg=seg,
-            dae=dae,
-            device=device,
-            batch_size=batch_size,
-            dataset_repetition=dataset_repetition,
-            learning_rate=learning_rate,
-            num_steps=num_steps,
-            update_dae_output_every=update_dae_output_every,
-            rescale_factor=rescale_factor,
-            alpha=alpha,
-            beta=beta,
-            n_classes=n_classes,
-            num_workers=num_workers,
-            index=i,
-            bg_suppression_opts=bg_suppression_opts,
-            bg_suppression_opts_tta=bg_suppression_opts_tta,
-            save_checkpoints=save_checkpoints,
-            calculate_dice_every=calculate_dice_every,
-            accumulate_over_volume=accumulate_over_volume,
-            const_aug_per_volume=const_aug_per_volume,
+        norm, norm_dict, metrics_best = dae_tta.tta(
+            volume_dataset = volume_dataset,
+            dataset_name = dataset,
+            n_classes =n_classes,
+            index = i,
+            rescale_factor = rescale_factor,
+            alpha = alpha,
+            beta = beta,
+            bg_suppression_opts = bg_suppression_opts,
+            bg_suppression_opts_tta = bg_suppression_opts_tta,
+            num_steps = num_steps,
+            batch_size = batch_size,
+            calculate_dice_every = calculate_dice_every,
+            update_dae_output_every = update_dae_output_every,
+            accumulate_over_volume = accumulate_over_volume,
+            dataset_repetition = dataset_repetition,
+            const_aug_per_volume = const_aug_per_volume,
+            save_checkpoints = save_checkpoints,
+            logdir = logdir
         )
-
+        
         dice_scores[i, :], _ = test_volume(
-            volume_dataset=volume_dataset,
-            dataset=dataset,
-            logdir=logdir,
-            norm=norm,
-            seg=seg,
-            device=device,
-            batch_size=batch_size,
-            n_classes=n_classes,
-            num_workers=num_workers,
-            index=i,
-            bg_suppression_opts=bg_suppression_opts,
+            volume_dataset = volume_dataset,
+            dataset = dataset,
+            logdir = logdir,
+            norm = norm,
+            seg = seg,
+            device = device,
+            batch_size = batch_size,
+            n_classes = n_classes,
+            num_workers = num_workers,
+            index = i,
+            bg_suppression_opts = bg_suppression_opts,
         )
 
         write_to_csv(
