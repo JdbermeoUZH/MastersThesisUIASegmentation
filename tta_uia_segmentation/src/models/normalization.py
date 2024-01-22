@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 
+import models.utils as mu
 from utils.io import deep_get
 from utils.utils import assert_in
 
@@ -63,7 +64,17 @@ class Normalization(nn.Module):
     
     
     """
-    def __init__(self, n_layers=3, image_channels=1, channel_size=16, kernel_size=3, activation=None, batch_norm=True, residual=True):
+    def __init__(
+        self,
+        n_layers: int = 3,
+        image_channels: int = 1,
+        channel_size: int = 16,
+        kernel_size: int = 3, 
+        activation=None,
+        batch_norm: bool = True,
+        residual: bool = True,
+        n_dimensions: int = 2
+        ):
         super().__init__()
 
         assert n_layers > 0, "Normalization network has no layers"
@@ -74,10 +85,11 @@ class Normalization(nn.Module):
 
         layers = []
         for in_size, out_size in zip(channel_sizes, channel_sizes[1:]):
-            layers += [nn.Conv3d(in_size, out_size, kernel_size,
-                                 padding='same', padding_mode='reflect')]
+            layers += [mu.get_conv(in_size, out_size, kernel_size, 
+                                   padding='same', padding_mode='reflect',
+                                   n_dimensions=n_dimensions)]
             if batch_norm:
-                layers += [nn.BatchNorm3d(out_size)]
+                layers += [mu.get_batch_norm(out_size, n_dimensions=n_dimensions)]
 
             if activation == 'relu':
                 layers += [nn.ReLU()]
@@ -86,8 +98,9 @@ class Normalization(nn.Module):
             elif activation == 'rbf':
                 layers += [RBF(out_size)]
 
-        layers += [nn.Conv3d(channel_sizes[-1], image_channels,
-                             kernel_size, padding='same', padding_mode='reflect')]
+        layers += [mu.get_conv(channel_sizes[-1], image_channels, 
+                               kernel_size, padding='same', padding_mode='reflect',
+                               n_dimensions=n_dimensions)]
 
         self.layers = nn.Sequential(*layers)
 

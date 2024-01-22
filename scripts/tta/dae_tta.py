@@ -1,17 +1,22 @@
-import argparse
-import copy
-import numpy as np
 import os
+import sys
+import copy
+import argparse
+
+import wandb
 import torch
 import torch.nn.functional as F
 from torch.optim import lr_scheduler
 from torch.utils.data import Subset, DataLoader, ConcatDataset, TensorDataset
-import wandb
+import numpy as np
+
+sys.path.append(os.path.normpath(os.path.join(
+    os.path.dirname(__file__), '..', '..', '..', 'tta_uia_segmentation', 'src')))
 
 from dataset.dataset import get_datasets
 from models import Normalization, UNet
 from models.normalization import background_suppression
-from tta. import test_volume
+from tta.test import test_volume
 from utils.io import load_config, dump_config, print_config, save_checkpoint, write_to_csv, deep_get
 from utils.utils import seed_everything, get_seed
 from utils.loss import DiceLoss, class_to_onehot, dice_score, onehot_to_class

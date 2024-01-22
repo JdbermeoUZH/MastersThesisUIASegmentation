@@ -16,6 +16,7 @@ def define_device(device: str) -> torch.device:
     
     return device
 
+
 def assert_in(value, name, possible_values):
     assert value in possible_values, \
         f'{name} must be in {possible_values} but is {value}'

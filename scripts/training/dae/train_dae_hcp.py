@@ -10,7 +10,7 @@ sys.path.append(os.path.normpath(os.path.join(os.path.dirname(__file__), '..', '
 
 from dataset.dataset import get_datasets
 from models import UNet
-from train.dae.DAETrainer import DAETrainer
+from train.DAETrainer import DAETrainer
 from utils.loss import DiceLoss
 from utils.io import load_config, rewrite_config_arguments, dump_config, print_config, save_checkpoint, write_to_csv, deep_get
 from utils.utils import seed_everything, define_device
@@ -185,7 +185,7 @@ if __name__ == '__main__':
     seed_everything(seed)
     device              = define_device(device)
     dataset             = train_config['dae']['dataset']
-    n_classes           = train_config['dae']['n_classes']
+    n_classes           = dataset_config[dataset]['n_classes']
     batch_size          = train_config['dae']['batch_size']
     num_workers         = train_config['dae']['num_workers']
     
@@ -239,6 +239,7 @@ if __name__ == '__main__':
         checkpoint_best         = train_config['checkpoint_best'],
         logdir                  = logdir,
         wandb_log               = wandb_log,
+        wandb_dir               = wandb_dir
     )
     
     if wandb_log:

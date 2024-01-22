@@ -4,9 +4,9 @@
 #SBATCH --ntasks=2
 #SBATCH --gres=gpu:1
 
-cd ../tta_uia_segmentation/src/preprocessing
 source /itet-stor/jbermeo/net_scratch/conda/etc/profile.d/conda.sh
 conda activate nnUnet_dev
+cd /scratch_net/biwidl319/jbermeo/MastersThesisUIASegmentation/scripts/training/segmentation
 
 python train_2D_segmentation_model.py \
  /scratch_net/biwidl319/jbermeo/MastersThesisUIASegmentation/config/datasets.yaml \

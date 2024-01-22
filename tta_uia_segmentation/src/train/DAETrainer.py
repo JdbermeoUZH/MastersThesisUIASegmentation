@@ -58,7 +58,7 @@ class DAETrainer:
             self._load_checkpoint(os.path.join(logdir, checkpoint_last))
         else:
             print('Starting training from scratch.')
-            self.best_validation_loss
+            self.best_validation_loss = np.inf
             self._save_checkpoint(os.path.join(logdir, checkpoint_last))
         
         self.loss_func = loss_func

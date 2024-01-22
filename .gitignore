@@ -163,3 +163,4 @@ logs/
 nnUnet/nnUNet/
 masters_thesis.code-workspace
 notebooks/test_stuff_local
+scripts/*/*/wandb/

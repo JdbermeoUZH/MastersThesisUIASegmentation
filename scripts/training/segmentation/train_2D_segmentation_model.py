@@ -210,7 +210,8 @@ if __name__ == '__main__':
         kernel_size     = model_config['normalization_2D']['kernel_size'],
         activation      = model_config['normalization_2D']['activation'], 
         batch_norm      = model_config['normalization_2D']['batch_norm'],
-        residual        = model_config['normalization_2D']['residual']
+        residual        = model_config['normalization_2D']['residual'],
+        n_dimensions       = 2
     ).to(device)
 
     seg = UNet(
@@ -229,7 +230,7 @@ if __name__ == '__main__':
     trainer = NormSegTrainer(
         norm                = norm,
         seg                 = seg,
-        learning_rate       = train_config['segementation']['learning_rate'],
+        learning_rate       = train_config['segmentation']['learning_rate'],
         loss_func           = DiceLoss(),
         is_resumed          = is_resumed,
         checkpoint_best     = train_config['checkpoint_best'],
