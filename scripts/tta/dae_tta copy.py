@@ -185,10 +185,10 @@ if __name__ == '__main__':
         bg_suppression_opts=bg_suppression_opts,
     )
     
-    indices_per_volume = test_dataset.get_volume_indices()
+    number_of_volumes = test_dataset.get_volume_indices()
     
     start_idx = 0
-    stop_idx = len(indices_per_volume)  # == number of volumess
+    stop_idx = len(number_of_volumes)  # == number of volumes
     if tta_config['start'] is not None:
         start_idx = tta_config['start']
     if tta_config['stop'] is not None:
@@ -284,14 +284,11 @@ if __name__ == '__main__':
     if wandb_log:
         wandb.watch([norm], log='all', log_freq=1)
         
-    dice_scores = torch.zeros((len(indices_per_volume), n_classes))
+    dice_scores = torch.zeros((len(number_of_volumes), n_classes))
     
     for i in range(start_idx, stop_idx):
-        
-        seed = deep_get(params, 'seed', default=0)
-        seed_everything(seed)
 
-        indices = indices_per_volume[i]
+        indices = number_of_volumes[i]
         print(f'processing volume {i}')
 
         volume_dataset = Subset(test_dataset, indices)

@@ -1,14 +1,19 @@
+import os
 import copy
-from typing import Union, Optional
+from typing import Union, Optional, Any
 
 import torch
+import numpy as np
 from torch.nn import functional as F
-from torch.utils.data import DataLoader, TensorDataset
+from torch.utils.data import DataLoader, TensorDataset, ConcatDataset
 
 
 from models.normalization import background_suppression
+from utils.io import save_checkpoint, write_to_csv
 from utils.loss import dice_score, DiceLoss
 from utils.visualization import export_images
+from utils.utils import get_seed
+
 
 class TTADAE:
     
@@ -17,6 +22,7 @@ class TTADAE:
         norm: torch.nn.Module,
         seg: torch.nn.Module,
         dae: torch.nn.Module, 
+        atlas: Any,
         loss_func: torch.nn.Module = DiceLoss(),
         learning_rate: float = 1e-3
         ) -> None:
@@ -24,6 +30,7 @@ class TTADAE:
         self.norm = norm
         self.seg = seg
         self.dae = dae
+        self.atlas = atlas
         
         self.loss_func = loss_func
         self.learning_rate = learning_rate
@@ -42,12 +49,29 @@ class TTADAE:
         
     def tta(
         self,
-        test_dataloader: DataLoader,
+        volume_dataset: DataLoader,
+        dataset_name: str,
+        n_classes: int, 
+        index: int,
         rescale_factor: tuple[int],
+        alpha: float,
+        beta: float,
+        bg_suppression_opts: dict,
+        bg_suppression_opts_tta: dict,
+        num_steps: int,
         batch_size: int,
         num_workers: int,
-        
+        calculate_dice_every: int,
+        update_dae_output_every: int,
+        accumulate_over_volume: bool,
+        dataset_repetition: int,
+        const_aug_per_volume: bool,
+        save_checkpoints: bool,
+        logdir: Optional[str] = None,
     ):
+        device = device or self.device
+        logdir = logdir or self.logdir
+        
         self.seg.requires_grad_(False)
 
         if rescale_factor is not None:
@@ -55,7 +79,6 @@ class TTADAE:
             label_batch_size = int(batch_size * rescale_factor[0])
         else:
             label_batch_size = batch_size
-
 
         dae_dataloader = DataLoader(
             volume_dataset,
@@ -72,21 +95,16 @@ class TTADAE:
             num_workers=num_workers,
             drop_last=True,
         )
-
+        
         for step in range(num_steps):
-            
-            norm.eval()
-            volume_dataset.dataset.set_augmentation(False)
-
-            # Testing performance during adaptation.
+    
+            # Test performance during adaptation.
             if step % calculate_dice_every == 0 and calculate_dice_every != -1:
 
                 _, dices_fg = self.test_volume(
                     volume_dataset=volume_dataset,
-                    dataset=dataset,
+                    dataset_name=dataset_name,
                     logdir=logdir,
-                    norm=norm,
-                    seg=seg,
                     device=device,
                     batch_size=batch_size,
                     n_classes=n_classes,
@@ -95,66 +113,30 @@ class TTADAE:
                     iteration=step,
                     bg_suppression_opts=bg_suppression_opts,
                 )
-                test_scores.append(dices_fg.mean().item())
+                self.test_scores.append(dices_fg.mean().item())
 
+            # Update Pseudo label, with DAE or Atlas, depending on which has a better agreement
             if step % update_dae_output_every == 0:
                 
-
-                with torch.no_grad():
-                    masks = []
-                    for x, _, _, _, bg_mask in dae_dataloader:
-                        x = x.to(device).float()
-
-                        bg_mask = bg_mask.to(device)
-                        x_norm = norm(x)
-
-                        x_norm = background_suppression(
-                            x_norm, bg_mask, bg_suppression_opts_tta)
-
-                        mask, _ = seg(x_norm)
-                        masks.append(mask)
-
-                    masks = torch.cat(masks)
-                    masks = masks.permute(1,0,2,3).unsqueeze(0)
-
-                    if rescale_factor is not None:
-                        masks = F.interpolate(masks, scale_factor=rescale_factor, mode='trilinear')
-
-                    dae_output, _ = dae(masks)
-
-                    dice_denoised, _ = dice_score(masks, dae_output, soft=True, reduction='mean')
-                    dice_atlas, _ = dice_score(masks, atlas, soft=True, reduction='mean')
-
-                    if dice_denoised / dice_atlas >= alpha and dice_atlas >= beta:
-                        target_labels = dae_output
-                        dice = dice_denoised
-                    else:
-                        target_labels = atlas
-                        dice = dice_atlas
-
-                    target_labels = target_labels.squeeze(0)
-                    target_labels = target_labels.permute(1,0,2,3)
-
-                if metrics_best['best_score'] < dice:
-                    norm_dict['best_score'] = copy.deepcopy(norm.state_dict())
-                    metrics_best['best_score'] = dice
-
-                label_dataloader = DataLoader(
-                    ConcatDataset([TensorDataset(target_labels.cpu())] * dataset_repetition),
-                    batch_size=label_batch_size,
-                    shuffle=False,
+                label_dataloader = self.generate_pseudo_labels(
+                    dae_dataloader=dae_dataloader,
+                    label_batch_size=label_batch_size,
+                    bg_suppression_opts_tta=bg_suppression_opts_tta,
+                    rescale_factor=rescale_factor,
+                    device=device,
                     num_workers=num_workers,
-                    drop_last=True,
+                    dataset_repetition=dataset_repetition,
+                    alpha=alpha,
+                    beta=beta
                 )
 
             tta_loss = 0
             n_samples = 0
 
-            norm.train()
             volume_dataset.dataset.set_augmentation(True)
 
             if accumulate_over_volume:
-                optimizer.zero_grad()
+                self.optimizer.zero_grad()
 
             if const_aug_per_volume:
                 volume_dataset.dataset.set_seed(get_seed())
@@ -163,23 +145,23 @@ class TTADAE:
             for (x,_,_,_, bg_mask), (y,) in zip(volume_dataloader, label_dataloader):
 
                 if not accumulate_over_volume:
-                    optimizer.zero_grad()
+                    self.optimizer.zero_grad()
 
                 x = x.to(device).float()
                 y = y.to(device)
                 bg_mask = bg_mask.to(device)
-                x_norm = norm(x)
+                x_norm = self.norm(x)
                 
                 x_norm = background_suppression(x_norm, bg_mask, bg_suppression_opts_tta)
 
-                mask, logits = seg(x_norm)
+                mask, logits = self.seg(x_norm)
 
                 if rescale_factor is not None:
                     mask = mask.permute(1, 0, 2, 3).unsqueeze(0)
                     mask = F.interpolate(mask, scale_factor=rescale_factor, mode='trilinear')
                     mask = mask.squeeze(0).permute(1, 0, 2, 3)
 
-                loss = loss_func(mask, y)
+                loss = self.loss_func(mask, y)
 
                 if accumulate_over_volume:
                     loss /= len(volume_dataloader)
@@ -187,33 +169,33 @@ class TTADAE:
                 loss.backward()
 
                 if not accumulate_over_volume:
-                    optimizer.step()
+                    self.optimizer.step()
 
                 with torch.no_grad():
                     tta_loss += loss.detach() * x.shape[0]
                     n_samples += x.shape[0]
 
             if accumulate_over_volume:
-                optimizer.step()
+                self.optimizer.step()
 
-            tta_losses.append((tta_loss / n_samples).item())
+            self.tta_losses.append((tta_loss / n_samples).item())
 
 
         if save_checkpoints:
             os.makedirs(os.path.join(logdir, 'checkpoints'), exist_ok=True)
             save_checkpoint(
                 path=os.path.join(logdir, 'checkpoints',
-                                f'checkpoint_tta_{dataset}_{index:02d}.pth'),
+                                f'checkpoint_tta_{dataset_name}_{index:02d}.pth'),
                 norm_state_dict=norm_dict['best_score'],
-                seg_state_dict=seg.state_dict(),
+                seg_state_dict=self.seg.state_dict(),
             )
 
         os.makedirs(os.path.join(logdir, 'metrics'), exist_ok=True)
 
         os.makedirs(os.path.join(logdir, 'tta_score'), exist_ok=True)
         write_to_csv(
-            os.path.join(logdir, 'tta_score', f'{dataset}_{index:03d}.csv'),
-            np.array([test_scores]).T,
+            os.path.join(logdir, 'tta_score', f'{dataset_name}_{index:03d}.csv'),
+            np.array([self.test_scores]).T,
             header=['tta_score'],
             mode='w',
         )
@@ -314,5 +296,67 @@ class TTADAE:
         dices, dices_fg = dice_score(y_pred, y_original, soft=False, reduction='none', epsilon=1e-5)
         print(f'Iteration {iteration} - dice score {dices_fg.mean().item()}')
 
+        self.norm.train()
+        volume_dataset.dataset.set_augmentation(True)
+
         return dices.cpu(), dices_fg.cpu()
     
+    def generate_pseudo_labels(
+        self,
+        dae_dataloader: DataLoader,
+        label_batch_size: int,
+        bg_suppression_opts_tta: dict,
+        rescale_factor: tuple[int],
+        device: Union[str, torch.device],
+        num_workers: int,
+        dataset_repetition: int,
+        alpha: float = 1.0,
+        beta: float = 0.25
+    ) -> DataLoader:  
+    
+        with torch.no_grad():
+            masks = []
+            for x, _, _, _, bg_mask in dae_dataloader:
+                x = x.to(device).float()
+
+                bg_mask = bg_mask.to(device)
+                x_norm = self.norm(x)
+
+                x_norm = background_suppression(
+                    x_norm, bg_mask, bg_suppression_opts_tta)
+
+                mask, _ = self.seg(x_norm)
+                masks.append(mask)
+
+            masks = torch.cat(masks)
+            masks = masks.permute(1,0,2,3).unsqueeze(0)
+
+            if rescale_factor is not None:
+                masks = F.interpolate(masks, scale_factor=rescale_factor, mode='trilinear')
+
+            dae_output, _ = self.dae(masks)
+
+            dice_denoised, _ = dice_score(masks, dae_output, soft=True, reduction='mean')
+            dice_atlas, _ = dice_score(masks, self.atlas, soft=True, reduction='mean')
+
+            if dice_denoised / dice_atlas >= alpha and dice_atlas >= beta:
+                target_labels = dae_output
+                dice = dice_denoised
+            else:
+                target_labels = self.atlas
+                dice = dice_atlas
+
+            target_labels = target_labels.squeeze(0)
+            target_labels = target_labels.permute(1,0,2,3)
+
+        if self.metrics_best['best_score'] < dice:
+            self.norm_dict['best_score'] = copy.deepcopy(self.norm.state_dict())
+            self.metrics_best['best_score'] = dice
+
+        return DataLoader(
+                    ConcatDataset([TensorDataset(target_labels.cpu())] * dataset_repetition),
+                    batch_size=label_batch_size,
+                    shuffle=False,
+                    num_workers=num_workers,
+                    drop_last=True,
+                )
