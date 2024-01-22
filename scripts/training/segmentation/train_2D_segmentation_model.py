@@ -29,7 +29,7 @@ def preprocess_cmd_args() -> argparse.Namespace:
     All options specified will overwrite whaterver is specified in the config files.
     
     """
-    parser = argparse.ArgumentParser(description="Train DAE")
+    parser = argparse.ArgumentParser(description="Train Segmentation Model (with shallow normalization module)")
     
     parser.add_argument('dataset_config_file', type=str, help='Path to yaml config file with parameters that define the dataset.')
     parser.add_argument('model_config_file', type=str, help='Path to yaml config file with parameters that define the model.')
@@ -116,13 +116,13 @@ def get_configuration_arguments() -> tuple[dict, dict, dict]:
     train_config = rewrite_config_arguments(train_config, args, 'train')
     
     train_config['segmentation'] = rewrite_config_arguments(
-        train_config['segmentation'], args, 'train, dae')
+        train_config['segmentation'], args, 'train, segmentation')
     
     train_config['segmentation']['augmentation'] = rewrite_config_arguments(
-        train_config['segmentation']['augmentation'], args, 'train, dae, augmentation')
+        train_config['segmentation']['augmentation'], args, 'train, segmentation, augmentation')
     
     train_config['segmentation']['bg_suppression_opts'] = rewrite_config_arguments(
-        train_config['segmentation']['bg_suppression_opts'], args, 'train, dae, bg_suppression_opts',
+        train_config['segmentation']['bg_suppression_opts'], args, 'train, segmentation, bg_suppression_opts',
         prefix_to_remove='bg_supression_')
     
     return dataset_config, model_config, train_config
@@ -211,7 +211,7 @@ if __name__ == '__main__':
         activation      = model_config['normalization_2D']['activation'], 
         batch_norm      = model_config['normalization_2D']['batch_norm'],
         residual        = model_config['normalization_2D']['residual'],
-        n_dimensions       = 2
+        n_dimensions    = model_config['normalization_2D']['n_dimensions']
     ).to(device)
 
     seg = UNet(
@@ -251,8 +251,8 @@ if __name__ == '__main__':
     trainer.train(
         train_dataloader        = train_dataloader,
         val_dataloader          = val_dataloader,
-        epochs                  = train_config['dae']['epochs'],
-        validate_every          = train_config['dae']['validate_every']
+        epochs                  = train_config['segmentation']['epochs'],
+        validate_every          = train_config['segmentation']['validate_every']
     )
     
     write_to_csv(
