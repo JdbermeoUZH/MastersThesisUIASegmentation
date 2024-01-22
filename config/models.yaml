@@ -9,7 +9,7 @@ normalization_2D:
   n_layers:                         3
   image_channels:                   1
   channel_size:                     16
-  kernel_size:                      3
+  kernel_size:                      1
   activation:                       rbf
   batch_norm:                       True
   residual:                         True

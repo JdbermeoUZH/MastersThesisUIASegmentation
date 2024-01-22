@@ -8,7 +8,6 @@ n_classes:        15                # 15 for brain, 2 for WMH
 
 dae:
   wandb_project:                mt-tta-dae
-  logdir:                       /scratch_net/biwidl319/jbermeo/logs/dae
   batch_size:                   1
   num_workers:                  3
   dataset:                      hcp_t1            # brain: hcp_t1, hcp_t2, abide_caltech, abide_stanford; wmh: nuhs, umc, vu
@@ -51,8 +50,9 @@ segmentation:
   dataset:                      hcp_t1  # brain: hcp_t1, hcp_t2, abide_caltech, abide_stanford; wmh: nuhs, umc, vu
   image_size:                   [1, 256, 256]
   epochs:                       150  # 150 for brain, 1000 for WMH (nuhs, umc)
+  validate_every:               3
   learning_rate:                1.0e-3
-  logdir:                       /scratch_net/biwidl319/jbermeo/logs/brain/segmentation/hcp_t1_bg_supp
+  logdir:                       /scratch_net/biwidl319/jbermeo/logs/brain/segmentation/hcp_t1_bg_supp_k_size_1
   wandb_project:                ma-domain-generalization-dae
   
   bg_suppression_opts:

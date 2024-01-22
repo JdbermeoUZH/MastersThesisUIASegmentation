@@ -211,7 +211,7 @@ if __name__ == '__main__':
         activation      = model_config['normalization_2D']['activation'], 
         batch_norm      = model_config['normalization_2D']['batch_norm'],
         residual        = model_config['normalization_2D']['residual'],
-        n_dimensions    = model_config['normalization_2D']['n_dimensions']
+        n_dimensions    = model_config['normalization_2D']['n_dimensions'] 
     ).to(device)
 
     seg = UNet(
@@ -248,17 +248,19 @@ if __name__ == '__main__':
         
     # Start training
     # :=========================================================================:
+    validate_every = train_config['segmentation']['validate_every']
     trainer.train(
         train_dataloader        = train_dataloader,
         val_dataloader          = val_dataloader,
         epochs                  = train_config['segmentation']['epochs'],
-        validate_every          = train_config['segmentation']['validate_every']
+        validate_every          = validate_every
     )
     
     write_to_csv(
         path=os.path.join(logdir, 'training_statistics.csv'),
         data=np.stack([trainer.get_training_losses(),
-                       trainer.get_validation_losses(), trainer.get_validation_scores()], 1),
+                       trainer.get_validation_losses(validate_every=validate_every),
+                       trainer.get_validation_scores(validate_every=validate_every)], 1),
         header=['training_losses', 'validation_losses', 'validation_scores'],
     )
     

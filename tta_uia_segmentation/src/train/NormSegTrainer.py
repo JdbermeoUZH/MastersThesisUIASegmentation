@@ -247,11 +247,11 @@ class NormSegTrainer:
     def get_training_losses(self):
         return self.training_losses
     
-    def get_validation_losses(self):
-        return self.validation_losses
+    def get_validation_losses(self, validate_every: Optional[int] = None):
+        return self.validation_losses if validate_every is None else np.repeat(self.validation_losses, validate_every)
     
-    def get_validation_scores(self):
-        return self.validation_scores
+    def get_validation_scores(self, validate_every: Optional[int] = None):
+        return self.validation_scores if validate_every is None else np.repeat(self.validation_losses, validate_every)
 
 
        
