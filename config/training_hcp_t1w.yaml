@@ -7,7 +7,7 @@ checkpoint_last:  checkpoint_last.pth
 n_classes:        15                # 15 for brain, 2 for WMH
 
 dae:
-  wandb_project:                mt-tta-dae
+  wandb_project:                mt-tta-dae-dae_training
   batch_size:                   1
   num_workers:                  3
   dataset:                      hcp_t1            # brain: hcp_t1, hcp_t2, abide_caltech, abide_stanford; wmh: nuhs, umc, vu
@@ -18,7 +18,6 @@ dae:
   learning_rate:                1.0e-3
   validation_set_multiplier:    50
   logdir:                       /scratch_net/biwidl319/jbermeo/logs/brain/dae/hcp_t1
-  wandb_project:                ma-domain-generalization-dae
   
   augmentation:
     da_ratio:             0.25
@@ -53,7 +52,7 @@ segmentation:
   validate_every:               3
   learning_rate:                1.0e-3
   logdir:                       /scratch_net/biwidl319/jbermeo/logs/brain/segmentation/hcp_t1_bg_supp_k_size_1
-  wandb_project:                ma-domain-generalization-dae
+  wandb_project:                mt-tta-dae-segmenter_2d_training
   
   bg_suppression_opts:
       type:               fixed_value  # possible values: none, fixed_value, random_value

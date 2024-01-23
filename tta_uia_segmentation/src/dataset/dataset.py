@@ -192,6 +192,11 @@ class Dataset(data.Dataset):
         with h5py.File(self.path_original, 'r') as data:
             self.images_original = data['images'][:].astype(np.float32)
             self.labels_original = data['labels'][:].astype(np.uint8)
+            
+            num_volumes = len(data['nx'])
+            inplane_shape = self.images_original.shape[-2:]
+            self.images_original = self.images_original.reshape(num_volumes, -1, *inplane_shape)  # NDHW
+            self.labels_original = self.labels_original.reshape(num_volumes, -1, *inplane_shape)  # NDHW
 
             # Number of pixels for original images.
             self.n_pix_original = np.stack([data['nx'], data['ny'], data['nz']])

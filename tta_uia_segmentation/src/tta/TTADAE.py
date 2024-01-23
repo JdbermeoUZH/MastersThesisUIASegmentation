@@ -67,11 +67,9 @@ class TTADAE:
         dataset_repetition: int,
         const_aug_per_volume: bool,
         save_checkpoints: bool,
-        logdir: Optional[str] = None,
-    ):
-        device = device or self.device
-        logdir = logdir or self.logdir
-        
+        device: str,
+        logdir: Optional[str] = None,        
+    ):       
         self.seg.requires_grad_(False)
 
         if rescale_factor is not None:
@@ -154,7 +152,7 @@ class TTADAE:
                 
                 x_norm = background_suppression(x_norm, bg_mask, bg_suppression_opts_tta)
 
-                mask, logits = self.seg(x_norm)
+                mask, _ = self.seg(x_norm)
 
                 if rescale_factor is not None:
                     mask = mask.permute(1, 0, 2, 3).unsqueeze(0)

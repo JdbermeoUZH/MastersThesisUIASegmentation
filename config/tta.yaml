@@ -1,12 +1,12 @@
 wandb_log: True
-wandb_project: ma-domain-generalization-tta
 dataset: hcp_t2   # brain: hcp_t1, hcp_t2, abide_caltech, abide_stanford; wmh: nuhs, umc, vu
-start: None       # Index of the test dataset to start at
-stop:  None       # Index of the test dataset to stop at
+start: null       # Index of the test dataset to start at
+stop:  null       # Index of the test dataset to stop at
 num_workers: 0
 device: cuda
 tta_mode: dae # no_tta, gnn, gt
 image_size: [1, 256, 256]
+seed: 0
 
 bg_suppression_opts:
   type: fixed_value  # possible values: none, fixed_value, random_value
@@ -18,9 +18,10 @@ bg_suppression_opts:
   hole_filling: True
 
 dae:
-  logdir: logs/brain/sota/dae/hcp_t1_bg_supp
-  dae_dir: logs/brain/dae/hcp_t1
-  seg_dir: logs/brain/segmentation/hcp_t1_bg_supp
+  wandb_project: mt-tta-dae-dae_tta
+  logdir: /scratch_net/biwidl319/jbermeo/logs/brain/sota/dae/hcp_t1_bg_supp
+  dae_dir: /scratch_net/biwidl319/jbermeo/logs/brain/dae/hcp_t1
+  seg_dir: /scratch_net/biwidl319/jbermeo/logs/brain/segmentation/hcp_t1_bg_supp_k_size_1
   batch_size: 16
   dataset_repetition: 1
   num_steps: 500  # 500 for brain, 2700 for wmh
