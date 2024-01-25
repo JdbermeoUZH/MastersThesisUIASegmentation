@@ -11,7 +11,7 @@ sys.path.append(os.path.normpath(os.path.join(
     os.path.dirname(__file__), '..', '..', 'tta_uia_segmentation', 'src')))
 
 from tta import TTADAE
-from dataset.dataset import get_datasets
+from dataset.dataset_all_in_memory import get_datasets
 from models import Normalization, UNet
 from utils.io import load_config, dump_config, print_config, write_to_csv, rewrite_config_arguments
 from utils.utils import seed_everything, define_device
@@ -128,11 +128,11 @@ if __name__ == '__main__':
     dae_dir                 = tta_config[tta_mode]['dae_dir']
     seg_dir                 = tta_config[tta_mode]['seg_dir']
     
-    params_dae              = load_config(os.path.join(dae_dir, 'params.yaml'))
+    params_dae              = load_config('/scratch_net/biwidl319/jbermeo/logs/brain/dae/hcp_t1/params.yaml') # load_config(os.path.join(dae_dir, 'params.yaml'))
     model_params_dae        = params_dae['model']['dae']
     train_params_dae        = params_dae['training']
     
-    params_seg              = load_config(os.path.join(seg_dir, 'params.yaml'))
+    params_seg              = load_config('/scratch_net/biwidl319/jbermeo/logs/brain/segmentation/hcp_t1_bg_supp_k_size_1/params.yaml') # load_config(os.path.join(seg_dir, 'params.yaml'))
     model_params_norm       = params_dae['model']['normalization_2D']
     model_params_seg        = params_dae['model']['segmentation_2D']
     train_params_seg        = params_dae['training']
@@ -242,11 +242,7 @@ if __name__ == '__main__':
     atlas = checkpoint['atlas']
 
     del checkpoint
-
-    seg.eval()
-    dae.eval()
-
-    
+   
     # Define the TTADAE object that does the test time adapatation
     # :=========================================================================:
     learning_rate               = tta_config[tta_mode]['learning_rate']

@@ -2,9 +2,9 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 
-from utils.utils import assert_in
 from models.utils import get_conv, get_batch_norm, get_max_pool
 
+from utils.utils import assert_in
 
 class DoubleConv(nn.Module):
     def __init__(self, in_channels, out_channels, bias=False, activation=nn.ReLU, n_dimensions=3):
@@ -152,7 +152,6 @@ class UNet(nn.Module):
 
 
 if __name__ == '__main__':
-
     net = UNet(1, 12, channels=[16, 32, 64], channels_bottleneck=128, skips=[True, True, True], two_dim=False)
     # print(net)
     x = torch.rand((8, 1, 40, 128, 128))

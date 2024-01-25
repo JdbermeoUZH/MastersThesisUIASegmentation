@@ -6,7 +6,7 @@ from torch.distributions.kl import kl_divergence
 import torch.nn as nn
 import torch.nn.functional as F
 
-from dataset.dataset import get_sectors_from_index
+from dataset.dataset_all_in_memory import get_sectors_from_index
 from utils.contrastive_loss import ContrastiveLoss
 from utils.distributions import normal
 from utils.utils import assert_in, random_select_from_tensor

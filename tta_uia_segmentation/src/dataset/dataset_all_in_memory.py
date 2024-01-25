@@ -53,7 +53,7 @@ def get_datasets(
     datasets = []
 
     for split in splits:
-        datasets.append(Dataset(
+        datasets.append(DatasetInMemory(
             paths,
             paths_original,
             split,
@@ -108,7 +108,7 @@ class AugmentationNetwork(torch.nn.Module):
         return self.net(x)
 
 
-class Dataset(data.Dataset):
+class DatasetInMemory(data.Dataset):
     def __init__(
         self,
         paths,
@@ -345,7 +345,6 @@ class Dataset(data.Dataset):
         labels = self.labels[index, ...]
 
         seed = get_seed() if self.seed is None else self.seed
-
             
         background_mask = self.background_mask[index,...]
 

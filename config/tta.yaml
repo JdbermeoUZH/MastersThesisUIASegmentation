@@ -20,8 +20,8 @@ bg_suppression_opts:
 dae:
   wandb_project: mt-tta-dae-dae_tta
   logdir: /scratch_net/biwidl319/jbermeo/logs/brain/sota/dae/hcp_t1_bg_supp
-  dae_dir: /scratch_net/biwidl319/jbermeo/logs/brain/dae/hcp_t1
-  seg_dir: /scratch_net/biwidl319/jbermeo/logs/brain/segmentation/hcp_t1_bg_supp_k_size_1
+  dae_dir: /scratch_net/biwidl319/jbermeo/data/previous_results_nico/logs/brain/dae/hcp_t1
+  seg_dir: /scratch_net/biwidl319/jbermeo/data/previous_results_nico/logs/brain/segmentation/hcp_t1_bg_supp
   batch_size: 16
   dataset_repetition: 1
   num_steps: 500  # 500 for brain, 2700 for wmh
@@ -29,7 +29,7 @@ dae:
   calculate_dice_every: 25  # 25 for brain, 135 for wmh (nuhs, umc, vu)
   alpha: 1.0
   beta: 0.25
-  learning_rate: 1.0e-3
+  learning_rate: 1.0e-2
   save_checkpoints: True
   const_aug_per_volume: False
   accumulate_over_volume: True

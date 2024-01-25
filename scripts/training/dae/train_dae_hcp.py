@@ -8,7 +8,7 @@ from torch.utils.data import DataLoader, ConcatDataset
 
 sys.path.append(os.path.normpath(os.path.join(os.path.dirname(__file__), '..', '..', '..', 'tta_uia_segmentation', 'src')))
 
-from dataset.dataset import get_datasets
+from dataset.dataset_all_in_memory import get_datasets
 from models import UNet
 from train.DAETrainer import DAETrainer
 from utils.loss import DiceLoss
@@ -203,6 +203,8 @@ if __name__ == '__main__':
         deformation     = train_config['dae']['deformation'],
         load_original   = False,
     )
+
+    save_atlas(train_dataset, num_workers, logdir)
 
     train_dataloader = DataLoader(dataset=train_dataset, batch_size=batch_size,
         shuffle=True, num_workers=num_workers, drop_last=True)

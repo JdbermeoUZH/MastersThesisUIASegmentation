@@ -47,6 +47,10 @@ class TTADAE:
         self.norm_dict = {'best_score': copy.deepcopy(self.norm.state_dict())}
         self.metrics_best = {'best_score': 0}
         
+        # Set the models in eval mode
+        self.seg.eval()
+        self.dae.eval()
+        
     def tta(
         self,
         volume_dataset: DataLoader,
