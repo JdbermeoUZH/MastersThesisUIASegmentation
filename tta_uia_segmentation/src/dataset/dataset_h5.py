@@ -1,6 +1,8 @@
+import os
+from typing import Optional
+
 import h5py
 import numpy as np
-import os
 from skimage import filters, morphology
 from scipy import ndimage
 from skimage.transform import rescale
@@ -33,43 +35,37 @@ def split_dataset(dataset, ratio):
 
 
 def get_datasets(
-    paths,
-    paths_original,
-    splits,
-    image_size,
-    resolution_proc,
-    dim_proc,
-    n_classes,
-    rescale_factor=None,
-    aug_params=None,
-    deformation=None,
-    load_original=False,
-    image_transform='none',
-    image_transform_args=None,
-    bg_suppression_opts=None,
-    seed=None,
+    splits: list[str],
+    h5_filepath: str,
+    fold: int,
+    n_classes: int,
+    rescale_factor: Optional[tuple[float, float, float]] = None,
+    aug_params: Optional[dict] = None,
+    deformation: Optional[dict] = None,
+    image_transform: str = 'none',
+    image_transform_args: dict = {},
+    bg_suppression_opts: dict = {},
+    seed: int = None,
 ):
 
     datasets = []
 
     for split in splits:
-        datasets.append(DatasetInMemory(
-            paths,
-            paths_original,
-            split,
-            image_size,
-            resolution_proc,
-            dim_proc,
-            n_classes,
-            rescale_factor,
-            aug_params,
-            deformation,
-            load_original,
-            image_transform,
-            image_transform_args,
-            bg_suppression_opts=bg_suppression_opts,
-            seed=seed,
-        ))
+        datasets.append(
+            DatasetH5(
+                h5_filepath=h5_filepath,
+                fold=fold,
+                split=split,
+                n_classes=n_classes,
+                rescale_factor=rescale_factor,
+                aug_params=aug_params,
+                deformation=deformation,
+                image_transform=image_transform,
+                image_transform_args=image_transform_args,
+                bg_suppression_opts=bg_suppression_opts,
+                seed=seed,
+                )
+            )
 
     return datasets
 
@@ -108,36 +104,29 @@ class AugmentationNetwork(torch.nn.Module):
         return self.net(x)
 
 
-class DatasetInMemory(data.Dataset):
+class DatasetH5(data.Dataset):
     def __init__(
         self,
-        paths,
-        paths_original,
-        split,
-        image_size,
-        resolution_proc,
-        dim_proc,
-        n_classes,
-        rescale_factor=None,
-        aug_params=None,
-        deformation=None,
-        load_original=False,
-        image_transform='none',
-        image_transform_args={},
-        bg_suppression_opts={},
-        seed=None,
+        h5_filepath,
+        fold: int,
+        split: list[str],
+        n_classes: int,
+        rescale_factor: Optional[tuple[float, float, float]] = None,
+        aug_params: Optional[dict] = None,
+        deformation: Optional[dict] = None,
+        image_transform: str = 'none',
+        image_transform_args: dict = {},
+        bg_suppression_opts: dict = {},
+        seed: int = None,
     ):
 
-        assert_in(split, 'split', ['train', 'val', 'test'])
+        assert_in(split, 'split', ['train', 'train_dev', 'val_dev', 'test'])
         assert_in(image_transform, 'image_transform', ['none', 'random_net'])
 
-        self.path = os.path.expanduser(paths[split])
-        self.path_original = os.path.expanduser(paths_original[split])
+        self.h5_filepath = h5_filepath
         self.split = split
-        self.image_size = image_size
-        self.resolution_proc = resolution_proc
+        self.fold = fold
         self.rescale_factor = rescale_factor
-        self.dim_proc = dim_proc
         self.n_classes = n_classes
         self.aug_params = aug_params
         self.deformation = deformation
@@ -146,37 +135,16 @@ class DatasetInMemory(data.Dataset):
         self.bg_suppression_opts = bg_suppression_opts
         self.seed = seed
 
-        with h5py.File(self.path, 'r') as data:
-
-            self.images = data['images'][:].astype(np.float32)
-            self.labels = data['labels'][:].astype(np.uint8)
-
-            self.images = self.images.reshape(-1, *self.image_size)  # NDHW
-            self.labels = self.labels.reshape(-1, *self.image_size)  # NDHW
-
-            # Pixel sizes of original images.
-            self.pix_size_original = np.stack([data['px'], data['py'], data['pz']])
-
-        if rescale_factor is not None:
-            self.dim_proc = (self.dim_proc * np.array(rescale_factor)).astype(int).tolist()
-
-            self.images = torch.from_numpy(self.images).unsqueeze(0)
-            self.labels = torch.from_numpy(self.labels).unsqueeze(0)
-
-            self.images = F.interpolate(self.images, scale_factor=rescale_factor, mode='trilinear')
-            self.labels = F.interpolate(self.labels, scale_factor=rescale_factor, mode='nearest')
-
-            self.images = self.images.squeeze().numpy()
-            self.labels = self.labels.squeeze().numpy()
-
-        assert self.images.shape == self.labels.shape, 'Image and label shape not matching'
-
-        if load_original:
-            self.load_original_images()
-        else:
-            self.labels_original = None
-            self.images_original = None
-
+        
+        # Store the dictionaries of the indexes of the split and fold requested
+        with h5py.File(self.h5_filepath, 'r') as h5f:
+            ids = h5f['ids'][:]
+            indexes_of_ids_in_fold = h5f[f'folds/fold_{self.fold}/{self.split}_idx'][:]
+            
+            self.index_to_id = {new_index: ids[idx_id] for new_index, idx_id in enumerate(indexes_of_ids_in_fold)}
+            self.id_to_index = {id: new_index for new_index, id in self.index_to_id.items()}
+                    
+        # Initialize random net for augmentation 
         if image_transform == 'random_net':
             hidden_channels = deep_get(image_transform_args, 'hidden_channels')
             kernel_size = deep_get(image_transform_args, 'kernel_size')
@@ -185,75 +153,13 @@ class DatasetInMemory(data.Dataset):
 
             self.only_foreground = deep_get(image_transform_args, 'only_foreground')
 
-        self.background_mask = self.get_background_mask(self.images, self.labels)
-
-
-    def load_original_images(self):
-        with h5py.File(self.path_original, 'r') as data:
-            self.images_original = data['images'][:].astype(np.float32)
-            self.labels_original = data['labels'][:].astype(np.uint8)
-            
-            num_volumes = len(data['nx'])
-            inplane_shape = self.images_original.shape[-2:]
-            self.images_original = self.images_original.reshape(num_volumes, -1, *inplane_shape)  # NDHW
-            self.labels_original = self.labels_original.reshape(num_volumes, -1, *inplane_shape)  # NDHW
-
-            # Number of pixels for original images.
-            self.n_pix_original = np.stack([data['nx'], data['ny'], data['nz']])
-
-        self.background_mask_original = self.get_background_mask(self.images_original, self.labels_original)
-
-
-    def get_volume_indices(self):
-        n_slices = len(self)
-        n_volumes = n_slices // self.dim_proc[0]
-        n_slices_per_volume = np.array([self.dim_proc[0]] * n_volumes)
-
-        indices = np.arange(n_slices)
-
-        indices_per_volume = np.split(indices, n_slices_per_volume.cumsum()[:-1])
-
-        return indices_per_volume
-
 
     def scale_to_original_size(self, image, index, interpolation_order=None):
-
-        # image has shape ...HW
-        shape = image.shape
-
-        nx, ny, _ = self.n_pix_original[:, index]
-        px, py, pz = self.pix_size_original[:, index]
-        px_proc, py_proc, pz_proc = self.resolution_proc
-
-        scale = [pz_proc / pz, px_proc / px, py_proc / py]
-        image_rescaled = F.interpolate(image, scale_factor = scale, mode=interpolation_order)
-
-        image_rescaled = image_rescaled.reshape(-1, *image_rescaled.shape[-2:])
-        image_rescaled = crop_or_pad_slice_to_size(image_rescaled, nx, ny)
-        image_rescaled = image_rescaled.reshape((*shape[:-3], -1, nx, ny))
-
-        return image_rescaled
-
-
-    def get_original_images(self, index, as_onehot=True):
-        nx, ny, _ = self.n_pix_original[:, index]
+        """
+        Do not need this method for the time being. Check original code if needed again
+        """
+        raise NotImplementedError
         
-        if self.images_original is None or self.labels_original is None:
-            self.load_original_images()
-
-        images = self.images_original[index, :, 0:nx, 0:ny]
-        labels = self.labels_original[index, :, 0:nx, 0:ny]
-
-        bg_mask = self.background_mask_original[index, :, 0:nx, 0:ny]
-
-        images = torch.from_numpy(images).unsqueeze(0)
-        labels = torch.from_numpy(labels).unsqueeze(0)
-
-        if as_onehot:
-            labels = class_to_onehot(labels, self.n_classes, class_dim=1)
-
-        return images, labels, bg_mask
-
 
     def image_transformation(self, images):
         if len(images.unique()) == 1:
@@ -284,15 +190,17 @@ class DatasetInMemory(data.Dataset):
         self.seed = seed
 
     def __len__(self):
-        return self.images.shape[0]
-    
-    def idx_to_slice_idx(self, idx):
-        idx = (idx / self.dim_proc[-1]) % 1
-        return idx
-
+        return len(self.index_to_id)
 
     def get_background_mask(self, images, labels):
-
+        """
+        Get estimated background mask from images
+        
+        If the mask_source is 'ground_truth' (from bg_suppression_opts),
+        then the background mask is the ground truth segmentation.
+        
+        Otherwise it is the mask obtained by the specified thresholding method in bg_suppression_opts.
+        """
         mask_source = deep_get(self.bg_suppression_opts, 'mask_source', default='ground_truth')
         assert_in(mask_source, 'mask_source', ['ground_truth', 'thresholding'])
 
@@ -340,22 +248,36 @@ class DatasetInMemory(data.Dataset):
 
 
     def __getitem__(self, index):
-
-        images = self.images[index, ...]
-        labels = self.labels[index, ...]
+        with h5py.File(self.h5_filepath, 'r') as h5f:
+            img_group = h5f['data'][self.index_to_id[index]]
+            image = img_group['tof'][:]
+            labels = img_group['seg'][:]
 
         seed = get_seed() if self.seed is None else self.seed
-            
-        background_mask = self.background_mask[index,...]
+        
+        if self.rescale_factor is not None:
+            image = torch.from_numpy(image).unsqueeze(0)
+            labels = torch.from_numpy(labels).unsqueeze(0)
 
+            image = F.interpolate(image, scale_factor=self.rescale_factor, mode='trilinear')
+            labels = F.interpolate(labels, scale_factor=self.rescale_factor, mode='nearest')
+
+            image = image.squeeze().numpy()
+            labels = labels.squeeze().numpy()
+        
+        assert image.shape == labels.shape, 'Image and label shape not matching'
+        
+        background_mask = self.get_background_mask(image, labels)
+                           
         if self.augmentation:
-            images, labels, background_mask = apply_data_augmentation(
-                images,
+            image, labels, background_mask = apply_data_augmentation(
+                image,
                 labels,
                 background_mask,
                 **self.aug_params,
                 rng=np.random.default_rng(seed),
             )
+            
         background_mask = (background_mask == 1)
 
         if self.deformation is not None:
@@ -371,8 +293,8 @@ class DatasetInMemory(data.Dataset):
         else:
             labels_deformed = torch.tensor([])
 
-        images = torch.from_numpy(images)
-        images = self.image_transformation(images)
+        image = torch.from_numpy(image)
+        image = self.image_transformation(image)
 
         labels = torch.from_numpy(labels)
         labels = class_to_onehot(labels, self.n_classes, class_dim=0)
@@ -381,7 +303,4 @@ class DatasetInMemory(data.Dataset):
             labels_deformed = torch.from_numpy(labels_deformed)
             labels_deformed = class_to_onehot(labels_deformed, self.n_classes, class_dim=0)
 
-        if self.image_size[0] == 1:
-            index = self.idx_to_slice_idx(index)
-
-        return images, labels, labels_deformed, index, background_mask
+        return image, labels, labels_deformed, index, background_mask

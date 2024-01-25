@@ -9,8 +9,10 @@ USZ:
     level_of_dir_with_id: -2
 
   preprocessed:
-    paths_processed:      '/scratch_net/biwidl319/jbermeo/data/preprocessed/USZ/1_resampled'
-    paths_original:       '/scratch_net/biwidl319/jbermeo/data/raw/USZ'
+    h5_filepath:          '/scratch_net/biwidl319/jbermeo/data/preprocessed/UIA_segmentation/USZ.h5'
+  
+  original:
+    h5_filepath:          '/scratch_net/biwidl319/jbermeo/data/raw/USZ'
       
 
 ADAM:
@@ -24,8 +26,10 @@ ADAM:
     level_of_dir_with_id: -2
 
   preprocessed:
-    paths_processed:      '/scratch_net/biwidl319/jbermeo/data/preprocessed/ADAM/1_resampled'
-    paths_original:       '/scratch_net/biwidl319/jbermeo/data/raw/ADAM'
+    h5_filepath:          '/scratch_net/biwidl319/jbermeo/data/preprocessed/UIA_segmentation/ADAM.h5'
+  
+  original:
+    h5_filepath:          '/scratch_net/biwidl319/jbermeo/data/raw/ADAM'
 
 
 
@@ -40,8 +44,10 @@ Lausanne:
     level_of_dir_with_id: -4
 
   preprocessed:
-    paths_processed:      '/scratch_net/biwidl319/jbermeo/data/preprocessed/Lausanne/5_h5'
-    paths_original:       '/scratch_net/biwidl319/jbermeo/data/raw/Lausanne'
+    h5_filepath:          '/scratch_net/biwidl319/jbermeo/data/preprocessed/UIA_segmentation/Lausanne.h5'
+  
+  original:
+    h5_filepath:          '/scratch_net/biwidl319/jbermeo/data/raw/Lausanne'
 
 
 

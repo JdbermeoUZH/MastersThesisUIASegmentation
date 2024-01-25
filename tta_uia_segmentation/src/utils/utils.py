@@ -112,19 +112,21 @@ def random_select_from_tensor(tensor, dim):
 # ===============================================================
 # Adapted from https://github.com/neerakara/test-time-adaptable-neural-networks-for-domain-generalization/blob/master/utils.py#L91
 # ===============================================================
-def crop_or_pad_slice_to_size(slice, nx, ny):
+def crop_or_pad_slice_to_size(slice, nx, ny, nz=None):
     z, x, y = slice.shape
 
     x_s = (x - nx) // 2
     y_s = (y - ny) // 2
     x_c = (nx - x) // 2
     y_c = (ny - y) // 2
+    z_s = (z - nz) // 2 if nz is not None else None
+    z_c = (nz - z) // 2 if nz is not None else None
 
     if x > nx and y > ny:
-        slice_cropped = slice[:, x_s:x_s + nx, y_s:y_s + ny]
+        slice_cropped = slice[z_s: z_s + nz, x_s: x_s + nx, y_s: y_s + ny]
     else:
         if isinstance(slice, torch.Tensor): 
-            slice_cropped = torch.zeros((z, nx, ny))
+            slice_cropped = torch.zeros((z, nx, ny,))
         else:
             slice_cropped = np.zeros((z, nx, ny))
         

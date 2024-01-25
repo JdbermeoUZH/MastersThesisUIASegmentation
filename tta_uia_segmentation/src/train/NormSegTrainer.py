@@ -56,6 +56,7 @@ class NormSegTrainer:
         self.norm = norm
         self.seg = seg
         self.bg_suppression_opts = bg_suppression_opts
+        self.with_bg_supression = bg_suppression_opts['type'] != 'none'
         self.optimizer = torch.optim.Adam(
             list(self.norm.parameters()) + list(self.seg.parameters()),
             lr=learning_rate
@@ -90,6 +91,7 @@ class NormSegTrainer:
         train_dataloader: DataLoader,
         epochs: int,
         validate_every: int,
+        with_bg_supression: Optional[bool] = None,
         checkpoint_best: Optional[str] = None,
         checkpoint_last: Optional[str] = None,
         logdir: Optional[str] = None,
@@ -105,6 +107,7 @@ class NormSegTrainer:
         checkpoint_best = checkpoint_best or self.checkpoint_best
         checkpoint_last = checkpoint_last or self.checkpoint_last
         wandb_dir = wandb_dir or self.wandb_dir
+        with_bg_supression = with_bg_supression or self.with_bg_supression
         
         print('Starting training')
         
@@ -122,8 +125,9 @@ class NormSegTrainer:
                 y = y.to(device)
                 bg_mask = bg_mask.to(device)
 
-                x_norm = self.norm(x)
-                x_norm = background_suppression(x_norm, bg_mask, self.bg_suppression_opts)
+                x_norm = self.norm(x[None, ...])
+                if with_bg_supression:
+                    x_norm = background_suppression(x_norm, bg_mask, self.bg_suppression_opts)
                 y_pred, _ = self.seg(x_norm)
 
                 loss = self.loss_func(y_pred, y)
@@ -173,9 +177,11 @@ class NormSegTrainer:
         self,
         val_dataloader: DataLoader,
         device: Optional[torch.device] = None,
+        with_bg_supression: Optional[bool] = None,
         ):
 
         device = device or self.device
+        with_bg_supression = with_bg_supression or self.with_bg_supression
         validation_loss = 0
         validation_score = 0
         n_samples_val = 0
@@ -190,7 +196,8 @@ class NormSegTrainer:
                 bg_mask = bg_mask.to(device)
 
                 x_norm = self.norm(x)
-                x_norm = background_suppression(x_norm, bg_mask, self.bg_suppression_opts)
+                if with_bg_supression:
+                    x_norm = background_suppression(x_norm, bg_mask, self.bg_suppression_opts)
                 y_pred, _ = self.seg(x_norm)
                 
                 loss = self.loss_func(y_pred, y)
@@ -204,6 +211,18 @@ class NormSegTrainer:
             validation_score /= n_samples_val
 
         return validation_loss, validation_score
+    
+    def forward(
+        self,
+        x: torch.Tensor,
+        bg_mask: Optional[torch.Tensor] = None
+        ) -> tuple[torch.Tensor, torch.Tensor]:
+        
+        x_norm = self.norm(x)
+        if self.with_bg_supression:
+            x_norm = background_suppression(x_norm, bg_mask, self.bg_suppression_opts)
+        
+        return self.seg(x_norm)
     
     def _load_checkpoint(self, checkpoint_path: str):
         checkpoint = torch.load(checkpoint_path, map_location=self.device)

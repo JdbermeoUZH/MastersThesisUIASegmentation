@@ -86,7 +86,15 @@ def add_scans_to_group(scan_fps: dict, h5_fp: str, group_name: str, max_buffer_s
         
         # Store the tof scan
         scan = nib.load(image_fps['tof'])
-        H5Scan.create_dataset('tof', data=scan.get_fdata(), dtype=np.float32)
+        
+        # Convert the scan from WHD to DHW
+        scan_data = scan.get_fdata()
+        scan_data = np.moveaxis(scan_data, -1, 0)
+        scan_data = np.moveaxis(scan_data, -2, -1)
+        scan_data = np.rot90(scan_data, k=2, axes=(0, 1))
+            
+        
+        H5Scan.create_dataset('tof', data=scan_data, dtype=np.float32)
         
         # Store original spacing
         px, py, pz = scan.header.get_zooms()
@@ -94,10 +102,13 @@ def add_scans_to_group(scan_fps: dict, h5_fp: str, group_name: str, max_buffer_s
         H5Scan.create_dataset('py', data=py)
         H5Scan.create_dataset('pz', data=pz)
         
-        # Store the segmentation
+        # Store the segmentation, also in DHW
         if every_scan_has_seg:
-            H5Scan.create_dataset('seg', data=nib.load(image_fps['seg']).get_fdata(),
-                                  dtype=np.uint8)
+            seg_data = nib.load(image_fps['seg']).get_fdata()
+            seg_data = np.moveaxis(seg_data, -1, 0)
+            seg_data = np.moveaxis(seg_data, -2, -1)
+            seg_data = np.rot90(seg_data, k=2, axes=(0, 1))
+            H5Scan.create_dataset('seg', data=seg_data, dtype=np.uint8)
         else:
             H5Scan.create_dataset('seg', data=np.zeros(scan.shape))
         

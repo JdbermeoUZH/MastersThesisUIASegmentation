@@ -36,6 +36,8 @@ def background_suppression(x, bg_mask, opts=None, bg_class=0):
 class RBF(nn.Module):
     """
     Alternative to ReLU activation function
+    
+    TODO: Adjust the n_channels param so that it has the right dim when dealing with 3D images
     """
     def __init__(self, n_channels, mean=0.2, stddev=0.05):
         super().__init__()
