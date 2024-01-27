@@ -96,6 +96,7 @@ def apply_data_augmentation(
     images,
     labels,
     background_mask,
+    n_dimensions   = 2,
     da_ratio       = 0.25,
     p_inversion    = 0.0,
     inv_strength   = 0.8,
@@ -148,10 +149,16 @@ def apply_data_augmentation(
 
         random_shift_x = rng.uniform(trans_min, trans_max)
         random_shift_y = rng.uniform(trans_min, trans_max)
+        
+        random_shifts = [random_shift_x, random_shift_y ]
+        if n_dimensions == 3:
+            random_shift_z = rng.uniform(trans_min, trans_max)
+            random_shifts = [random_shift_z] + random_shifts
+            
 
-        images_ = shift(images_, shift=(0, random_shift_x, random_shift_y), order=1, mode='reflect')
-        labels_ = shift(labels_, shift=(0, random_shift_x, random_shift_y), order=0, mode='reflect')
-        background_mask_ = shift(background_mask_, shift=(0, random_shift_x, random_shift_y), order=0, mode='reflect')
+        images_ = shift(images_, shift=(0, *random_shifts), order=1, mode='reflect')
+        labels_ = shift(labels_, shift=(0, *random_shifts), order=0, mode='reflect')
+        background_mask_ = shift(background_mask_, shift=(0, *random_shifts), order=0, mode='reflect')
 
     # ========
     # rotation

@@ -15,7 +15,8 @@ import numpy as np
 import nibabel as nib
 
 
-sys.path.append(os.path.normpath(os.path.dirname(__file__), '..', '..', 'tta_uia_segmentation', 'src'))
+sys.path.append(os.path.normpath(os.path.join(
+    os.path.dirname(__file__), '..', '..', 'tta_uia_segmentation', 'src')))
 from preprocessing.resampling import resample
 from preprocessing.utils import get_filepaths
 

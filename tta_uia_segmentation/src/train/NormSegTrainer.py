@@ -118,14 +118,18 @@ class NormSegTrainer:
 
             self.norm.train()
             self.seg.train()
-
+            
             print(f'Training for epoch {epoch}')
-            for x, y, _, _, bg_mask in train_dataloader:
+            for x, y, _, _, bg_mask in tqdm(train_dataloader):
                 x = x.to(device).float()
                 y = y.to(device)
                 bg_mask = bg_mask.to(device)
 
-                x_norm = self.norm(x[None, ...])
+                print('-----------------debugging----------------------')
+                print(x.shape)
+                print(y.shape)
+                
+                x_norm = self.norm(x)
                 if with_bg_supression:
                     x_norm = background_suppression(x_norm, bg_mask, self.bg_suppression_opts)
                 y_pred, _ = self.seg(x_norm)
@@ -165,10 +169,25 @@ class NormSegTrainer:
                     self._save_checkpoint(os.path.join(logdir, checkpoint_best))
             
             if wandb_log:
+                
+                if val_dataloader is not None:
+                    validation_metrics_to_log = {
+                        'validation_loss': validation_loss,
+                        'validation_score': validation_score.nanmean(),
+                    }
+                    
+                    if validation_score.shape[1] > 1:
+                        score_per_class = validation_score.nanmean(dim=0)
+                        for i in range(validation_score.shape[1]):
+                            label_idx = i + 1
+                            label_name = val_dataloader.dataset.get_label_name(label_idx)
+                            validation_metrics_to_log[f'validation_score_{label_name}'] = score_per_class[i].item()
+                else :
+                    validation_metrics_to_log = {}
+                
                 wandb.log({
                     'training_loss': training_loss,
-                    'validation_loss': validation_loss if val_dataloader is not None else None,
-                    'validation_score': validation_score if val_dataloader is not None else None,
+                    **validation_metrics_to_log
                 }, step=epoch)
                 wandb.save(os.path.join(wandb_dir, checkpoint_last), base_path=wandb_dir)
                 wandb.save(os.path.join(wandb_dir, checkpoint_best), base_path=wandb_dir)
@@ -201,7 +220,8 @@ class NormSegTrainer:
                 y_pred, _ = self.seg(x_norm)
                 
                 loss = self.loss_func(y_pred, y)
-                _, dice_fg = dice_score(y_pred, y, soft=False, reduction='mean')
+                
+                _, dice_fg = dice_score(y_pred, y, soft=False, reduction='none')
 
                 validation_loss += loss * x.shape[0]
                 validation_score += dice_fg * x.shape[0]

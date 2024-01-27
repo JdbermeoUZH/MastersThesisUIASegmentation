@@ -1,0 +1,35 @@
+Traceback (most recent call last):
+  File "/scratch_net/biwidl319/jbermeo/MastersThesisUIASegmentation/scripts/preprocessing/05_save_into_hd5_file.py", line 150, in <module>
+    scan_fps_leq_4mm, scan_fps = separate_filepaths_based_on_aneurysm_diameter(
+  File "/scratch_net/biwidl319/jbermeo/MastersThesisUIASegmentation/scripts/preprocessing/05_save_into_hd5_file.py", line 56, in separate_filepaths_based_on_aneurysm_diameter
+    seg_mask_arr = seg_mask.get_fdata()
+  File "/scratch_net/biwidl319/jbermeo/GNN-Domain-Generalization-main/net_scratch/conda_envs/tta_uia_seg/lib/python3.10/site-packages/nibabel/dataobj_images.py", line 373, in get_fdata
+    data = np.asanyarray(self._dataobj, dtype=dtype)
+  File "/scratch_net/biwidl319/jbermeo/GNN-Domain-Generalization-main/net_scratch/conda_envs/tta_uia_seg/lib/python3.10/site-packages/nibabel/arrayproxy.py", line 457, in __array__
+    arr = self._get_scaled(dtype=dtype, slicer=())
+  File "/scratch_net/biwidl319/jbermeo/GNN-Domain-Generalization-main/net_scratch/conda_envs/tta_uia_seg/lib/python3.10/site-packages/nibabel/arrayproxy.py", line 424, in _get_scaled
+    scaled = apply_read_scaling(self._get_unscaled(slicer=slicer), scl_slope, scl_inter)
+  File "/scratch_net/biwidl319/jbermeo/GNN-Domain-Generalization-main/net_scratch/conda_envs/tta_uia_seg/lib/python3.10/site-packages/nibabel/arrayproxy.py", line 394, in _get_unscaled
+    return array_from_file(
+  File "/scratch_net/biwidl319/jbermeo/GNN-Domain-Generalization-main/net_scratch/conda_envs/tta_uia_seg/lib/python3.10/site-packages/nibabel/volumeutils.py", line 465, in array_from_file
+    n_read = infile.readinto(data_bytes)
+  File "/scratch_net/biwidl319/jbermeo/GNN-Domain-Generalization-main/net_scratch/conda_envs/tta_uia_seg/lib/python3.10/gzip.py", line 301, in read
+    return self._buffer.read(size)
+  File "/scratch_net/biwidl319/jbermeo/GNN-Domain-Generalization-main/net_scratch/conda_envs/tta_uia_seg/lib/python3.10/_compression.py", line 68, in readinto
+    data = self.read(len(byte_view))
+  File "/scratch_net/biwidl319/jbermeo/GNN-Domain-Generalization-main/net_scratch/conda_envs/tta_uia_seg/lib/python3.10/gzip.py", line 510, in read
+    self._add_read_data( uncompress )
+  File "/scratch_net/biwidl319/jbermeo/GNN-Domain-Generalization-main/net_scratch/conda_envs/tta_uia_seg/lib/python3.10/gzip.py", line 515, in _add_read_data
+    self._crc = zlib.crc32(data, self._crc)
+KeyboardInterrupt
+Traceback (most recent call last):
+  File "/scratch_net/biwidl319/jbermeo/MastersThesisUIASegmentation/scripts/preprocessing/05_save_into_hd5_file.py", line 157, in <module>
+    h5f = h5py.File(h5_fp, 'w')
+  File "/scratch_net/biwidl319/jbermeo/GNN-Domain-Generalization-main/net_scratch/conda_envs/tta_uia_seg/lib/python3.10/site-packages/h5py/_hl/files.py", line 562, in __init__
+    fid = make_fid(name, mode, userblock_size, fapl, fcpl, swmr=swmr)
+  File "/scratch_net/biwidl319/jbermeo/GNN-Domain-Generalization-main/net_scratch/conda_envs/tta_uia_seg/lib/python3.10/site-packages/h5py/_hl/files.py", line 241, in make_fid
+    fid = h5f.create(name, h5f.ACC_TRUNC, fapl=fapl, fcpl=fcpl)
+  File "h5py/_objects.pyx", line 54, in h5py._objects.with_phil.wrapper
+  File "h5py/_objects.pyx", line 55, in h5py._objects.with_phil.wrapper
+  File "h5py/h5f.pyx", line 122, in h5py.h5f.create
+BlockingIOError: [Errno 11] Unable to synchronously create file (unable to lock file, errno = 11, error message = 'Resource temporarily unavailable')

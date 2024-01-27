@@ -1,4 +1,5 @@
 import os
+import json
 from typing import Optional
 
 import h5py
@@ -143,6 +144,8 @@ class DatasetH5(data.Dataset):
             
             self.index_to_id = {new_index: ids[idx_id] for new_index, idx_id in enumerate(indexes_of_ids_in_fold)}
             self.id_to_index = {id: new_index for new_index, id in self.index_to_id.items()}
+            
+            self.label_names = json.loads(h5f['label_names'][()])
                     
         # Initialize random net for augmentation 
         if image_transform == 'random_net':
@@ -262,8 +265,8 @@ class DatasetH5(data.Dataset):
             image = F.interpolate(image, scale_factor=self.rescale_factor, mode='trilinear')
             labels = F.interpolate(labels, scale_factor=self.rescale_factor, mode='nearest')
 
-            image = image.squeeze().numpy()
-            labels = labels.squeeze().numpy()
+            image = image.squeeze(0).numpy()
+            labels = labels.squeeze(0).numpy()
         
         assert image.shape == labels.shape, 'Image and label shape not matching'
         
@@ -304,3 +307,6 @@ class DatasetH5(data.Dataset):
             labels_deformed = class_to_onehot(labels_deformed, self.n_classes, class_dim=0)
 
         return image, labels, labels_deformed, index, background_mask
+
+    def get_label_name(self, label_idx):
+        return self.label_names[label_idx]

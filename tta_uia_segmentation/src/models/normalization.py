@@ -37,15 +37,16 @@ class RBF(nn.Module):
     """
     Alternative to ReLU activation function
     
-    TODO: Adjust the n_channels param so that it has the right dim when dealing with 3D images
     """
-    def __init__(self, n_channels, mean=0.2, stddev=0.05):
+    def __init__(self, n_channels, mean=0.2, stddev=0.05, n_dimensions=2):
         super().__init__()
 
         self.mean = mean
         self.stddev = stddev
+        
+        image_shape = [1] * n_dimensions
 
-        self.scale = nn.Parameter(torch.empty((1, n_channels, 1, 1)), requires_grad=True)
+        self.scale = nn.Parameter(torch.empty((1, n_channels, *image_shape)), requires_grad=True)
         self.reset_parameters()
 
     def reset_parameters(self):
@@ -98,7 +99,7 @@ class Normalization(nn.Module):
             elif activation == 'elu':
                 layers += [nn.ELU()]
             elif activation == 'rbf':
-                layers += [RBF(out_size)]
+                layers += [RBF(out_size, n_dimensions=n_dimensions)]
 
         layers += [mu.get_conv(channel_sizes[-1], image_channels, 
                                kernel_size, padding='same', padding_mode='reflect',

@@ -1,6 +1,7 @@
 
 import os
 import sys
+import json
 import argparse
 
 import h5py
@@ -21,19 +22,22 @@ level_of_dir_with_id_default        = -2
 path_to_save_processed_data_default = '/scratch_net/biwidl319/jbermeo/data/preprocessed/UIA_segmentation'
 diameter_threshold_default          = 4  # mm, separate the scans into two groups: < 4mm and >= 4mm. UIAs < 4mm are usually not treated
 seed                                = 0
+num_channels                        = 1
 #----------
 
 def preprocess_cmd_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description='Registratin of scans')
     
     parser.add_argument('dataset', type=str, choices=['USZ', 'ADAM', 'Lausanne', None])
-    parser.add_argument('path_to_dir', type=str)
+    parser.add_argument('path_to_dir', type=str, help='Path to the directory with the scans')
+    parser.add_argument('path_label_names_dict', type=str, help='Path to the dictionary that maps the label names to their corresponding class')
     parser.add_argument('--num_folds', type=int, default=num_folds_default, help='Number of folds for cross-validation')
     parser.add_argument('--train_val_split', type=float, default=train_val_split_default,
                         help='Percentage of the train set to use as validation')
     parser.add_argument('--diameter_threshold', type=float, default=diameter_threshold_default,
                         help='Diameter threshold to separate the scans into two groups: < 4mm and >= 4mm. UIAs < 4mm are usually not treated')
     parser.add_argument('--path_to_save_processed_data', type=str, default=path_to_save_processed_data_default)   
+    parser.add_argument('--num_channels', type=int, default=num_channels, help='Number of channels of the scans')
         
     args = parser.parse_args()
     
@@ -69,7 +73,23 @@ def separate_filepaths_based_on_aneurysm_diameter(
     return scan_fps_less_than_4mm, scan_fps_greater_than_4mm    
 
 
-def add_scans_to_group(scan_fps: dict, h5_fp: str, group_name: str, max_buffer_scans: int = 5):
+def _verify_expected_channels(scan_data: np.ndarray, num_channels: int = 1):
+    assert len(scan_data.shape) in [3, 4], \
+    f'Expected a single channel or multichannel 3D scan, but got {len(scan_data.shape)}D'
+    
+    if num_channels == 1 and len(scan_data.shape) == 3:
+        scan_data = np.expand_dims(scan_data, axis=0)
+        
+    elif num_channels == 1 and len(scan_data.shape) == 4:
+        if scan_data.shape[0] == 1:
+            scan_data = scan_data[0]
+        else:
+            raise ValueError(f'Expected a single channel scan, but got {scan_data.shape[0]} channels')
+        
+    return scan_data
+
+
+def add_scans_to_group(scan_fps: dict, h5_fp: str, group_name: str, num_channels: int = 1, max_buffer_scans: int = 5):
     num_scans_written = 0
     h5f = h5py.File(h5_fp, 'a')
     H5Data = h5f.create_group(group_name)
@@ -89,9 +109,11 @@ def add_scans_to_group(scan_fps: dict, h5_fp: str, group_name: str, max_buffer_s
         
         # Convert the scan from WHD to DHW
         scan_data = scan.get_fdata()
-        scan_data = np.moveaxis(scan_data, -1, 0)
+        scan_data = _verify_expected_channels(scan_data, num_channels=num_channels)
+        
+        scan_data = np.moveaxis(scan_data, -1, -3)
         scan_data = np.moveaxis(scan_data, -2, -1)
-        scan_data = np.rot90(scan_data, k=2, axes=(0, 1))
+        scan_data = np.rot90(scan_data, k=2, axes=(-3, -2))
             
         
         H5Scan.create_dataset('tof', data=scan_data, dtype=np.float32)
@@ -105,9 +127,10 @@ def add_scans_to_group(scan_fps: dict, h5_fp: str, group_name: str, max_buffer_s
         # Store the segmentation, also in DHW
         if every_scan_has_seg:
             seg_data = nib.load(image_fps['seg']).get_fdata()
-            seg_data = np.moveaxis(seg_data, -1, 0)
+            seg_data = _verify_expected_channels(seg_data, num_channels=num_channels)
+            seg_data = np.moveaxis(seg_data, -1, -3)
             seg_data = np.moveaxis(seg_data, -2, -1)
-            seg_data = np.rot90(seg_data, k=2, axes=(0, 1))
+            seg_data = np.rot90(seg_data, k=2, axes=(-3, -2))
             H5Scan.create_dataset('seg', data=seg_data, dtype=np.uint8)
         else:
             H5Scan.create_dataset('seg', data=np.zeros(scan.shape))
@@ -133,15 +156,20 @@ if __name__ == '__main__':
     h5_fp = os.path.join(args.path_to_save_processed_data, f'{args.dataset}.h5')
     h5f = h5py.File(h5_fp, 'w')
     
-    # Create a folds group to store the indexes of each of the folds
+    # Store general metadata of the dataset
     # :================================================================================================:
-    kf = KFold(n_splits=args.num_folds, shuffle=True, random_state=seed)
     scan_ids = list(scan_fps.keys())
-    
     h5f.create_dataset('ids', data=scan_ids)
     
+    label_names = json.load(open(args.path_label_names_dict, 'r'))
+    h5f.create_dataset('label_names', data=json.dumps(label_names))
+    
+    # Create a folds group to store the indexes of each of the folds
+    # :================================================================================================:
     H5Folds = h5f.create_group('folds')
     
+    kf = KFold(n_splits=args.num_folds, shuffle=True, random_state=seed)
+
     for fold, (train_idx, test_idx) in enumerate(kf.split(scan_ids)):
         # Create a group for each fold in the hdf5 file
         H5Fold = H5Folds.create_group(f'fold_{fold}')

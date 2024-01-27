@@ -1,4 +1,5 @@
 USZ:
+  label_names_dict:       '/scratch_net/biwidl319/jbermeo/data/raw/USZ/label_names_dict.json'
   raw:
     path_to_tof_dir:      '/scratch_net/biwidl319/jbermeo/data/raw/USZ'
     fp_pattern_tof:       ['*', '*_tof.nii.gz']
@@ -16,6 +17,7 @@ USZ:
       
 
 ADAM:
+  label_names_dict:       '/scratch_net/biwidl319/jbermeo/data/raw/ADAM/label_names_dict.json'
   raw:
     path_to_tof_dir:      '/scratch_net/biwidl319/jbermeo/data/raw/ADAM'
     fp_pattern_tof:       ['*', '*_TOF.nii.gz']
@@ -34,12 +36,14 @@ ADAM:
 
 
 Lausanne:
+  label_names_dict:       '/scratch_net/biwidl319/jbermeo/data/raw/Lausanne/label_names_dict.json'
+
   raw:
     path_to_tof_dir:     '/scratch_net/biwidl319/jbermeo/data/raw/Lausanne/original_images'
     fp_pattern_tof:      ['*', '*', '*', '*_angio.nii.gz']
     
     path_to_seg_dir:     '/scratch_net/biwidl319/jbermeo/data/raw/Lausanne/skull_stripped_and_aneurysm_mask'
-    fp_pattern_seg_mask: ['*', '*', '*', '*Lesion_1_mask.nii.gz']
+    fp_pattern_seg_mask: ['*', '*', '*', '*Lesion_*_mask.nii.gz']
     every_scan_has_seg:   False
     level_of_dir_with_id: -4
 

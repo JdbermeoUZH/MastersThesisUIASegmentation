@@ -68,6 +68,10 @@ def resample(
     img_array = nii_img.get_fdata()
     resized_img_array = resize_fn(img_array)
     
+    # Update the header with the new voxel size
+    nii_img.header.set_zooms(new_voxel_size)
+    
+    # Save the new image in nifti format
     new_nii_img = nib.Nifti1Image(resized_img_array, affine=nii_img.affine, header=nii_img.header)
         
     return new_nii_img

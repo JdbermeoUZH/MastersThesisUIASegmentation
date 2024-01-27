@@ -4,8 +4,7 @@
 #SBATCH --ntasks=1
 #SBATCH --gres=gpu:1
 
-cd ../tta_uia_segmentation/src/preprocessing
-source /itet-stor/jbermeo/net_scratch/conda/etc/profile.d/conda.sh
-conda activate nnUnet_dev
+source /scratch_net/biwidl319/jbermeo/conda/conda/etc/profile.d/conda.sh
+conda activate /scratch_net/biwidl319/jbermeo/GNN-Domain-Generalization-main/net_scratch/conda_envs/tta_uia_seg
 
 python 02_resampling.py "$@" 

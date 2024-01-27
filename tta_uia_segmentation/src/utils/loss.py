@@ -58,3 +58,10 @@ class DiceLoss(nn.Module):
         loss = 1 - dice
 
         return loss
+
+
+if __name__ == '__main__':
+    test_pred = torch.randint(0, 5, (1, 1, 64, 64, 64))
+    test_gt = torch.randint(0, 5, (1, 1, 64, 64, 64))
+    
+    
