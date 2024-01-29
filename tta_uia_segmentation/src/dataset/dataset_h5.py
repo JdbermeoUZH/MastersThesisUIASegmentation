@@ -1,4 +1,3 @@
-import os
 import json
 from typing import Optional
 
@@ -8,15 +7,16 @@ from skimage import filters, morphology
 from scipy import ndimage
 from skimage.transform import rescale
 import torch
-import torch.nn.functional as F
 from torch.utils import data
+import nibabel as nib
+import nibabel.processing as nibp
 
 from dataset.augmentation import apply_data_augmentation
 from dataset.deformation import make_noise_masks_3d
 from models.normalization import RBF
 from utils.io import deep_get
 from utils.loss import class_to_onehot
-from utils.utils import crop_or_pad_slice_to_size, get_seed, assert_in
+from utils.utils import get_seed, assert_in, resize_and_resample_nibp
 
 
 def split_dataset(dataset, ratio):
@@ -41,6 +41,8 @@ def get_datasets(
     fold: int,
     n_classes: int,
     rescale_factor: Optional[tuple[float, float, float]] = None,
+    image_size: Optional[tuple[int, int, int]] = None,
+    voxel_size: Optional[tuple[float, float, float]] = None,
     aug_params: Optional[dict] = None,
     deformation: Optional[dict] = None,
     image_transform: str = 'none',
@@ -59,6 +61,8 @@ def get_datasets(
                 split=split,
                 n_classes=n_classes,
                 rescale_factor=rescale_factor,
+                image_size=image_size,
+                voxel_size=voxel_size,
                 aug_params=aug_params,
                 deformation=deformation,
                 image_transform=image_transform,
@@ -113,6 +117,8 @@ class DatasetH5(data.Dataset):
         split: list[str],
         n_classes: int,
         rescale_factor: Optional[tuple[float, float, float]] = None,
+        image_size: Optional[tuple[int, int, int]] = None,
+        voxel_size: Optional[tuple[float, float, float]] = None,
         aug_params: Optional[dict] = None,
         deformation: Optional[dict] = None,
         image_transform: str = 'none',
@@ -123,11 +129,14 @@ class DatasetH5(data.Dataset):
 
         assert_in(split, 'split', ['train', 'train_dev', 'val_dev', 'test'])
         assert_in(image_transform, 'image_transform', ['none', 'random_net'])
+        assert not (rescale_factor is not None and voxel_size is not None), 'Specify either rescale_factor or voxel_size, not both'
 
         self.h5_filepath = h5_filepath
         self.split = split
         self.fold = fold
         self.rescale_factor = rescale_factor
+        self.image_size = image_size
+        self.voxel_size = voxel_size
         self.n_classes = n_classes
         self.aug_params = aug_params
         self.deformation = deformation
@@ -255,23 +264,32 @@ class DatasetH5(data.Dataset):
             img_group = h5f['data'][self.index_to_id[index]]
             image = img_group['tof'][:]
             labels = img_group['seg'][:]
+            px = img_group['px'][()]
+            py = img_group['py'][()]
+            pz = img_group['pz'][()]
+            
+            orig_voxel_size = (pz, px, py)       # Images are assumed as stored in DHW 
+            target_voxel_size = None
 
         seed = get_seed() if self.seed is None else self.seed
-        
+               
         if self.rescale_factor is not None:
-            image = torch.from_numpy(image).unsqueeze(0)
-            labels = torch.from_numpy(labels).unsqueeze(0)
-
-            image = F.interpolate(image, scale_factor=self.rescale_factor, mode='trilinear')
-            labels = F.interpolate(labels, scale_factor=self.rescale_factor, mode='nearest')
-
-            image = image.squeeze(0).numpy()
-            labels = labels.squeeze(0).numpy()
+            target_voxel_size = np.array(orig_voxel_size) * (1 / np.array(self.rescale_factor))
         
+        elif self.voxel_size is not None:
+            target_voxel_size = self.voxel_size
+                
+        if target_voxel_size is not None or self.image_size is not None:
+            # Resize and resmple image and labels, if needed
+            target_voxel_size = orig_voxel_size if target_voxel_size is None else target_voxel_size
+            target_size = image.shape if self.image_size is None else self.image_size
+            image = resize_and_resample_nibp(image, target_size, orig_voxel_size, target_voxel_size, order=3)
+            labels = resize_and_resample_nibp(labels, target_size, orig_voxel_size, target_voxel_size, order=0)
+                
         assert image.shape == labels.shape, 'Image and label shape not matching'
         
         background_mask = self.get_background_mask(image, labels)
-                           
+                     
         if self.augmentation:
             image, labels, background_mask = apply_data_augmentation(
                 image,

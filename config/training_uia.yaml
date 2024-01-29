@@ -45,17 +45,19 @@ dae:
 
 segmentation:
   fold:                         0
-  train_split:                  train_dev   # train_dev, train
-  val_split:                    val_dev     # val_dev, test
+  train_split:                  train_dev         # train_dev, train
+  val_split:                    val_dev           # val_dev, test
   batch_size:                   1
-  num_workers:                  3
-  dataset:                      USZ         # USZ, ADAM, Lausanne
-  n_classes:                    22          # 21 for USZ, 2 for ADAM, 2 for Lausanne  
-  epochs:                       100         # For now 100
+  num_workers:                  1
+  dataset:                      USZ               # USZ, ADAM, Lausanne
+  n_classes:                    22                # 21 for USZ, 2 for ADAM, 2 for Lausanne  
+  epochs:                       100               # For now 100
   validate_every:               5
   learning_rate:                1.0e-3
   logdir:                       /scratch_net/biwidl319/jbermeo/logs/uia/segmentation/
   wandb_project:                mt-tta-dae-segmenter_3d_training
+  image_size:                   [128, 300, 300]   # DWH, default kostas: [160, 560, 640]
+  voxel_size:                   [0.6, 0.3, 0.3]   # DWH, default kostas: [0.6, 0.3, 0.3]
 
   rescale_factor:               null  # At the moment, this is not used
   

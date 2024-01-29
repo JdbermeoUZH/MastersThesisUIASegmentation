@@ -23,9 +23,9 @@ segmentation_2D:
   n_dimensions:                     2
 
 normalization_3D:
-  n_layers:                         2
+  n_layers:                         3
   image_channels:                   1
-  channel_size:                     1           # In the original implementation, this is 16
+  channel_size:                     9           # In the original implementation, this is 16
   kernel_size:                      1
   activation:                       rbf
   batch_norm:                       True
@@ -35,6 +35,6 @@ normalization_3D:
 segmentation_3D:
   image_channels:                   1
   channel_size:                     [2, 4, 16]  # It might be also [2, 4, 8]
-  channels_bottleneck:              32          # It might be also 32
+  channels_bottleneck:              64          # It might be also 32
   skips:                            [True, True, True]
   n_dimensions:                     3

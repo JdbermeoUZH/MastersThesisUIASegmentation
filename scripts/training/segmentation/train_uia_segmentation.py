@@ -176,6 +176,8 @@ if __name__ == '__main__':
     train_split         = train_config['segmentation']['train_split']
     val_split           = train_config['segmentation']['val_split']
     n_classes           = train_config['segmentation']['n_classes']
+    image_size          = train_config['segmentation']['image_size']
+    voxel_size          = train_config['segmentation']['voxel_size']
     batch_size          = train_config['segmentation']['batch_size']
     num_workers         = train_config['segmentation']['num_workers']
     rescale_factor      = train_config['segmentation']['rescale_factor']
@@ -190,6 +192,8 @@ if __name__ == '__main__':
         fold=fold,
         n_classes=n_classes,
         rescale_factor=rescale_factor,
+        image_size=image_size,
+        voxel_size=voxel_size,
         aug_params=aug_params,
         bg_suppression_opts=bg_suppression_opts,
         seed=seed    
@@ -217,6 +221,11 @@ if __name__ == '__main__':
         residual        = model_config['normalization_3D']['residual'],
         n_dimensions    = model_config['normalization_3D']['n_dimensions'] 
     ).to(device)
+    
+    print('------------------debugging------------------')
+    print('normalization model:')
+    print(norm)
+
 
     seg = UNet(
         in_channels             = model_config['segmentation_3D']['image_channels'],
@@ -227,6 +236,10 @@ if __name__ == '__main__':
         n_dimensions            = model_config['segmentation_3D']['n_dimensions'] 
     ).to(device)
 
+    print('------------------debugging------------------')
+    print('segmetnation model:')
+    print(seg)
+    
     # Define the Trainer that will be used to train the model
     # :=========================================================================:
     print('Defining trainer: training loop, optimizer and loss')
@@ -245,7 +258,8 @@ if __name__ == '__main__':
         wandb_dir           = wandb_dir,
         bg_suppression_opts = bg_suppression_opts
     )
-
+    
+    
     if wandb_log:
         wandb.save(os.path.join(wandb_dir, trainer.get_last_checkpoint_name()), base_path=wandb_dir)
         wandb.watch([norm, seg], trainer.get_loss_function(), log='all')
