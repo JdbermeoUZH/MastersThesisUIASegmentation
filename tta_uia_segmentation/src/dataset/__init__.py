@@ -1,2 +1,3 @@
 from dataset.dataset_h5 import DatasetH5
 from dataset.dataset_all_in_memory import DatasetInMemory
+from dataset.dataset_h5_for_ddpm import DatasetH5ForDDPM

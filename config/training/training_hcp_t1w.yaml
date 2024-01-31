@@ -79,3 +79,20 @@ segmentation:
       brightness_max:     0.1
       noise_mean:         0.0
       noise_std:          0.1
+
+
+ddpm:
+  batch_size:                   16
+  num_workers:                  3
+  dataset:                      hcp_t1  # brain: hcp_t1, hcp_t2, abide_caltech, abide_stanford; wmh: nuhs, umc, vu
+  image_size:                   [1, 256, 256]
+  rescale_factor:               [1, 1, 1]
+  num_steps:                    100 
+  validate_every:               25
+  learning_rate:                1.0e-3
+  logdir:                       /scratch_net/biwidl319/jbermeo/logs/brain/ddpm/hcp_t1
+  wandb_project:                mt-ddpm_2d
+
+  augmentation:                 null
+  bg_suppression_opts:          null
+  deformation:                  null

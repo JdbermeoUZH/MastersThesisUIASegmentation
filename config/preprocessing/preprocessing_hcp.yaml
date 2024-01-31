@@ -1,0 +1,35 @@
+
+seed: 0
+device:           cuda
+dataset:          hcp_t1
+splits:           [train, val, test] 
+
+normalize_with_model:             True
+normalization_params:   
+  logdir:                         /scratch_net/biwidl319/jbermeo/logs/brain/preprocessing/hcp_t1
+  batch_size: 16
+  num_workers: 3
+  image_size: [1, 256, 256]
+  augmentation: null
+
+  bg_suppression_opts:
+    bg_value: -0.5
+    bg_value_max: 1
+    bg_value_min: -0.5
+    hole_filling: true
+    mask_source: thresholding
+    thresholding: otsu
+    type: fixed_value
+
+  model:
+    checkpoint: /scratch_net/biwidl319/jbermeo/data/models/brain/hcp_t1/bg_supp/checkpoint_best.pth
+    activation: rbf
+    batch_norm: true
+    channel_size: 16
+    image_channels: 1
+    kernel_size: 3
+    n_layers: 3
+    residual: true
+    n_dimensions: 2
+
+  

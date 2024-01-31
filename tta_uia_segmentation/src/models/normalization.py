@@ -8,7 +8,8 @@ from utils.utils import assert_in
 
 def background_suppression(x, bg_mask, opts=None, bg_class=0):
     """
-    TODO: Most likely this function is not used anymore
+    Suppresses the background of an image by setting the background pixels to a fixed value or a random value 
+    between a minimum and maximum value.
     """
     device = x.device
 
