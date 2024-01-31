@@ -23,3 +23,6 @@ skull_stripping_params:
   save_skull_stripped: True
 
 save_logs: True
+
+normalize:
+  

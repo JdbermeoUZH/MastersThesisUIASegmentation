@@ -6,4 +6,4 @@ conda install graphviz -y
 pip install IPython
 
 # Extra stuff
-pip install jupyter
+pip install jupyterpip install diffusers["torch"] transformers

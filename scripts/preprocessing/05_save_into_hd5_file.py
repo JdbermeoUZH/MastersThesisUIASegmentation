@@ -7,12 +7,13 @@ import argparse
 import h5py
 import numpy as np
 import nibabel as nib
+import nibabel.processing as nibp
 from sklearn.model_selection import KFold, train_test_split
 
 sys.path.append(os.path.normpath(
     os.path.join(os.path.dirname(__file__), '..', '..', 'tta_uia_segmentation', 'src')))
 
-from preprocessing.utils import get_filepaths
+from preprocessing.utils import get_filepaths, find_largest_bounding_box_3d
 
 #---------- paths & hyperparameters
 num_folds_default                   = 5
@@ -20,10 +21,15 @@ train_val_split_default             = 0.25
 preprocessed_default                = True
 level_of_dir_with_id_default        = -2
 path_to_save_processed_data_default = '/scratch_net/biwidl319/jbermeo/data/preprocessed/UIA_segmentation'
-diameter_threshold_default          = 4  # mm, separate the scans into two groups: < 4mm and >= 4mm. UIAs < 4mm are usually not treated
+diameter_threshold_default          = 2.5  # mm, separate the scans into two groups: < 4mm and >= 4mm. UIAs < 4mm are usually not treated, but we want to include down to 2.5 mm (models can still learn from them)
 seed                                = 0
 num_channels                        = 1
+target_size_default                 = (128, 220, 256)
+target_resolution_default           = (1.0, 0.6, 0.6) # mm
+crop_around_label_map_default       = True  # Default should normally be false unless we register the images, as their center moves a lot
 #----------
+
+bool_cmdl_arg = lambda x: str(x).lower() == 'true'
 
 def preprocess_cmd_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description='Registratin of scans')
@@ -31,6 +37,9 @@ def preprocess_cmd_args() -> argparse.Namespace:
     parser.add_argument('dataset', type=str, choices=['USZ', 'ADAM', 'Lausanne', None])
     parser.add_argument('path_to_dir', type=str, help='Path to the directory with the scans')
     parser.add_argument('path_label_names_dict', type=str, help='Path to the dictionary that maps the label names to their corresponding class')
+    parser.add_argument('--target_size', type=int, nargs='+', default=target_size_default, help='Target size of the scans')
+    parser.add_argument('--target_resolution', type=float, nargs='+', default=target_resolution_default, help='Target resolution of the scans')
+    parser.add_argument('--crop_around_label_map', type=bool_cmdl_arg, default=crop_around_label_map_default, help='Crop the scans around the label map')
     parser.add_argument('--num_folds', type=int, default=num_folds_default, help='Number of folds for cross-validation')
     parser.add_argument('--train_val_split', type=float, default=train_val_split_default,
                         help='Percentage of the train set to use as validation')
@@ -89,13 +98,24 @@ def _verify_expected_channels(scan_data: np.ndarray, num_channels: int = 1):
     return scan_data
 
 
-def add_scans_to_group(scan_fps: dict, h5_fp: str, group_name: str, num_channels: int = 1, max_buffer_scans: int = 5):
+
+def add_scans_to_group(
+    scan_fps: dict, 
+    h5_fp: str,
+    group_name: str,
+    num_channels: int = 1,
+    max_buffer_scans: int = 5,
+    target_size: tuple = target_size_default,   # in DHW format
+    target_resolution: tuple = target_resolution_default,   # in DHW format
+    crop_around_label_map: bool = crop_around_label_map_default,
+    ):
     num_scans_written = 0
     h5f = h5py.File(h5_fp, 'a')
     H5Data = h5f.create_group(group_name)
     
     for scan_id, image_fps in scan_fps.items():
         num_scans_written += 1
+        seg_data = None
         
         if num_scans_written % max_buffer_scans == 0:
             h5f.close()
@@ -104,36 +124,84 @@ def add_scans_to_group(scan_fps: dict, h5_fp: str, group_name: str, num_channels
             
         H5Scan = H5Data.create_group(scan_id)
         
-        # Store the tof scan
-        scan = nib.load(image_fps['tof'])
+        # Load the tof scan
+        scan = nib.load(image_fps['tof'])   # in WHD format
         
-        # Convert the scan from WHD to DHW
-        scan_data = scan.get_fdata()
-        scan_data = _verify_expected_channels(scan_data, num_channels=num_channels)
-        
-        scan_data = np.moveaxis(scan_data, -1, -3)
-        scan_data = np.moveaxis(scan_data, -2, -1)
-        scan_data = np.rot90(scan_data, k=2, axes=(-3, -2))
-            
-        
-        H5Scan.create_dataset('tof', data=scan_data, dtype=np.float32)
-        
-        # Store original spacing
+        # Store original voxel and image size 
         px, py, pz = scan.header.get_zooms()
-        H5Scan.create_dataset('px', data=px)
-        H5Scan.create_dataset('py', data=py)
-        H5Scan.create_dataset('pz', data=pz)
+        H5Scan.create_dataset('px_orig', data=px)
+        H5Scan.create_dataset('px_orig', data=py)
+        H5Scan.create_dataset('px_orig', data=pz)
         
-        # Store the segmentation, also in DHW
+        nx, ny, nz = scan.shape
+        H5Scan.create_dataset('nx_orig', data=nx)
+        H5Scan.create_dataset('nx_orig', data=ny)
+        H5Scan.create_dataset('nx_orig', data=nz)
+        
+        # Store the new voxel size
+        if target_resolution is not None:
+            pz, py, px = target_resolution
+            H5Scan.create_dataset('px', data=px)
+            H5Scan.create_dataset('py', data=py)
+            H5Scan.create_dataset('pz', data=pz)
+        
+        # Load the segmentation, if available
         if every_scan_has_seg:
             seg_data = nib.load(image_fps['seg']).get_fdata()
+        
+        # Crop the scan around the label map, if specified
+        if crop_around_label_map:
+            if seg_data is None:
+                raise ValueError('Crop around label map was specified, but no segmentation was found')
+
+            # Get the bounding box of the segmentation
+            bbox_min_coord, bbox_max_coord = find_largest_bounding_box_3d(seg_data)
+            
+            # Store the bounding box coordinates
+            H5Scan.create_dataset('bbox_min_coord', data=bbox_min_coord)
+            H5Scan.create_dataset('bbox_max_coord', data=bbox_max_coord)
+            
+            # Crop the scan around the bounding box
+            scan_data = scan.get_fdata()
+            scan_data = scan_data[bbox_min_coord[0]:bbox_max_coord[0], 
+                                  bbox_min_coord[1]:bbox_max_coord[1],
+                                  bbox_min_coord[2]:bbox_max_coord[2]]
+            seg_data = seg_data[bbox_min_coord[0]:bbox_max_coord[0], 
+                                bbox_min_coord[1]:bbox_max_coord[1], 
+                                bbox_min_coord[2]:bbox_max_coord[2]]
+            
+            
+        # Resample and resize the scan and segmentation, if necessary
+        #  remember: scans are in WHD format and target_size and target_resolution are in DHW format
+        if target_size is not None or target_resolution is not None:
+            target_size = tuple(target_size[2], target_size[1], target_size[0]) \
+                if target_size is not None else scan.shape       
+            target_resolution = tuple(target_resolution[2], target_resolution[1], target_resolution[0]) \
+                if target_resolution is not None else scan.header.get_zooms()        
+        
+            scan = nibp.conform(scan, voxel_size=target_resolution, out_shape=target_size, order=3, orientation='LPS')
+            
+            if seg_data is not None:
+                seg_data = nibp.conform(seg_data, voxel_size=target_resolution, out_shape=target_size, order=0, orientation='LPS')
+
+        # Convert the scan (and segmentation if available) from WHD to DHW and store it
+        scan_data = scan.get_fdata()
+        scan_data = _verify_expected_channels(scan_data, num_channels=num_channels)
+        scan_data = np.swapaxes(scan_data, 0, 2)
+        H5Scan.create_dataset('tof', data=scan_data, dtype=np.float32)
+        
+        if seg_data is not None:
             seg_data = _verify_expected_channels(seg_data, num_channels=num_channels)
-            seg_data = np.moveaxis(seg_data, -1, -3)
-            seg_data = np.moveaxis(seg_data, -2, -1)
-            seg_data = np.rot90(seg_data, k=2, axes=(-3, -2))
-            H5Scan.create_dataset('seg', data=seg_data, dtype=np.uint8)
+            seg_data = np.swapaxes(seg_data, 0, 2)
         else:
-            H5Scan.create_dataset('seg', data=np.zeros(scan.shape))
+            seg_data = np.zeros(scan.shape)
+            
+        H5Scan.create_dataset('seg', data=seg_data, dtype=np.uint8)
+
+        
+        
+        
+        
         
 
 if __name__ == '__main__':

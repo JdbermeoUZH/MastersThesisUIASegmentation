@@ -56,8 +56,8 @@ segmentation:
   learning_rate:                1.0e-3
   logdir:                       /scratch_net/biwidl319/jbermeo/logs/uia/segmentation/
   wandb_project:                mt-tta-dae-segmenter_3d_training
-  image_size:                   [128, 300, 300]   # DWH, default kostas: [160, 560, 640]
-  voxel_size:                   [0.6, 0.3, 0.3]   # DWH, default kostas: [0.6, 0.3, 0.3]
+  image_size:                   [150, 214, 264]   # DHW, default kostas: [160, 560, 640]
+  voxel_size:                   [1.0, 0.6, 0.6]   # DHW, default kostas: [0.6, 0.3, 0.3]
 
   rescale_factor:               null  # At the moment, this is not used
   

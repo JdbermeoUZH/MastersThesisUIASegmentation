@@ -11,6 +11,24 @@ import glob
 from collections import OrderedDict
 from typing import Optional, Union
 
+import numpy as np
+
+
+def find_largest_bounding_box_3d(arr):
+    # Find the indices of non-zero elements
+    z, y, x = np.nonzero(arr)
+
+    # If there are no non-zero elements, return None or an appropriate response
+    if len(z) == 0 or len(y) == 0 or len(x) == 0:
+        return None
+
+    # Find the minimum and maximum indices along each dimension
+    top_left_front = (np.min(z), np.min(y), np.min(x))
+    bottom_right_back = (np.max(z), np.max(y), np.max(x))
+
+    # Return the coordinates of the bounding box
+    return top_left_front, bottom_right_back
+
 
 def get_filepaths_raw(
     path_to_tof_dir: str,

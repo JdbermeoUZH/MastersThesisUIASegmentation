@@ -144,7 +144,7 @@ def resize_and_resample_nibp(
     return np.stack(new_img_channels, axis=0)
 
 
-def crop_or_pad_slice_to_size_2d(slice, nx, ny):
+def crop_or_pad_slice_to_size(slice, nx, ny):
     """
     Crops or pads a slice to a given size in x, y, and z.
     
