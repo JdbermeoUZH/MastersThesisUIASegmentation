@@ -1,12 +1,13 @@
 import torch
 import numpy as np
+from typing import Union
 
-from dataset.dataset_all_in_memory import DatasetInMemory
+from dataset.dataset_in_memory import DatasetInMemory
 from dataset.augmentation import apply_data_augmentation
 from utils.utils import get_seed
 
        
-class DatasetH5ForDDPM(DatasetInMemory):
+class DatasetInMemoryForDDPM(DatasetInMemory):
     def __init__(
         self,
         concatenate: bool = True,
@@ -18,7 +19,7 @@ class DatasetH5ForDDPM(DatasetInMemory):
         self.concatenate = concatenate
         self.axis_to_concatenate = axis_to_concatenate
         
-    def __getitem__(self, index):
+    def __getitem__(self, index) -> Union[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]:
 
         images = self.images[index, ...]
         labels = self.labels[index, ...]

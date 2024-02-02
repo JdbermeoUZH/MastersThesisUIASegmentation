@@ -11,7 +11,7 @@ from torch.optim import lr_scheduler
 from torch.utils.data import Subset, DataLoader, TensorDataset, ConcatDataset
 import wandb
 
-from dataset.dataset_all_in_memory import get_datasets, get_sectors_from_index, split_dataset
+from dataset.dataset_in_memory import get_datasets, get_sectors_from_index, split_dataset
 from models import Normalization, UNet, ViG, ProjectionHead, EmbeddingCNN
 from models.normalization import background_suppression
 from train_gnn import get_embeddings

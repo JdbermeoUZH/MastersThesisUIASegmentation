@@ -10,7 +10,7 @@ from torch.utils.data import DataLoader
 sys.path.append(os.path.normpath(os.path.join(
     os.path.dirname(__file__), '..', '..', '..', 'tta_uia_segmentation', 'src')))
 
-from dataset.dataset_all_in_memory import get_datasets
+from dataset.dataset_in_memory import get_datasets
 from models import Normalization, UNet
 from models.normalization import background_suppression
 from train import NormSegTrainer

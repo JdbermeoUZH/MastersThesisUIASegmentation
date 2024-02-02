@@ -9,8 +9,9 @@ from denoising_diffusion_pytorch import Unet, GaussianDiffusion
 sys.path.append(os.path.normpath(os.path.join(
     os.path.dirname(__file__), '..', '..', '..', 'tta_uia_segmentation', 'src')))
 
-from dataset import DatasetH5ForDDPM
-from train import DDPMTrainer
+from dataset import DatasetInMemoryForDDPM
+from models import ConditionalGaussianDiffusion
+from train import CDDPMTrainer
 from utils.io import (load_config, dump_config, print_config,
                       save_checkpoint, write_to_csv, rewrite_config_arguments)
 from utils.utils import seed_everything, define_device
@@ -144,7 +145,7 @@ if __name__ == '__main__':
     #num_workers         = train_config[train_type]['num_workers']
     
     # Dataset definition
-    train_dataset = DatasetH5ForDDPM(
+    train_dataset = DatasetInMemoryForDDPM(
         concatenate     = train_config[train_type]['concatenate'],
         axis_to_concatenate = train_config[train_type]['axis_to_concatenate'],
         paths           = dataset_config[dataset]['paths_processed'],
@@ -174,10 +175,10 @@ if __name__ == '__main__':
         self_condition=True,
     )#.to(device)
     
-    diffusion = GaussianDiffusion(
-    model,
-    image_size = 256,
-    timesteps = 1000    # number of steps
+    diffusion = ConditionalGaussianDiffusion(
+        model,
+        image_size = 256,
+        timesteps = 1000    # number of steps
     )#.to(device)
 
     # Execute the training loop
@@ -190,7 +191,7 @@ if __name__ == '__main__':
     train_num_steps = train_config[train_type]['num_steps']
     save_and_sample_every = train_config[train_type]['save_and_sample_every']
     
-    trainer = DDPMTrainer(
+    trainer = CDDPMTrainer(
             diffusion,
             train_dataset,
             train_batch_size = batch_size,

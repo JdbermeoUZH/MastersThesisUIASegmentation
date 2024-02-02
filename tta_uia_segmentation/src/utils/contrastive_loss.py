@@ -1,6 +1,6 @@
 import torch
 from torch.nn import Sequential
-from dataset.dataset_all_in_memory import get_sectors_from_index
+from dataset.dataset_in_memory import get_sectors_from_index
 from utils.utils import assert_in
 
 

@@ -11,7 +11,7 @@ sys.path.append(os.path.normpath(os.path.join(
     os.path.dirname(__file__), '..', '..', 'tta_uia_segmentation', 'src')))
 
 from tta import TTADAE
-from dataset.dataset_all_in_memory import get_datasets
+from dataset.dataset_in_memory import get_datasets
 from models import Normalization, UNet
 from utils.io import load_config, dump_config, print_config, write_to_csv, rewrite_config_arguments
 from utils.utils import seed_everything, define_device

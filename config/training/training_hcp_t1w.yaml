@@ -98,5 +98,5 @@ ddpm:
   bg_suppression_opts:          null
   deformation:                  null
 
-  concatenate:                  True
+  concatenate:                  False
   axis_to_concatenate:          0

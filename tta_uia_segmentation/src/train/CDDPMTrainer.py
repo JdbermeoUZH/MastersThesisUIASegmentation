@@ -4,7 +4,7 @@ from pathlib import Path
 import torch
 from multiprocessing import cpu_count
 
-
+import wandb
 from torch.optim import Adam
 from ema_pytorch import EMA
 from accelerate import Accelerator
@@ -14,11 +14,14 @@ from torchvision import utils
 from denoising_diffusion_pytorch.fid_evaluation import FIDEvaluation
 from denoising_diffusion_pytorch.denoising_diffusion_pytorch import (
     cycle, has_int_squareroot, Trainer, divisible_by, num_to_groups)
-
 from denoising_diffusion_pytorch.version import __version__
 
+import sys
+sys.path.append('..')
+from models import ConditionalGaussianDiffusion
 
-class DDPMTrainer(Trainer):
+
+class CDDPMTrainer(Trainer):
 
     """
     TODO: 
@@ -32,7 +35,7 @@ class DDPMTrainer(Trainer):
     """
     def __init__(
         self,
-        diffusion_model,
+        diffusion_model: ConditionalGaussianDiffusion,
         dataset,
         *,
         train_batch_size = 16,
@@ -52,7 +55,9 @@ class DDPMTrainer(Trainer):
         inception_block_idx = 2048,
         max_grad_norm = 1.,
         num_fid_samples = 50000,
-        save_best_and_latest_only = False
+        save_best_and_latest_only = False,
+        wandb_log: bool = True,
+        wandb_dir: str = 'wandb',
     ):
         super(object, self).__init__()
         
@@ -117,6 +122,10 @@ class DDPMTrainer(Trainer):
 
         self.model, self.opt = self.accelerator.prepare(self.model, self.opt)
 
+        # Wandb logging
+        self.wandb_log = wandb_log
+        self.wandb_dir = wandb_dir
+                
         # FID-score computation
 
         self.calculate_fid = calculate_fid and self.accelerator.is_main_process
@@ -156,10 +165,11 @@ class DDPMTrainer(Trainer):
                 total_loss = 0.
 
                 for _ in range(self.gradient_accumulate_every):
-                    data = next(self.dl).to(device)
+                    img, cond_img = next(self.dl)
+                    img, cond_img = img.to(device), cond_img.to(device)
 
                     with self.accelerator.autocast():
-                        loss = self.model(data)
+                        loss = self.model(img, cond_img)
                         loss = loss / self.gradient_accumulate_every
                         total_loss += loss.item()
 
@@ -167,7 +177,8 @@ class DDPMTrainer(Trainer):
 
                 pbar.set_description(f'loss: {total_loss:.4f}')
                 
-                # TODO: Add wandb line logging the total loss at the current step
+                if self.wandb_log:
+                    wandb.log({'total_loss': total_loss}, step = self.step)
 
                 accelerator.wait_for_everyone()
                 accelerator.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
@@ -183,7 +194,8 @@ class DDPMTrainer(Trainer):
 
                     if self.step != 0 and divisible_by(self.step, self.save_and_sample_every):
                         self.ema.ema_model.eval()
-
+                        
+                        # Store a sample of denoised images
                         with torch.inference_mode():
                             milestone = self.step // self.save_and_sample_every
                             batches = num_to_groups(self.num_samples, self.batch_size)
