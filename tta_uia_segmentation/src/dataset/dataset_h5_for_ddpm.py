@@ -10,14 +10,13 @@ class DatasetH5ForDDPM(DatasetInMemory):
     def __init__(
         self,
         concatenate: bool = True,
-        concatenate_as_channels: bool = False,
-        axis_to_concatenate: int = 1,
+        axis_to_concatenate: int = 0,
         *args,
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
         self.concatenate = concatenate
-        self.concatenate_as_channels = concatenate_as_channels
+        self.axis_to_concatenate = axis_to_concatenate
         
     def __getitem__(self, index):
 
@@ -41,10 +40,7 @@ class DatasetH5ForDDPM(DatasetInMemory):
         labels = labels / np.max(self.n_classes - 1)
         
         if not self.concatenate:
-            return torch.from_numpy(images), torch.from_numpy(labels)
+            return torch.from_numpy(images).float(), torch.from_numpy(labels).float()
         else:
-            if self.concatenate_as_channels:
-                return torch.from_numpy(np.concatenate((images[None, ...], labels[None, ...]), axis=0))
-            else:
-                return torch.from_numpy(np.concatenate((images, labels), axis=1))
+            return torch.from_numpy(np.concatenate((images, labels), axis=self.axis_to_concatenate)).float()
          

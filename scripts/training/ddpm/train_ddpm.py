@@ -3,14 +3,13 @@ import sys
 import argparse
 
 import wandb
-import numpy as np
 from torch.utils.data import DataLoader
 from denoising_diffusion_pytorch import Unet, GaussianDiffusion
 
 sys.path.append(os.path.normpath(os.path.join(
     os.path.dirname(__file__), '..', '..', '..', 'tta_uia_segmentation', 'src')))
 
-from dataset.dataset_all_in_memory import get_datasets
+from dataset import DatasetH5ForDDPM
 from train import DDPMTrainer
 from utils.io import (load_config, dump_config, print_config,
                       save_checkpoint, write_to_csv, rewrite_config_arguments)
@@ -69,6 +68,10 @@ def preprocess_cmd_args() -> argparse.Namespace:
     parser.add_argument('--image_size', type=int, nargs='+', help='Size of images in dataset. Default: [560, 640, 160]')
     parser.add_argument('--resolution_proc', type=float, nargs='+', help='Resolution of images in dataset. Default: [0.3, 0.3, 0.6]')
     parser.add_argument('--rescale_factor', type=float, help='Rescale factor for images in dataset. Default: None')
+    
+    parser.add_argument('--concatenate', type=lambda s: s.strip().lower() == 'true', 
+                        help='Whether to concatenate images and labels. Default: True')
+    parser.add_argument('--axis_to_concatenate', type=int, help='Axis to concatenate images and labels. Default: 0')
     
     args = parser.parse_args()
     
@@ -138,13 +141,15 @@ if __name__ == '__main__':
     dataset             = train_config[train_type]['dataset']
     n_classes           = dataset_config[dataset]['n_classes']
     batch_size          = train_config[train_type]['batch_size']
-    num_workers         = train_config[train_type]['num_workers']
+    #num_workers         = train_config[train_type]['num_workers']
     
     # Dataset definition
-    train_dataset, val_dataset = get_datasets(
+    train_dataset = DatasetH5ForDDPM(
+        concatenate     = train_config[train_type]['concatenate'],
+        axis_to_concatenate = train_config[train_type]['axis_to_concatenate'],
         paths           = dataset_config[dataset]['paths_processed'],
         paths_original  = dataset_config[dataset]['paths_original'],
-        splits          = ['train', 'val'],
+        split          = 'train',
         image_size      = train_config[train_type]['image_size'],
         resolution_proc = dataset_config[dataset]['resolution_proc'],
         dim_proc        = dataset_config[dataset]['dim'],
@@ -154,12 +159,6 @@ if __name__ == '__main__':
         deformation     = None,
         load_original   = False,
     )
-
-    train_dataloader = DataLoader(dataset=train_dataset, batch_size=batch_size,
-        shuffle=True, num_workers=num_workers, drop_last=True)    
-    val_dataloader = DataLoader(dataset=val_dataset, batch_size=batch_size,
-        shuffle=False, num_workers=num_workers, drop_last=False)
-
     print('Dataloaders defined')
     
     # Define the denoiser model diffusion pipeline
@@ -170,31 +169,39 @@ if __name__ == '__main__':
     model = Unet(
         dim = 64,
         dim_mults = (1, 2, 4, 8),
-        flash_attn = True
-    ).to(device)
+        flash_attn = True,
+        channels= 1, 
+        self_condition=True,
+    )#.to(device)
     
     diffusion = GaussianDiffusion(
     model,
-    image_size = 128,
+    image_size = 256,
     timesteps = 1000    # number of steps
-    ).to(device)
+    )#.to(device)
 
     # Execute the training loop
     # :=========================================================================:
     print('Defining trainer: training loop, optimizer and loss')
-
+    batch_size = train_config[train_type]['batch_size']
+    gradient_accumulate_every = train_config[train_type]['gradient_accumulate_every']
+    save_and_sample_every = train_config[train_type]['save_and_sample_every']
+    train_lr = float(train_config[train_type]['learning_rate'])
+    train_num_steps = train_config[train_type]['num_steps']
+    save_and_sample_every = train_config[train_type]['save_and_sample_every']
+    
     trainer = DDPMTrainer(
             diffusion,
             train_dataset,
-            train_batch_size = 2,
-            train_lr = 8e-5,
-            train_num_steps = 700000,         # total training steps
-            gradient_accumulate_every = 8,    # gradient accumulation steps
+            train_batch_size = batch_size,
+            train_lr = train_lr,
+            train_num_steps = train_num_steps,# total training steps
+            gradient_accumulate_every = gradient_accumulate_every,    # gradient accumulation steps
             ema_decay = 0.995,                # exponential moving average decay
             amp = True,                       # turn on mixed precision
             calculate_fid = False,            # whether to calculate fid during training 
             results_folder=logdir,
-            save_and_sample_every = train_config[train_type]['validate_every'],
+            save_and_sample_every = save_and_sample_every,
             )
     
     if wandb_log:

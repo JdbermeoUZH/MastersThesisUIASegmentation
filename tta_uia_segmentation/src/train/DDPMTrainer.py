@@ -1,7 +1,7 @@
 import math
-import copy
+from tqdm import tqdm
 from pathlib import Path
-from random import random
+import torch
 from multiprocessing import cpu_count
 
 
@@ -9,16 +9,27 @@ from torch.optim import Adam
 from ema_pytorch import EMA
 from accelerate import Accelerator
 from torch.utils.data import DataLoader
-
+from torchvision import utils
 
 from denoising_diffusion_pytorch.fid_evaluation import FIDEvaluation
 from denoising_diffusion_pytorch.denoising_diffusion_pytorch import (
-    cycle, has_int_squareroot, Trainer)
+    cycle, has_int_squareroot, Trainer, divisible_by, num_to_groups)
 
 from denoising_diffusion_pytorch.version import __version__
 
 
 class DDPMTrainer(Trainer):
+
+    """
+    TODO: 
+        - Add wandb logging
+        - Add validation dataset
+        - Add mesuring PSNR, SSIM, MSE and MAE on validation and a sample of the train set
+            - Add Dice for the label map
+        - Add logging of the above metrics
+        - Add plotting of images to do qualitative evaluation
+    
+    """
     def __init__(
         self,
         diffusion_model,
@@ -133,3 +144,68 @@ class DDPMTrainer(Trainer):
             self.best_fid = 1e10 # infinite
 
         self.save_best_and_latest_only = save_best_and_latest_only
+        
+    def train(self):
+        accelerator = self.accelerator
+        device = accelerator.device
+
+        with tqdm(initial = self.step, total = self.train_num_steps, disable = not accelerator.is_main_process) as pbar:
+
+            while self.step < self.train_num_steps:
+
+                total_loss = 0.
+
+                for _ in range(self.gradient_accumulate_every):
+                    data = next(self.dl).to(device)
+
+                    with self.accelerator.autocast():
+                        loss = self.model(data)
+                        loss = loss / self.gradient_accumulate_every
+                        total_loss += loss.item()
+
+                    self.accelerator.backward(loss)
+
+                pbar.set_description(f'loss: {total_loss:.4f}')
+                
+                # TODO: Add wandb line logging the total loss at the current step
+
+                accelerator.wait_for_everyone()
+                accelerator.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
+
+                self.opt.step()
+                self.opt.zero_grad()
+
+                accelerator.wait_for_everyone()
+
+                self.step += 1
+                if accelerator.is_main_process:
+                    self.ema.update()
+
+                    if self.step != 0 and divisible_by(self.step, self.save_and_sample_every):
+                        self.ema.ema_model.eval()
+
+                        with torch.inference_mode():
+                            milestone = self.step // self.save_and_sample_every
+                            batches = num_to_groups(self.num_samples, self.batch_size)
+                            all_images_list = list(map(lambda n: self.ema.ema_model.sample(batch_size=n), batches))
+
+                        all_images = torch.cat(all_images_list, dim = 0)
+
+                        utils.save_image(all_images, str(self.results_folder / f'sample-{milestone}.png'), nrow = int(math.sqrt(self.num_samples)))
+
+                        # whether to calculate fid
+
+                        if self.calculate_fid:
+                            fid_score = self.fid_scorer.fid_score()
+                            accelerator.print(f'fid_score: {fid_score}')
+                        if self.save_best_and_latest_only:
+                            if self.best_fid > fid_score:
+                                self.best_fid = fid_score
+                                self.save("best")
+                            self.save("latest")
+                        else:
+                            self.save(milestone)
+
+                pbar.update(1)
+
+        accelerator.print('training complete')
