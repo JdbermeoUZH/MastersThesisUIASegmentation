@@ -9,7 +9,7 @@ from denoising_diffusion_pytorch import Unet, GaussianDiffusion
 sys.path.append(os.path.normpath(os.path.join(
     os.path.dirname(__file__), '..', '..', '..', 'tta_uia_segmentation', 'src')))
 
-from dataset import DatasetInMemoryForDDPM
+from dataset.dataset_h5_for_ddpm import get_datasets
 from models import ConditionalGaussianDiffusion
 from train import CDDPMTrainer
 from utils.io import (load_config, dump_config, print_config,
@@ -69,10 +69,6 @@ def preprocess_cmd_args() -> argparse.Namespace:
     parser.add_argument('--image_size', type=int, nargs='+', help='Size of images in dataset. Default: [560, 640, 160]')
     parser.add_argument('--resolution_proc', type=float, nargs='+', help='Resolution of images in dataset. Default: [0.3, 0.3, 0.6]')
     parser.add_argument('--rescale_factor', type=float, help='Rescale factor for images in dataset. Default: None')
-    
-    parser.add_argument('--concatenate', type=lambda s: s.strip().lower() == 'true', 
-                        help='Whether to concatenate images and labels. Default: True')
-    parser.add_argument('--axis_to_concatenate', type=int, help='Axis to concatenate images and labels. Default: 0')
     
     args = parser.parse_args()
     
@@ -145,12 +141,10 @@ if __name__ == '__main__':
     #num_workers         = train_config[train_type]['num_workers']
     
     # Dataset definition
-    train_dataset = DatasetInMemoryForDDPM(
-        concatenate     = train_config[train_type]['concatenate'],
-        axis_to_concatenate = train_config[train_type]['axis_to_concatenate'],
+    train_dataset, val_dataset = get_datasets(
+        splits          = ['train', 'val'],
         paths           = dataset_config[dataset]['paths_processed'],
         paths_original  = dataset_config[dataset]['paths_original'],
-        split          = 'train',
         image_size      = train_config[train_type]['image_size'],
         resolution_proc = dataset_config[dataset]['resolution_proc'],
         dim_proc        = dataset_config[dataset]['dim'],
@@ -165,6 +159,9 @@ if __name__ == '__main__':
     # Define the denoiser model diffusion pipeline
     # :=========================================================================:
     
+    timesteps           = train_config[train_type]['timesteps']
+    sampling_timesteps  = train_config[train_type]['sampling_timesteps']
+    
     print(f'Using Device {device}')
     # Model definition
     model = Unet(
@@ -178,7 +175,8 @@ if __name__ == '__main__':
     diffusion = ConditionalGaussianDiffusion(
         model,
         image_size = 256,
-        timesteps = 1000    # number of steps
+        timesteps = timesteps,    # Range of steps in diffusion process
+        sampling_timesteps = sampling_timesteps 
     )#.to(device)
 
     # Execute the training loop
@@ -188,15 +186,18 @@ if __name__ == '__main__':
     gradient_accumulate_every = train_config[train_type]['gradient_accumulate_every']
     save_and_sample_every = train_config[train_type]['save_and_sample_every']
     train_lr = float(train_config[train_type]['learning_rate'])
-    train_num_steps = train_config[train_type]['num_steps']
+    train_num_steps = train_config[train_type]['train_num_steps']
+    num_samples = train_config[train_type]['num_samples']
     save_and_sample_every = train_config[train_type]['save_and_sample_every']
-    
+        
     trainer = CDDPMTrainer(
             diffusion,
-            train_dataset,
+            train_dataset=train_dataset,
+            val_dataset=val_dataset,
             train_batch_size = batch_size,
             train_lr = train_lr,
             train_num_steps = train_num_steps,# total training steps
+            num_samples=num_samples,          # number of samples to generate for metric evaluation
             gradient_accumulate_every = gradient_accumulate_every,    # gradient accumulation steps
             ema_decay = 0.995,                # exponential moving average decay
             amp = True,                       # turn on mixed precision

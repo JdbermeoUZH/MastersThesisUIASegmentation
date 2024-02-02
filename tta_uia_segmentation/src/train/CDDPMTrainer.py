@@ -3,6 +3,7 @@ from tqdm import tqdm
 from pathlib import Path
 import torch
 from multiprocessing import cpu_count
+from typing import Optional
 
 import wandb
 from torch.optim import Adam
@@ -10,6 +11,12 @@ from ema_pytorch import EMA
 from accelerate import Accelerator
 from torch.utils.data import DataLoader
 from torchvision import utils
+from torchmetrics.functional.image import (
+    peak_signal_noise_ratio,
+    structural_similarity_index_measure,
+    multiscale_structural_similarity_index_measure
+)
+from torchmetrics.functional.regression import mean_absolute_error
 
 from denoising_diffusion_pytorch.fid_evaluation import FIDEvaluation
 from denoising_diffusion_pytorch.denoising_diffusion_pytorch import (
@@ -19,24 +26,27 @@ from denoising_diffusion_pytorch.version import __version__
 import sys
 sys.path.append('..')
 from models import ConditionalGaussianDiffusion
+from dataset import DatasetInMemoryForDDPM
+
+
+metrics_to_log_default = {
+    'PSNR': peak_signal_noise_ratio,
+    'SSIM': structural_similarity_index_measure,
+    'MSSIM': multiscale_structural_similarity_index_measure,
+    'MAE': mean_absolute_error,
+}
 
 
 class CDDPMTrainer(Trainer):
 
     """
-    TODO: 
-        - Add wandb logging
-        - Add validation dataset
-        - Add mesuring PSNR, SSIM, MSE and MAE on validation and a sample of the train set
-            - Add Dice for the label map
-        - Add logging of the above metrics
-        - Add plotting of images to do qualitative evaluation
-    
+           
     """
     def __init__(
         self,
         diffusion_model: ConditionalGaussianDiffusion,
-        dataset,
+        train_dataset: DatasetInMemoryForDDPM,
+        val_dataset: Optional[DatasetInMemoryForDDPM] = None,
         *,
         train_batch_size = 16,
         gradient_accumulate_every = 1,
@@ -58,6 +68,7 @@ class CDDPMTrainer(Trainer):
         save_best_and_latest_only = False,
         wandb_log: bool = True,
         wandb_dir: str = 'wandb',
+        metrics_to_log: dict[str, callable] = metrics_to_log_default, 
     ):
         super(object, self).__init__()
         
@@ -92,15 +103,19 @@ class CDDPMTrainer(Trainer):
 
         # dataset and dataloader
 
-        self.ds = dataset
+        self.train_ds = train_dataset
+        self.val_ds = val_dataset
+        assert len(self.train_ds) >= 100, 'you should have at least 100 images in your folder. at least 10k images recommended'
 
-        assert len(self.ds) >= 100, 'you should have at least 100 images in your folder. at least 10k images recommended'
+        train_dl = DataLoader(self.train_ds, batch_size = train_batch_size, shuffle = True, pin_memory = True, num_workers = cpu_count())
+        val_dl = DataLoader(self.val_ds, batch_size = train_batch_size, shuffle = True, pin_memory = True, num_workers = cpu_count())   
+        
+        train_dl = self.accelerator.prepare(train_dl)
+        self.train_dl = cycle(train_dl)
 
-        dl = DataLoader(self.ds, batch_size = train_batch_size, shuffle = True, pin_memory = True, num_workers = cpu_count())
-
-        dl = self.accelerator.prepare(dl)
-        self.dl = cycle(dl)
-
+        val_dl = self.accelerator.prepare(val_dl)
+        self.val_dl = cycle(val_dl)
+        
         # optimizer
 
         self.opt = Adam(diffusion_model.parameters(), lr = train_lr, betas = adam_betas)
@@ -125,6 +140,7 @@ class CDDPMTrainer(Trainer):
         # Wandb logging
         self.wandb_log = wandb_log
         self.wandb_dir = wandb_dir
+        self.metrics_to_log = metrics_to_log
                 
         # FID-score computation
 
@@ -165,7 +181,7 @@ class CDDPMTrainer(Trainer):
                 total_loss = 0.
 
                 for _ in range(self.gradient_accumulate_every):
-                    img, cond_img = next(self.dl)
+                    img, cond_img = next(self.train_dl)
                     img, cond_img = img.to(device), cond_img.to(device)
 
                     with self.accelerator.autocast():
@@ -177,9 +193,6 @@ class CDDPMTrainer(Trainer):
 
                 pbar.set_description(f'loss: {total_loss:.4f}')
                 
-                if self.wandb_log:
-                    wandb.log({'total_loss': total_loss}, step = self.step)
-
                 accelerator.wait_for_everyone()
                 accelerator.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
 
@@ -194,19 +207,26 @@ class CDDPMTrainer(Trainer):
 
                     if self.step != 0 and divisible_by(self.step, self.save_and_sample_every):
                         self.ema.ema_model.eval()
+                        step = self.step
+                        milestone = step // self.save_and_sample_every
                         
-                        # Store a sample of denoised images
-                        with torch.inference_mode():
-                            milestone = self.step // self.save_and_sample_every
-                            batches = num_to_groups(self.num_samples, self.batch_size)
-                            all_images_list = list(map(lambda n: self.ema.ema_model.sample(batch_size=n), batches))
-
-                        all_images = torch.cat(all_images_list, dim = 0)
-
-                        utils.save_image(all_images, str(self.results_folder / f'sample-{milestone}.png'), nrow = int(math.sqrt(self.num_samples)))
-
+                        if self.wandb_log:
+                            wandb.log({'total_loss': total_loss}, step = step)
+                        
+                        # Evaluate the model on a sample of the training set
+                        train_sample_dl = DataLoader(
+                            self.train_ds.sample_slices(self.num_samples), 
+                            batch_size=self.batch_size, pin_memory = True, num_workers = cpu_count())
+                        
+                        self.evaluate(train_sample_dl, device=device, prefix='train', step=step)
+                        
+                        # Evaluate the model on a sample of the validation set
+                        val_sample_dl = DataLoader(
+                            self.val_ds.sample_slices(self.num_samples), 
+                            batch_size=self.batch_size, pin_memory=True, num_workers=cpu_count())
+                        self.evaluate(val_sample_dl, device=device, prefix='val', step=step)
+                        
                         # whether to calculate fid
-
                         if self.calculate_fid:
                             fid_score = self.fid_scorer.fid_score()
                             accelerator.print(f'fid_score: {fid_score}')
@@ -221,3 +241,31 @@ class CDDPMTrainer(Trainer):
                 pbar.update(1)
 
         accelerator.print('training complete')
+        
+    @torch.inference_mode()
+    def evaluate(self, sample_dl: DataLoader, device, step: int, prefix: str = '', ):
+        samples_imgs = []                 
+        milestone = self.step // self.save_and_sample_every
+           
+        for img_gt, seg_gt in sample_dl:
+            img_gt, seg_gt = img_gt.to(device), seg_gt.to(device)
+            generated_img = self.ema.ema_model.sample(x_cond=seg_gt)
+            
+            
+            # Store the generated image and the segmentation map side by side
+            seg_gt = self.model.normalize(seg_gt)   # So that they are on the same range of intensities
+            samples_imgs.append(torch.cat([generated_img, seg_gt], dim = -1)) 
+            
+            # log metrics
+            if self.wandb_log:
+                img_gt = self.model.normalize(img_gt)
+                
+                for metric_name, metric_func in self.metrics_to_log.items():
+                    metric_value = metric_func(generated_img, img_gt)
+                    wandb.log({f'{prefix}_{metric_name}': metric_value}, step = step)
+        
+        all_images = torch.cat(samples_imgs, dim = 0)
+
+        all_images_fn = f'{prefix}_sample-m{milestone}-step-{step}.png'
+        utils.save_image(all_images, str(self.results_folder / all_images_fn), 
+                        nrow = int(math.sqrt(self.num_samples)))
