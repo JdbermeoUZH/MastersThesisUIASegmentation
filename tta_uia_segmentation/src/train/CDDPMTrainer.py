@@ -207,24 +207,23 @@ class CDDPMTrainer(Trainer):
 
                     if self.step != 0 and divisible_by(self.step, self.save_and_sample_every):
                         self.ema.ema_model.eval()
-                        step = self.step
-                        milestone = step // self.save_and_sample_every
+                        milestone = self.step // self.save_and_sample_every
                         
                         if self.wandb_log:
-                            wandb.log({'total_loss': total_loss}, step = step)
+                            wandb.log({'total_loss': total_loss}, step = self.step)
                         
                         # Evaluate the model on a sample of the training set
                         train_sample_dl = DataLoader(
                             self.train_ds.sample_slices(self.num_samples), 
                             batch_size=self.batch_size, pin_memory = True, num_workers = cpu_count())
                         
-                        self.evaluate(train_sample_dl, device=device, prefix='train', step=step)
+                        self.evaluate(train_sample_dl, device=device, prefix='train')
                         
                         # Evaluate the model on a sample of the validation set
                         val_sample_dl = DataLoader(
                             self.val_ds.sample_slices(self.num_samples), 
                             batch_size=self.batch_size, pin_memory=True, num_workers=cpu_count())
-                        self.evaluate(val_sample_dl, device=device, prefix='val', step=step)
+                        self.evaluate(val_sample_dl, device=device, prefix='val')
                         
                         # whether to calculate fid
                         if self.calculate_fid:
@@ -243,29 +242,27 @@ class CDDPMTrainer(Trainer):
         accelerator.print('training complete')
         
     @torch.inference_mode()
-    def evaluate(self, sample_dl: DataLoader, device, step: int, prefix: str = '', ):
+    def evaluate(self, sample_dl: DataLoader, device, prefix: str = '', ):
         samples_imgs = []                 
         milestone = self.step // self.save_and_sample_every
            
         for img_gt, seg_gt in sample_dl:
             img_gt, seg_gt = img_gt.to(device), seg_gt.to(device)
             generated_img = self.ema.ema_model.sample(x_cond=seg_gt)
-            
+            generated_img = self.model.unnormalize(generated_img)
             
             # Store the generated image and the segmentation map side by side
-            seg_gt = self.model.normalize(seg_gt)   # So that they are on the same range of intensities
+            # seg_gt = self.model.normalize(seg_gt)   # So that they are on the same range of intensities
             samples_imgs.append(torch.cat([generated_img, seg_gt], dim = -1)) 
             
             # log metrics
             if self.wandb_log:
-                img_gt = self.model.normalize(img_gt)
-                
                 for metric_name, metric_func in self.metrics_to_log.items():
                     metric_value = metric_func(generated_img, img_gt)
-                    wandb.log({f'{prefix}_{metric_name}': metric_value}, step = step)
+                    wandb.log({f'{prefix}_{metric_name}': metric_value}, step = self.step)
         
         all_images = torch.cat(samples_imgs, dim = 0)
 
-        all_images_fn = f'{prefix}_sample-m{milestone}-step-{step}.png'
+        all_images_fn = f'{prefix}_sample-m{milestone}-step-{self.step}.png'
         utils.save_image(all_images, str(self.results_folder / all_images_fn), 
                         nrow = int(math.sqrt(self.num_samples)))

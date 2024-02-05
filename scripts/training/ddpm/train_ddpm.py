@@ -166,7 +166,7 @@ if __name__ == '__main__':
     # Model definition
     model = Unet(
         dim = 64,
-        dim_mults = (1, 2, 4, 8),
+        dim_mults = (1, 2, 4, 8, 16),   
         flash_attn = True,
         channels= 1, 
         self_condition=True,

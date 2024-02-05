@@ -87,15 +87,15 @@ ddpm:
   dataset:                      hcp_t1  # brain: hcp_t1, hcp_t2, abide_caltech, abide_stanford; wmh: nuhs, umc, vu
   image_size:                   [1, 256, 256]
   rescale_factor:               [1, 1, 1]
-  train_num_steps:              100    # 7,000,000 or 100,000 in the original script
-  num_samples :                 4      # Must have an interger square root to store images in a square grid
+  train_num_steps:              100000 # 7,000,000 or 100,000 in the original script
+  num_samples :                 25      # Must have an interger square root to store images in a square grid
   timesteps:                    1000   # Range of noising steps to sample from during training. 1000 in the constructor  
-  sampling_timesteps:           25     # Number of sampling steps to generate images. If less than 1000, will use DDIM sampling. If null, will be the same as timesteps => linear denoising steps
-  validate_every:               5   
-  save_and_sample_every:        5     # 1000 in the constructor 
+  sampling_timesteps:           1000   # Number of sampling steps to generate images. If less than 1000, will use DDIM sampling. If null, will be the same as timesteps => linear denoising steps
+  validate_every:               1000   
+  save_and_sample_every:        1000     # 1000 in the constructor 
   learning_rate:                8e-5   # 1e-4
-  logdir:                       /scratch_net/biwidl319/jbermeo/logs/brain/cddpm/
-  wandb_project:                mt-ddpm
+  logdir:                       /scratch_net/biwidl319/jbermeo/logs/brain/cddpm_large/
+  wandb_project:                mt-ddpm-large
 
   augmentation:                 null
   bg_suppression_opts:          null
