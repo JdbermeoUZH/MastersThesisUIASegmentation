@@ -21,7 +21,7 @@ class ConditionalGaussianDiffusion(GaussianDiffusion):
         
         assert self.model.self_condition, 'Unet model must be defined in self condition mode' 
                 
-    def p_losses_conditioned_on_img(self, x_start, x_cond, t, 
+    def p_losses_conditioned_on_img(self, x_start, t, x_cond, 
                                     noise=None, offset_noise_strength=None):
 
         assert x_cond.shape == x_start.shape, 'x_cond and x_start must have the same shape'
@@ -38,10 +38,6 @@ class ConditionalGaussianDiffusion(GaussianDiffusion):
 
         # noise sample
         x = self.q_sample(x_start = x_start, t = t, noise = noise)
-
-        # if doing self-conditioning, 50% of the time, predict x_start from current set of times
-        # and condition with unet with that
-        # this technique will slow down training by 25%, but seems to lower FID significantly
 
         # predict and take gradient step
         model_out = self.model(x, t, x_cond)
@@ -71,18 +67,7 @@ class ConditionalGaussianDiffusion(GaussianDiffusion):
         img = self.normalize(img)
         cond_img = self.normalize(cond_img)
         
-        return self.p_losses_conditioned_on_img(img, cond_img, t, *args, **kwargs)
-    
-    def p_mean_variance(self, x, t, x_self_cond = None, clip_denoised = True):
-        preds = self.model_predictions(x, t, x_self_cond)
-        x_start = preds.pred_x_start
-
-        if clip_denoised:
-            x_start.clamp_(-1., 1.)
-
-        model_mean, posterior_variance, posterior_log_variance = self.q_posterior(x_start = x_start, x_t = x, t = t)
-        
-        return model_mean, posterior_variance, posterior_log_variance, x_start        
+        return self.p_losses_conditioned_on_img(img, t, cond_img, *args, **kwargs)      
     
     @torch.inference_mode()
     def p_sample_loop(self, x_cond, return_all_timesteps = False):

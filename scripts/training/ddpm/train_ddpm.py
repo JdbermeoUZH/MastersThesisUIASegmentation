@@ -159,23 +159,27 @@ if __name__ == '__main__':
     # Define the denoiser model diffusion pipeline
     # :=========================================================================:
     
+    dim                 = model_config['ddpm_unet']['dim']
+    dim_mults           = model_config['ddpm_unet']['dim_mults']
+    channels            = model_config['ddpm_unet']['channels']
+    
     timesteps           = train_config[train_type]['timesteps']
     sampling_timesteps  = train_config[train_type]['sampling_timesteps']
     
     print(f'Using Device {device}')
     # Model definition
     model = Unet(
-        dim = 64,
-        dim_mults = (1, 2, 4, 8, 16),   
-        flash_attn = True,
-        channels= 1, 
+        dim=dim,
+        dim_mults=dim_mults,   
+        flash_attn=True,
+        channels=channels, 
         self_condition=True,
     )#.to(device)
     
     diffusion = ConditionalGaussianDiffusion(
         model,
-        image_size = 256,
-        timesteps = timesteps,    # Range of steps in diffusion process
+        image_size=train_config[train_type]['image_size'][-1],
+        timesteps=timesteps,    # Range of steps in diffusion process
         sampling_timesteps = sampling_timesteps 
     )#.to(device)
 
