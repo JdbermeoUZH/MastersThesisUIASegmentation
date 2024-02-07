@@ -71,7 +71,7 @@ class ConditionalGaussianDiffusion(GaussianDiffusion):
     
     @torch.inference_mode()
     def p_sample_loop(self, x_cond, return_all_timesteps = False):
-
+        x_cond = self.normalize(x_cond)
         img = torch.randn(x_cond.shape, device = self.device)
         imgs = [img]
 
@@ -86,6 +86,8 @@ class ConditionalGaussianDiffusion(GaussianDiffusion):
 
     @torch.inference_mode()
     def ddim_sample(self, x_cond, return_all_timesteps = False):
+        x_cond = self.normalize(x_cond)
+
         batch, device, total_timesteps, sampling_timesteps, eta, objective = x_cond.shape[0], self.device, self.num_timesteps, self.sampling_timesteps, self.ddim_sampling_eta, self.objective
 
         times = torch.linspace(-1, total_timesteps - 1, steps = sampling_timesteps + 1)   # [-1, 0, 1, 2, ..., T-1] when sampling_timesteps == total_timesteps

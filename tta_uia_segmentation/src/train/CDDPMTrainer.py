@@ -249,7 +249,6 @@ class CDDPMTrainer(Trainer):
         for img_gt, seg_gt in sample_dl:
             img_gt, seg_gt = img_gt.to(device), seg_gt.to(device)
             generated_img = self.ema.ema_model.sample(x_cond=seg_gt)
-            generated_img = self.model.unnormalize(generated_img)
             
             # Store the generated image and the segmentation map side by side
             # seg_gt = self.model.normalize(seg_gt)   # So that they are on the same range of intensities

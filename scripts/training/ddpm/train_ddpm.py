@@ -1,5 +1,7 @@
 import os
+import re
 import sys
+import glob
 import argparse
 
 import wandb
@@ -9,9 +11,8 @@ from denoising_diffusion_pytorch import Unet, GaussianDiffusion
 sys.path.append(os.path.normpath(os.path.join(
     os.path.dirname(__file__), '..', '..', '..', 'tta_uia_segmentation', 'src')))
 
+from train import DDPMTrainer
 from dataset.dataset_h5_for_ddpm import get_datasets
-from models import ConditionalGaussianDiffusion
-from train import CDDPMTrainer
 from utils.io import (load_config, dump_config, print_config,
                       save_checkpoint, write_to_csv, rewrite_config_arguments)
 from utils.utils import seed_everything, define_device
@@ -93,6 +94,21 @@ def get_configuration_arguments() -> tuple[dict, dict, dict]:
     return dataset_config, model_config, train_config
 
 
+def get_last_milestone(logdir: str) -> int:
+    pattern = r'model-(\d+)\.pt'
+    checkpoints_fps = glob.glob(os.path.join(logdir, 'model-*.pt'))
+    
+    assert len(checkpoints_fps) > 0, "No milestone checkpoints found" 
+    
+    checkpoints_fns = [os.path.basename(fps) for fps in checkpoints_fps]
+    
+    milestones = [int(re.search(pattern, fn).group(1)) if re.search(pattern, fn) else -1
+                  for fn in checkpoints_fns]
+    
+    last_milestone = max(milestones)
+    assert last_milestone != -1, "Could not find the last milestone"
+    
+    return last_milestone
 
 if __name__ == '__main__':
 
@@ -143,6 +159,7 @@ if __name__ == '__main__':
     # Dataset definition
     train_dataset, val_dataset = get_datasets(
         splits          = ['train', 'val'],
+        concatenate_along_channel=True,
         paths           = dataset_config[dataset]['paths_processed'],
         paths_original  = dataset_config[dataset]['paths_original'],
         image_size      = train_config[train_type]['image_size'],
@@ -172,13 +189,12 @@ if __name__ == '__main__':
         dim=dim,
         dim_mults=dim_mults,   
         flash_attn=True,
-        channels=channels, 
-        self_condition=True,
+        channels=channels * 2, # As we are learning a denoising for the joint of x and y 
     )#.to(device)
     
-    diffusion = ConditionalGaussianDiffusion(
+    diffusion = GaussianDiffusion(
         model,
-        image_size=train_config[train_type]['image_size'][-1],
+        image_size=(256, 256),
         timesteps=timesteps,    # Range of steps in diffusion process
         sampling_timesteps = sampling_timesteps 
     )#.to(device)
@@ -194,7 +210,7 @@ if __name__ == '__main__':
     num_samples = train_config[train_type]['num_samples']
     save_and_sample_every = train_config[train_type]['save_and_sample_every']
         
-    trainer = CDDPMTrainer(
+    trainer = DDPMTrainer(
             diffusion,
             train_dataset=train_dataset,
             val_dataset=val_dataset,
@@ -214,6 +230,12 @@ if __name__ == '__main__':
         #wandb.save(os.path.join(wandb_dir, trainer.get_last_checkpoint_name()), base_path=wandb_dir)
         #wandb.watch([diffusion, model], trainer.get_loss_function(), log='all')
         wandb.watch([diffusion, model], log='all')
+        
+    # Resume previous point if necessary
+    if resume:
+        last_milestone = get_last_milestone(logdir)
+        print(f'Resuming training from milestone {last_milestone}')
+        trainer.load(last_milestone)
         
     # Start training
     # :=========================================================================:

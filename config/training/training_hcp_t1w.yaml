@@ -1,6 +1,6 @@
 wandb_log:        True
 seed:             0
-resume:           False
+resume:           True
 device:           cuda
 checkpoint_best:  checkpoint_best.pth
 checkpoint_last:  checkpoint_last.pth
@@ -82,8 +82,8 @@ segmentation:
 
 
 ddpm:
-  batch_size:                   8
-  gradient_accumulate_every:    2
+  batch_size:                   2
+  gradient_accumulate_every:    8
   dataset:                      hcp_t1    # brain: hcp_t1, hcp_t2, abide_caltech, abide_stanford; wmh: nuhs, umc, vu
   image_size:                   [1, 256, 256]
   rescale_factor:               [1, 1, 1]
@@ -93,8 +93,8 @@ ddpm:
   sampling_timesteps:           100       # Number of sampling steps to generate images. If less than 1000, will use DDIM sampling. If null, will be the same as timesteps => linear denoising steps
   save_and_sample_every:        5000      # 1000 in the constructor 
   learning_rate:                8e-5      # 1e-4 in the constructor
-  logdir:                       /scratch_net/biwidl319/jbermeo/logs/brain/cddpm/exps/smaller_network_16_32_64_128
-  wandb_project:                mt-ddpm
+  logdir:                       /scratch_net/biwidl319/jbermeo/logs/brain/ddpm/hcp_t1
+  wandb_project:                mt-ddpm-joint
 
   augmentation:                 null
   bg_suppression_opts:          null

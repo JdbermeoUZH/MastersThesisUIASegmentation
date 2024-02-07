@@ -28,6 +28,7 @@ def distribute_n_in_m_slots(n, m):
 
 def get_datasets(
    splits,
+   concatenate_along_channel: bool = False,
    *args,
     **kwargs,
 ):
@@ -36,7 +37,8 @@ def get_datasets(
 
     for split in splits:
         datasets.append(
-            DatasetInMemoryForDDPM(split=split, *args, **kwargs)
+            DatasetInMemoryForDDPM(split=split, concatenate_along_channel=concatenate_along_channel,
+                                   *args, **kwargs)
         )
 
     return datasets
@@ -45,10 +47,12 @@ def get_datasets(
 class DatasetInMemoryForDDPM(DatasetInMemory):
     def __init__(
         self,
+        concatenate_along_channel: bool = False,
         *args,
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
+        self.concatenate_along_channel = concatenate_along_channel
         self.num_vols = int(self.images.shape[0] / self.dim_proc[-1]) if self.image_size[0] == 1 else self.images.shape[0]
         
     def __getitem__(self, index) -> Union[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]:
@@ -72,7 +76,10 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
         # Normalize label map to [0, 1]
         labels = labels / np.max(self.n_classes - 1)
         
-        return torch.from_numpy(images).float(), torch.from_numpy(labels).float()
+        if self.concatenate_along_channel:
+            return torch.from_numpy(np.concatenate([images, labels], axis=-1)).float()
+        else:
+            return torch.from_numpy(images).float(), torch.from_numpy(labels).float()
     
     
     def sample_slices(self, sample_size: int, range: tuple[float, float] = (0.2, 0.8)) -> Dataset:

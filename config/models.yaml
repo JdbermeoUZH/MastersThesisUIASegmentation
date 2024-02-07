@@ -41,7 +41,7 @@ segmentation_3D:
 
 
 ddpm_unet:
-  dim:                              16            # Number of filetrs in the first layer
+  dim:                              64            # Number of filetrs in the first layer. Default 64
   dim_mults:                        [1, 2, 4, 8]  # Multipliers for the number of filters in each layer. Default: [1, 2, 4, 8]
   channels:                         1             # Number of input channels
   
