@@ -194,7 +194,7 @@ if __name__ == '__main__':
     
     diffusion = GaussianDiffusion(
         model,
-        image_size=(256, 256),
+        image_size=256,
         timesteps=timesteps,    # Range of steps in diffusion process
         sampling_timesteps = sampling_timesteps 
     )#.to(device)
@@ -209,7 +209,9 @@ if __name__ == '__main__':
     train_num_steps = train_config[train_type]['train_num_steps']
     num_samples = train_config[train_type]['num_samples']
     save_and_sample_every = train_config[train_type]['save_and_sample_every']
-        
+    
+    a = train_dataset[0]
+
     trainer = DDPMTrainer(
             diffusion,
             train_dataset=train_dataset,

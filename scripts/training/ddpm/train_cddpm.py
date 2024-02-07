@@ -136,6 +136,10 @@ if __name__ == '__main__':
     if is_resumed:
         params = load_config(os.path.join(logdir, 'params.yaml'))
         
+        # We need the original model and dataset definitions
+        dataset_config = params['dataset']
+        model_config = params['model']
+        
     else:
         os.makedirs(logdir, exist_ok=True)
         dump_config(os.path.join(logdir, 'params.yaml'), params)
@@ -241,14 +245,6 @@ if __name__ == '__main__':
     # Start training
     # :=========================================================================:
     trainer.train()
-    
-    # write_to_csv(
-    #     path=os.path.join(logdir, 'training_statistics.csv'),
-    #     data=np.stack([trainer.get_training_losses(),
-    #                    trainer.get_validation_losses(validate_every=validate_every),
-    #                    trainer.get_validation_scores(validate_every=validate_every)], 1),
-    #     header=['training_losses', 'validation_losses', 'validation_scores'],
-    # )
     
     if wandb_log:
         wandb.finish()

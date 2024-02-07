@@ -77,7 +77,7 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
         labels = labels / np.max(self.n_classes - 1)
         
         if self.concatenate_along_channel:
-            return torch.from_numpy(np.concatenate([images, labels], axis=-1)).float()
+            return torch.from_numpy(np.concatenate([images, labels], axis=0)).float()
         else:
             return torch.from_numpy(images).float(), torch.from_numpy(labels).float()
     

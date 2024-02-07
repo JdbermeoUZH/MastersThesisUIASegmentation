@@ -11,6 +11,7 @@ from ema_pytorch import EMA
 from accelerate import Accelerator
 from torch.utils.data import DataLoader
 from torchvision import utils
+from PIL import Image   
 from torchmetrics.functional.image import (
     peak_signal_noise_ratio,
     structural_similarity_index_measure,
@@ -20,7 +21,7 @@ from torchmetrics.functional.regression import mean_absolute_error
 
 from denoising_diffusion_pytorch.fid_evaluation import FIDEvaluation
 from denoising_diffusion_pytorch.denoising_diffusion_pytorch import (
-    cycle, has_int_squareroot, Trainer, divisible_by, num_to_groups)
+    cycle, has_int_squareroot, Trainer, divisible_by, num_to_groups, exists)
 from denoising_diffusion_pytorch.version import __version__
 
 import sys
@@ -36,6 +37,16 @@ metrics_to_log_default = {
     'MAE': mean_absolute_error,
 }
 
+
+@torch.no_grad()
+def tensor_collection_to_image_grid(
+    tensor,
+    **kwargs,
+) -> None:
+    grid = utils.make_grid(tensor, **kwargs)
+    # Add 0.5 after unnormalizing to [0, 255] to round to the nearest integer
+    ndarr = grid.mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).to("cpu", torch.uint8).numpy()
+    return Image.fromarray(ndarr)
 
 class CDDPMTrainer(Trainer):
 
@@ -212,6 +223,9 @@ class CDDPMTrainer(Trainer):
                         if self.wandb_log:
                             wandb.log({'total_loss': total_loss}, step = self.step)
                         
+                        print('Running evaluation at step', self.step)
+                        print('#' * 100)
+                        
                         # Evaluate the model on a sample of the training set
                         train_sample_dl = DataLoader(
                             self.train_ds.sample_slices(self.num_samples), 
@@ -235,6 +249,8 @@ class CDDPMTrainer(Trainer):
                                 self.save("best")
                             self.save("latest")
                         else:
+                            print('Saving model... at step', self.step)
+                            print('#' * 100)
                             self.save(milestone)
 
                 pbar.update(1)
@@ -265,3 +281,30 @@ class CDDPMTrainer(Trainer):
         all_images_fn = f'{prefix}_sample-m{milestone}-step-{self.step}.png'
         utils.save_image(all_images, str(self.results_folder / all_images_fn), 
                         nrow = int(math.sqrt(self.num_samples)))
+        
+        wandb.log(
+            {all_images_fn: wandb.Image(tensor_collection_to_image_grid(
+                all_images, nrow = int(math.sqrt(self.num_samples))))}, 
+            step = self.step
+            ) 
+        
+    def save(self, milestone):
+        if not self.accelerator.is_local_main_process:
+            return
+        print(f'Saving model... at milestone {milestone} and step {self.step}')
+        print('#' * 100)
+        
+        data = {
+            'step': self.step,
+            'model': self.accelerator.get_state_dict(self.model),
+            'opt': self.opt.state_dict(),
+            'ema': self.ema.state_dict(),
+            'scaler': self.accelerator.scaler.state_dict() if exists(self.accelerator.scaler) else None,
+            'version': __version__
+        }
+
+        cpt_fp = str(self.results_folder / f'model-{milestone}.pt')
+        torch.save(data, cpt_fp)
+        artifact = wandb.Artifact('last_model_checkpoint', type='model')
+        artifact.add_file(cpt_fp)
+        wandb.log_artifact(artifact)

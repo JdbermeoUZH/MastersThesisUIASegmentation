@@ -241,30 +241,33 @@ class DDPMTrainer(Trainer):
         
     @torch.inference_mode()
     def evaluate(self, sample_dl: DataLoader, device, prefix: str = '', ):
-        samples_imgs = []                 
+        samples_imgs = []       
+        samples_segs = []          
         milestone = self.step // self.save_and_sample_every
            
         for img_seg_gt in sample_dl:
             img_gt, seg_gt = img_seg_gt[:, 0, ...].to(device), img_seg_gt[:, 1, ...].to(device)
-            generated_img = self.ema.ema_model.sample(seg_gt.shape[0])
+            generated_img_seg = self.ema.ema_model.sample(seg_gt.shape[0])
+            generated_img = generated_img_seg[:, 0, ...]
+            generated_seg = generated_img_seg[:, 1, ...]
             
             # Store the generated image and the segmentation map side by side
             # seg_gt = self.model.normalize(seg_gt)   # So that they are on the same range of intensities
-            samples_imgs.append(torch.cat([generated_img[:, 0, ...], generated_img[:, 1, ...], img_gt, seg_gt], dim = -1)) 
+            samples_imgs.append(torch.cat([generated_img, img_gt], dim = -1)) 
+            samples_segs.append(torch.cat([generated_seg, seg_gt], dim = -1))
             
             # log metrics
             if self.wandb_log:
                 for metric_name, metric_func in self.metrics_to_log.items():
-                    metric_value = metric_func(generated_img[:, 0, ...], img_gt)
+                    metric_value = metric_func(generated_img, img_gt)
                     wandb.log({f'{prefix}_{metric_name}': metric_value}, step = self.step)
         
-        all_images = torch.cat(samples_imgs[:, 0, ...], dim = 0)
-        all_segs = torch.cat(samples_imgs[:, 1, ...], dim = 0)
-        
+        all_images = torch.cat(samples_imgs, dim = 0)        
         all_images_fn = f'{prefix}_sample-m{milestone}-step-{self.step}_imgs.png'
         utils.save_image(all_images, str(self.results_folder / all_images_fn), 
                         nrow = int(math.sqrt(self.num_samples)))
         
+        all_segs = torch.cat(samples_segs, dim = 0)
         all_segs_fn = f'{prefix}_sample-m{milestone}-step-{self.step}_segs.png'
         utils.save_image(all_segs, str(self.results_folder / all_segs_fn), 
                         nrow = int(math.sqrt(self.num_samples)))
