@@ -11,12 +11,12 @@ from torch.utils import data
 import nibabel as nib
 import nibabel.processing as nibp
 
-from dataset.augmentation import apply_data_augmentation
-from dataset.deformation import make_noise_masks_3d
-from models.normalization import RBF
-from utils.io import deep_get
-from utils.loss import class_to_onehot
-from utils.utils import get_seed, assert_in, resize_and_resample_nibp
+from tta_uia_segmentation.src.dataset.augmentation import apply_data_augmentation
+from tta_uia_segmentation.src.dataset.deformation import make_noise_masks_3d
+from tta_uia_segmentation.src.models.normalization import RBF
+from tta_uia_segmentation.src.utils.io import deep_get
+from tta_uia_segmentation.src.utils.loss import class_to_onehot
+from tta_uia_segmentation.src.utils.utils import get_seed, assert_in, resize_and_resample_nibp
 
 
 def split_dataset(dataset, ratio):

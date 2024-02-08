@@ -2,9 +2,9 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 
-from models.utils import get_conv, get_batch_norm, get_max_pool
+from tta_uia_segmentation.src.models.utils import get_conv, get_batch_norm, get_max_pool
 
-from utils.utils import assert_in
+from tta_uia_segmentation.src.utils.utils import assert_in
 
 class DoubleConv(nn.Module):
     def __init__(self, in_channels, out_channels, bias=False, activation=nn.ReLU, n_dimensions=3):

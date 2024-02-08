@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from torch import nn as nn
 
-from utils.utils import assert_in
+from tta_uia_segmentation.src.utils.utils import assert_in
 
 
 def get_conv(in_channels, out_channels, kernel_size, n_dimensions=3, *args, **kwargs):

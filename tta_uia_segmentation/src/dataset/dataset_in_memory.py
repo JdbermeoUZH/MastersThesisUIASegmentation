@@ -8,12 +8,12 @@ import torch
 import torch.nn.functional as F
 from torch.utils import data
 
-from dataset.augmentation import apply_data_augmentation
-from dataset.deformation import make_noise_masks_3d
-from models.normalization import RBF
-from utils.io import deep_get
-from utils.loss import class_to_onehot
-from utils.utils import crop_or_pad_slice_to_size, get_seed, assert_in
+from tta_uia_segmentation.src.dataset.augmentation import apply_data_augmentation
+from tta_uia_segmentation.src.dataset.deformation import make_noise_masks_3d
+from tta_uia_segmentation.src.models.normalization import RBF
+from tta_uia_segmentation.src.utils.io import deep_get
+from tta_uia_segmentation.src.utils.loss import class_to_onehot
+from tta_uia_segmentation.src.utils.utils import crop_or_pad_slice_to_size, get_seed, assert_in
 
 
 def split_dataset(dataset, ratio):

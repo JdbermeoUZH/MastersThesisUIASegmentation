@@ -11,7 +11,7 @@ import imageio
 import numpy as np
 from matplotlib import pyplot as plt
 
-from utils.utils import assert_in
+from tta_uia_segmentation.src.utils.utils import assert_in
 
 ##############################
 # Things I know are being used

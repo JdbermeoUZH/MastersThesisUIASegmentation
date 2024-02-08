@@ -223,9 +223,6 @@ class CDDPMTrainer(Trainer):
                         if self.wandb_log:
                             wandb.log({'total_loss': total_loss}, step = self.step)
                         
-                        print('Running evaluation at step', self.step)
-                        print('#' * 100)
-                        
                         # Evaluate the model on a sample of the training set
                         train_sample_dl = DataLoader(
                             self.train_ds.sample_slices(self.num_samples), 
@@ -249,8 +246,6 @@ class CDDPMTrainer(Trainer):
                                 self.save("best")
                             self.save("latest")
                         else:
-                            print('Saving model... at step', self.step)
-                            print('#' * 100)
                             self.save(milestone)
 
                 pbar.update(1)
@@ -282,6 +277,7 @@ class CDDPMTrainer(Trainer):
         utils.save_image(all_images, str(self.results_folder / all_images_fn), 
                         nrow = int(math.sqrt(self.num_samples)))
         
+        # Log images in wandb
         wandb.log(
             {all_images_fn: wandb.Image(tensor_collection_to_image_grid(
                 all_images, nrow = int(math.sqrt(self.num_samples))))}, 
@@ -291,9 +287,7 @@ class CDDPMTrainer(Trainer):
     def save(self, milestone):
         if not self.accelerator.is_local_main_process:
             return
-        print(f'Saving model... at milestone {milestone} and step {self.step}')
-        print('#' * 100)
-        
+
         data = {
             'step': self.step,
             'model': self.accelerator.get_state_dict(self.model),
@@ -303,8 +297,5 @@ class CDDPMTrainer(Trainer):
             'version': __version__
         }
 
-        cpt_fp = str(self.results_folder / f'model-{milestone}.pt')
+        cpt_fp = str(self.results_folder / f'model-{milestone}-step_{self.step}.pt')
         torch.save(data, cpt_fp)
-        artifact = wandb.Artifact('last_model_checkpoint', type='model')
-        artifact.add_file(cpt_fp)
-        wandb.log_artifact(artifact)

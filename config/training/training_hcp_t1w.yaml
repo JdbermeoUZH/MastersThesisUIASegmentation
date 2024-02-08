@@ -93,7 +93,7 @@ ddpm:
   sampling_timesteps:           100       # Number of sampling steps to generate images. If less than 1000, will use DDIM sampling. If null, will be the same as timesteps => linear denoising steps
   save_and_sample_every:        5000      # 1000 in the constructor 
   learning_rate:                8e-5      # 1e-4 in the constructor
-  logdir:                       /scratch_net/biwidl319/jbermeo/logs/brain/cddpm #/scratch_net/biwidl319/jbermeo/logs/brain/ddpm/hcp_t1
+  logdir:                       /scratch_net/biwidl319/jbermeo/logs/brain/ddpm/hcp_t1
   wandb_project:                mt-ddpm
 
   augmentation:                 null

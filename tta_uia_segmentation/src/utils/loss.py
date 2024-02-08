@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from utils.utils import assert_in
+from tta_uia_segmentation.src.utils.utils import assert_in
 
 
 def class_to_onehot(class_image, n_classes=-1, class_dim=1):

@@ -1,9 +1,9 @@
 import torch
 import torch.nn as nn
 
-import models.utils as mu
-from utils.io import deep_get
-from utils.utils import assert_in
+import tta_uia_segmentation.src.models.utils as mu
+from tta_uia_segmentation.src.utils.io import deep_get
+from tta_uia_segmentation.src.utils.utils import assert_in
 
 
 def background_suppression(x, bg_mask, opts=None, bg_class=0):

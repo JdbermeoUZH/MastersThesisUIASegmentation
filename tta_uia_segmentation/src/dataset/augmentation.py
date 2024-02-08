@@ -1,8 +1,9 @@
 import numpy as np
 from scipy.ndimage import map_coordinates, rotate, shift, gaussian_filter
 from skimage import transform
-from utils.io import deep_get, number_or_list_to_array
-from utils.utils import uniform_interval_sampling
+
+from tta_uia_segmentation.src.utils.io import deep_get, number_or_list_to_array
+from tta_uia_segmentation.src.utils.utils import uniform_interval_sampling
 
 #
 # adapted from https://github.com/neerakara/test-time-adaptable-neural-networks-for-domain-generalization/blob/master/utils.py#L238

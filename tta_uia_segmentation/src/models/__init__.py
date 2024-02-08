@@ -1,3 +1,3 @@
-from models.UNet import UNet
-from models.normalization import Normalization
-from models.ConditionalGaussianDiffusion import ConditionalGaussianDiffusion
+from tta_uia_segmentation.src.models.UNet import UNet
+from tta_uia_segmentation.src.models.normalization import Normalization
+from tta_uia_segmentation.src.models.ConditionalGaussianDiffusion import ConditionalGaussianDiffusion
