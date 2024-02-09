@@ -1,5 +1,6 @@
 import os
 import sys
+import argparse
 from tqdm import tqdm
 
 import h5py
@@ -11,99 +12,27 @@ from PIL import Image
 from ema_pytorch import EMA
 import matplotlib.pyplot as plt
 from denoising_diffusion_pytorch import Unet, GaussianDiffusion
-from torchmetrics.functional.image import (
-    peak_signal_noise_ratio,
-    structural_similarity_index_measure,
-    multiscale_structural_similarity_index_measure
-)
-from torchmetrics.functional.regression import mean_absolute_error, mean_squared_error
+
 
 sys.path.append(os.path.normpath(os.path.join(
-    os.path.dirname(__file__), '..', '..', '..', '..')))#, 'tta_uia_segmentation', 'src')))
+    os.path.dirname(__file__), '..', '..', '..', '..')))
 
 from tta_uia_segmentation.src.models import ConditionalGaussianDiffusion
-
-metrics_to_log_default = {
-    'PSNR': peak_signal_noise_ratio,
-    'SSIM': structural_similarity_index_measure,
-    'MSSIM': multiscale_structural_similarity_index_measure,
-    'MAE': mean_absolute_error,
-    'MSE': mean_squared_error
-}
+from tta_uia_segmentation.src.dataset import DatasetInMemoryForDDPM 
+from ..utils import metrics_to_log_default
 
 
-def plot_denoising_progress(img_gt, seg_gt, img_w_noise, ex_img_w_noise_ti, img_denoist_at_ti_plus_1, img_denoised_sampled, img_denoised, noise_T, t_i):
-    fig, ax = plt.subplots(1, 7, figsize=(35, 5))
-    ax[0].imshow(img_gt.squeeze().numpy(), cmap='gray')
-    ax[0].set_title('Original')
-
-    ax[1].imshow(seg_gt.squeeze().numpy(), cmap='viridis')
-    ax[1].set_title('Segmentation GT')
-
-    ax[2].imshow(img_w_noise.squeeze().numpy(), cmap='gray')
-    ax[2].set_title(f'Starting Noised img @ T={noise_T}')
-    
-    ax[3].imshow(ex_img_w_noise_ti.squeeze().numpy(), cmap='gray')
-    ax[3].set_title(f'Example of Noised img @ t={t_i}')
-
-    ax[4].imshow(img_denoist_at_ti_plus_1.squeeze().numpy(), cmap='gray')
-    ax[4].set_title(f'Denoised - sampled est of t={t_i} (Current input)')
-
-    ax[5].imshow(img_denoised_sampled.squeeze().numpy(), cmap='gray')
-    ax[5].set_title(f'Denoised - sampled est. of t={t_i -1}')
-
-    ax[6].imshow(img_denoised.squeeze().numpy(), cmap='gray')
-    ax[6].set_title(f'Denoised img est. of t=0 @ t={t_i}')
-    
-    plt.show()
-    
-    
-def evaluate_linear_denoising(
-    img: np.ndarray,
-    seg: np.ndarray,
-    n_classes: int,
-    t: int,
-    ddpm: GaussianDiffusion,
-    plot_every: int = 50,
-    measure_metrics_every: int = 5,
-    metrics: dict = metrics_to_log_default
-) -> dict[str, dict]: 
-    
-    # Normalize image
-    img = torch.from_numpy(img).unsqueeze(0).unsqueeze(0).float()
-    img = ddpm.normalize(img)
-    
-    # Normalize segmentation
-    x_cond = torch.from_numpy(seg).unsqueeze(0).unsqueeze(0).float()
-    x_cond = x_cond / (n_classes - 1)
-    x_cond = ddpm.normalize(x_cond)
-
-    # Generate noised verion of the image
-    t_tch = torch.full((1,), t)
-    noise = torch.randn_like(img)
-    noised_img = ddpm.q_sample(img, t_tch, noise)
-
-    img_denoised = noised_img
-    metrics_logs = {k: list() for k in metrics.keys()}
-
-    for t_i in tqdm(reversed(range(0, t)), desc = 'sampling loop time step', total = t):
-        img_denoised_at_ti, img_denoised_at_t0 = ddpm.p_sample(img_denoised, t_i, x_cond)
-        
-        example_noised_img_at_ti = ddpm.q_sample(img, torch.full((1,), t_i), torch.randn_like(img))
-        
-        if t_i % plot_every == 0 or t_i == 0:
-            plot_denoising_progress(img, x_cond, noised_img, example_noised_img_at_ti, img_denoised,
-                                    img_denoised_at_ti, img_denoised_at_t0, t, t_i)
-            
-        if t_i % measure_metrics_every == 0 or t_i == 0:
-            for metric_name, metric_log in metrics_logs.items():
-                metric_log.append((
-                    t - t_i,
-                    metrics_to_log_default[metric_name](img, img_denoised_at_ti).item(),
-                    metrics_to_log_default[metric_name](img, img_denoised_at_t0).item()
-                ))
-                
-    return metrics_logs
+# Default args
+out_dir         = '/scratch_net/biwidl319/jbermeo/results/ddpm/sanity_checks/'
+exp_name        = 'default_exp_name'
+params_fp       = '/scratch_net/biwidl319/jbermeo/logs/brain/cddpm/params.yaml'
+cpt_fp          = '/scratch_net/biwidl319/jbermeo/logs/brain/cddpm/model-20.pt'
+ddim_steps      = 100
+dataset         = 'hcp_t1'
+seed            = 1234 
+device          = 'cpu' if not  torch.cuda.is_available() else 'cuda'
+ddim_only       = False
+split           = 'train'
 
 
 def store_results_sampling(
@@ -119,8 +48,11 @@ def store_results_sampling(
     # Plot the img, gt and sampled img side by side
     fig, ax = plt.subplots(1, 3, figsize=(15, 5))
     ax[0].imshow(img.squeeze().detach().cpu().numpy(), cmap='gray')
+    ax[0].set_title('Original Image')
     ax[1].imshow(seg.squeeze().detach().cpu().numpy(), cmap='viridis')
+    ax[1].set_title('Segmentation GT')  
     ax[2].imshow(final_sampled_img.squeeze().detach().cpu().numpy(), cmap='gray')
+    ax[2].set_title('Sampled Image from DDPM')
     plt.savefig(os.path.join(output_dir, '0_img_gt_sampled_img_ddim.png'))
     
     # Store a gif of the sampling progress
@@ -135,27 +67,58 @@ def store_results_sampling(
     # Store metrics of final sampled img
     with open(os.path.join(output_dir, 'metrics.txt'), 'w') as f:
         for metric_name, metric_fun in metrics.items():
-            f.write(f'{metric_name}: {metric_fun(img_unnorm, final_sampled_img).item()} \n')
+            f.write(f'{metric_name}: {metric_fun(img, final_sampled_img).item()} \n')
             
 
+
+def get_cmd_args():
+    parser = argparse.ArgumentParser(description="Check quality of DDPM sampling on a single image")
+
+    parse_booleans = lambda x: x.lower() in ['true', '1']
+    
+    parser.add_argument('--out_dir', type=str, default=out_dir, help='Output directory')
+    parser.add_argument('--exp_name', type=str, default=exp_name, help='Experiment name')
+    parser.add_argument('--params_fp', type=str, default=params_fp, help='Path to the params file')
+    parser.add_argument('--cpt_fp', type=str, default=cpt_fp, help='Path to the checkpoint file')
+    parser.add_argument('--ddim_steps', type=int, default=ddim_steps, help='Number of steps for DDIM sampling')
+    parser.add_argument('--dataset', type=str, default=dataset, help='Dataset to use')
+    parser.add_argument('--split', type=str, default=split, help='Split to use', options=['train', 'val', 'test'])
+    parser.add_argument('--seed', type=int, default=seed, help='Seed for reproducibility')
+    parser.add_argument('--device', type=str, default=device, help='Device to use')
+    parser.add_argument('--ddim_only', type=parse_booleans, default=ddim_only, help='Whether to only use DDIM sampling')
+    
+    return parser.parse_args()
+
+
 if __name__ == '__main__':
-    # Output dir
-    out_dir = '/scratch_net/biwidl319/jbermeo/results/ddpm/sanity_checks/wo_gpu'
-    exp_name = 'cddpm_64_128_256_512_100k_steps_b_16'
+    args = get_cmd_args()
+    
+    # Create output dir
     out_dir = os.path.join(out_dir, exp_name)
     os.makedirs(out_dir, exist_ok=True)
+        
+    np.random.seed(args.seed)
+    random.seed(args.seed)
     
-    # Script params
-    img_size        = 256
-    n_classes       = 15
-    seed            = 1234 
-    run_params      = yaml.safe_load(open('/scratch_net/biwidl319/jbermeo/logs/brain/cddpm/params.yaml', 'r'))
-    cpt_path        = '/scratch_net/biwidl319/jbermeo/logs/brain/cddpm/model-20.pt'
-    device          = 'cpu' if not  torch.cuda.is_available() else 'cuda'
-    ddim_steps      = 100
+    run_params = yaml.safe_load(open(args.params_fp, 'r'))
+    dataset_params = run_params['dataset'][args.dataset]
+    training_params = run_params['training']['ddpm']
     
-    np.random.seed(1234)
-    random.seed(1234)
+    dataset = DatasetInMemoryForDDPM(
+        split           = args.split,
+        one_hot_encode  = training_params['one_hot_encode'], 
+        normalize       = training_params['normalize'],
+        paths           = dataset_params['paths_normalized_with_nn'],
+        paths_original  = dataset_params['paths_original'],
+        image_size      = dataset_params['image_size'],
+        resolution_proc = dataset_params['resolution_proc'],
+        dim_proc        = dataset_params['dim_proc'],
+        n_classes       = dataset_params['n_classes'],
+        aug_params      = None,
+        bg_suppression_opts = None,
+        deformation     = None,
+        load_original   = False,
+    )
     
     # Load the data
     # :===============================================================:

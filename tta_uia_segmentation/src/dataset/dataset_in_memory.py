@@ -130,7 +130,6 @@ class DatasetInMemory(data.Dataset):
 
         assert_in(split, 'split', ['train', 'val', 'test'])
         assert_in(image_transform, 'image_transform', ['none', 'random_net'])
-
         self.path = os.path.expanduser(paths[split])
         self.path_original = os.path.expanduser(paths_original[split])
         self.split = split

@@ -159,14 +159,15 @@ if __name__ == '__main__':
     dataset             = train_config[train_type]['dataset']
     n_classes           = dataset_config[dataset]['n_classes']
     batch_size          = train_config[train_type]['batch_size']
-    #num_workers         = train_config[train_type]['num_workers']
+    paths_type          = 'paths_normalized_with_nn' if train_config[train_type]['use_nn_normalized'] \
+                            else 'paths_processed'
     
     # Dataset definition
     train_dataset, val_dataset = get_datasets(
         splits          = ['train', 'val'],
+        paths           = dataset_config[dataset][paths_type],
         one_hot_encode  = train_config[train_type]['one_hot_encode'],
         normalize       = train_config[train_type]['normalize'],
-        paths           = dataset_config[dataset]['paths_processed'],
         paths_original  = dataset_config[dataset]['paths_original'],
         image_size      = train_config[train_type]['image_size'],
         resolution_proc = dataset_config[dataset]['resolution_proc'],
@@ -178,6 +179,7 @@ if __name__ == '__main__':
         load_original   = False,
     )
     print('Dataloaders defined')
+    a = train_dataset[125]
     
     # Define the denoiser model diffusion pipeline
     # :=========================================================================:
