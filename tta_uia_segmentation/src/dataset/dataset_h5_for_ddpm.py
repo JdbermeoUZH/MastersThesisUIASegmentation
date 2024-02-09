@@ -49,16 +49,19 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
     def __init__(
         self,
         concatenate_along_channel: bool = False,
-        normalize_img: str = 'min_max',
+        normalize: str = 'min_max',
         one_hot_encode: bool = True,
         *args,
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
         self.concatenate_along_channel = concatenate_along_channel
-        self.normalize_img = normalize_img
+        self.normalize = normalize
         self.one_hot_encode = one_hot_encode
         self.num_vols = int(self.images.shape[0] / self.dim_proc[-1]) if self.image_size[0] == 1 else self.images.shape[0]
+        
+        self.images_max = self.images.max()
+        self.images_min = self.images.min()
         
     def __getitem__(self, index) -> Union[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]:
 
@@ -81,14 +84,20 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
         images = torch.from_numpy(images).float()
         labels = torch.from_numpy(labels).float()
 
-        if self.one_hot_encode:
-            labels = du.class_to_onehot(labels, self.n_classes, class_dim=0)
-
         # Normalize image and label map to [0, 1]
-        if self.normalize_img == 'min_max':
-            images = (images - images.min())/ (images.max() - images.min())
-            
-        labels = labels / (self.n_classes - 1)
+        if self.normalize == 'min_max':
+            images = du.normalize(type='min_max', data=images,
+                                  max=self.images_max, min=self.images_min,
+                                  scale=1)
+            if self.one_hot_encode:
+                labels = du.class_to_onehot(labels, self.n_classes, class_dim=0)
+            else:
+                labels = du.normalize(type='min_max', data=labels, 
+                                      min=0, max=self.n_classes - 1, 
+                                      scale=1)
+        
+        elif self.one_hot_encode:
+            labels = du.class_to_onehot(labels, self.n_classes, class_dim=0) 
         
         if self.concatenate_along_channel:
             return torch.concatenate([images, labels], axis=0).float()
@@ -126,9 +135,10 @@ if __name__ == '__main__':
         'val': '/scratch_net/biwidl319/jbermeo/data/previous_results_nico/datasets/data_T1_original_depth_256_from_20_to_25.hdf5'
     }  
   
-    
     ds = DatasetInMemoryForDDPM(
-        split          = 'train',
+        split           = 'train',
+        one_hot_encode  = True, 
+        normalize       = 'none',
         paths           = paths,
         paths_original  = paths_original,
         image_size      = (1, 256, 256),
@@ -141,8 +151,10 @@ if __name__ == '__main__':
         load_original   = False,
     )
     
-    img, seg = ds[0]
+    img, seg = ds[125]
     assert img.shape == (1, 256, 256), 'Image should have shape (1, 256, 256)'
     assert img.max() <= 1, 'Image should be normalized to [0, 1] range'
     assert img.min() >= 0, 'Image should be normalized to [0, 1] range'
+    assert seg.max() <= 1, 'Segmentation should be normalized to [0, 1] range'
+    assert seg.min() >= 0, 'Segmentation should be normalized to [0, 1] range'
     assert seg.shape == (15, 256, 256), 'Segmentation should have shape (15, 256, 256)'

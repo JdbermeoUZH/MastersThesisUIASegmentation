@@ -2,7 +2,7 @@ import os
 
 import wandb
 
-from utils.io import load_config, dump_config
+from tta_uia_segmentation.src.utils.io import load_config, dump_config
 
 
 def setup_wandb(params: dict, logdir: str, wandb_project: str) -> str:

@@ -24,10 +24,8 @@ from denoising_diffusion_pytorch.denoising_diffusion_pytorch import (
     cycle, has_int_squareroot, Trainer, divisible_by, num_to_groups, exists)
 from denoising_diffusion_pytorch.version import __version__
 
-import sys
-sys.path.append('..')
-from models import ConditionalGaussianDiffusion
-from dataset import DatasetInMemoryForDDPM
+from tta_uia_segmentation.src.models import ConditionalGaussianDiffusion
+from tta_uia_segmentation.src.dataset import DatasetInMemoryForDDPM
 
 
 metrics_to_log_default = {
@@ -48,6 +46,7 @@ def tensor_collection_to_image_grid(
     ndarr = grid.mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).to("cpu", torch.uint8).numpy()
     return Image.fromarray(ndarr)
 
+
 class CDDPMTrainer(Trainer):
 
     """
@@ -62,6 +61,7 @@ class CDDPMTrainer(Trainer):
         train_batch_size = 16,
         gradient_accumulate_every = 1,
         train_lr = 1e-4,
+        num_workers = cpu_count(),
         train_num_steps = 100000,
         ema_update_every = 10,
         ema_decay = 0.995,
@@ -111,6 +111,8 @@ class CDDPMTrainer(Trainer):
         self.image_size = diffusion_model.image_size
 
         self.max_grad_norm = max_grad_norm
+        
+        self.num_workers = num_workers
 
         # dataset and dataloader
 
@@ -118,8 +120,10 @@ class CDDPMTrainer(Trainer):
         self.val_ds = val_dataset
         assert len(self.train_ds) >= 100, 'you should have at least 100 images in your folder. at least 10k images recommended'
 
-        train_dl = DataLoader(self.train_ds, batch_size = train_batch_size, shuffle = True, pin_memory = True, num_workers = cpu_count())
-        val_dl = DataLoader(self.val_ds, batch_size = train_batch_size, shuffle = True, pin_memory = True, num_workers = cpu_count())   
+        train_dl = DataLoader(self.train_ds, batch_size = train_batch_size, shuffle = True, pin_memory = True, 
+                              num_workers = self.num_workers)
+        val_dl = DataLoader(self.val_ds, batch_size = train_batch_size, shuffle = True, pin_memory = True,
+                            num_workers = self.num_workers)   
         
         train_dl = self.accelerator.prepare(train_dl)
         self.train_dl = cycle(train_dl)
@@ -214,26 +218,26 @@ class CDDPMTrainer(Trainer):
 
                 self.step += 1
                 if accelerator.is_main_process:
+                    if self.wandb_log:
+                        wandb.log({'total_loss': total_loss}, step = self.step)
+                            
                     self.ema.update()
 
                     if self.step != 0 and divisible_by(self.step, self.save_and_sample_every):
                         self.ema.ema_model.eval()
                         milestone = self.step // self.save_and_sample_every
-                        
-                        if self.wandb_log:
-                            wandb.log({'total_loss': total_loss}, step = self.step)
-                        
+                    
                         # Evaluate the model on a sample of the training set
                         train_sample_dl = DataLoader(
                             self.train_ds.sample_slices(self.num_samples), 
-                            batch_size=self.batch_size, pin_memory = True, num_workers = cpu_count())
+                            batch_size=self.batch_size, pin_memory = True, num_workers = self.num_workers)
                         
                         self.evaluate(train_sample_dl, device=device, prefix='train')
                         
                         # Evaluate the model on a sample of the validation set
                         val_sample_dl = DataLoader(
                             self.val_ds.sample_slices(self.num_samples), 
-                            batch_size=self.batch_size, pin_memory=True, num_workers=cpu_count())
+                            batch_size=self.batch_size, pin_memory=True, num_workers=self.num_workers)
                         self.evaluate(val_sample_dl, device=device, prefix='val')
                         
                         # whether to calculate fid
@@ -268,7 +272,7 @@ class CDDPMTrainer(Trainer):
             # log metrics
             if self.wandb_log:
                 for metric_name, metric_func in self.metrics_to_log.items():
-                    metric_value = metric_func(generated_img, img_gt)
+                    metric_value = metric_func(generated_img, img_gt).item()
                     wandb.log({f'{prefix}_{metric_name}': metric_value}, step = self.step)
         
         all_images = torch.cat(samples_imgs, dim = 0)

@@ -9,15 +9,15 @@ from torch.utils.data import DataLoader
 from denoising_diffusion_pytorch import Unet, GaussianDiffusion
 
 sys.path.append(os.path.normpath(os.path.join(
-    os.path.dirname(__file__), '..', '..', '..', 'tta_uia_segmentation', 'src')))
+    os.path.dirname(__file__), '..', '..', '..')))
 
-from dataset.dataset_h5_for_ddpm import get_datasets
-from models import ConditionalGaussianDiffusion
-from train import CDDPMTrainer
-from utils.io import (load_config, dump_config, print_config,
-                      save_checkpoint, write_to_csv, rewrite_config_arguments)
-from utils.utils import seed_everything, define_device
-from utils.logging import setup_wandb
+from tta_uia_segmentation.src.dataset.dataset_h5_for_ddpm import get_datasets
+from tta_uia_segmentation.src.models import ConditionalGaussianDiffusion
+from tta_uia_segmentation.src.train import CDDPMTrainer
+from tta_uia_segmentation.src.utils.io import (
+    load_config, dump_config, print_config, rewrite_config_arguments)
+from tta_uia_segmentation.src.utils.utils import seed_everything, define_device
+from tta_uia_segmentation.src.utils.logging import setup_wandb
 
 
 
@@ -164,6 +164,8 @@ if __name__ == '__main__':
     # Dataset definition
     train_dataset, val_dataset = get_datasets(
         splits          = ['train', 'val'],
+        one_hot_encode  = train_config[train_type]['one_hot_encode'],
+        normalize       = train_config[train_type]['normalize'],
         paths           = dataset_config[dataset]['paths_processed'],
         paths_original  = dataset_config[dataset]['paths_original'],
         image_size      = train_config[train_type]['image_size'],
@@ -211,6 +213,7 @@ if __name__ == '__main__':
     gradient_accumulate_every = train_config[train_type]['gradient_accumulate_every']
     save_and_sample_every = train_config[train_type]['save_and_sample_every']
     train_lr = float(train_config[train_type]['learning_rate'])
+    num_workers = train_config[train_type]['num_workers']
     train_num_steps = train_config[train_type]['train_num_steps']
     num_samples = train_config[train_type]['num_samples']
     save_and_sample_every = train_config[train_type]['save_and_sample_every']
@@ -221,6 +224,7 @@ if __name__ == '__main__':
             val_dataset=val_dataset,
             train_batch_size = batch_size,
             train_lr = train_lr,
+            num_workers=num_workers,
             train_num_steps = train_num_steps,# total training steps
             num_samples=num_samples,          # number of samples to generate for metric evaluation
             gradient_accumulate_every = gradient_accumulate_every,    # gradient accumulation steps

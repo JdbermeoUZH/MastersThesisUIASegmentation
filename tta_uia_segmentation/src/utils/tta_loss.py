@@ -6,10 +6,10 @@ from torch.distributions.kl import kl_divergence
 import torch.nn as nn
 import torch.nn.functional as F
 
-from dataset.dataset_in_memory import get_sectors_from_index
-from utils.contrastive_loss import ContrastiveLoss
-from utils.distributions import normal
-from utils.utils import assert_in, random_select_from_tensor
+from tta_uia_segmentation.src.dataset.dataset_in_memory import get_sectors_from_index
+from tta_uia_segmentation.src.utils.contrastive_loss import ContrastiveLoss
+from tta_uia_segmentation.src.utils.distributions import normal
+from tta_uia_segmentation.src.utils.utils import assert_in, random_select_from_tensor
 
 
 class SliceSectorLoss(nn.Module):

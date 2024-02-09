@@ -5,7 +5,7 @@ import numpy as np
 import os
 import torch
 
-from utils.loss import onehot_to_class
+from tta_uia_segmentation.src.utils.loss import onehot_to_class
 
 
 def imshow(img, cmap='gray'):

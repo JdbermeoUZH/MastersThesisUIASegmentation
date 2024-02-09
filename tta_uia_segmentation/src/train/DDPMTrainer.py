@@ -17,15 +17,12 @@ from torchmetrics.functional.image import (
     multiscale_structural_similarity_index_measure
 )
 from torchmetrics.functional.regression import mean_absolute_error
-
 from denoising_diffusion_pytorch.fid_evaluation import FIDEvaluation
 from denoising_diffusion_pytorch.denoising_diffusion_pytorch import (
     cycle, has_int_squareroot, Trainer, divisible_by, num_to_groups, GaussianDiffusion)
 from denoising_diffusion_pytorch.version import __version__
 
-import sys
-sys.path.append('..')
-from dataset import DatasetInMemoryForDDPM
+from tta_uia_segmentation.src.dataset import DatasetInMemoryForDDPM
 
 
 metrics_to_log_default = {

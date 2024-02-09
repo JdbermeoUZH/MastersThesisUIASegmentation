@@ -11,7 +11,7 @@ class ConditionalGaussianDiffusion(GaussianDiffusion):
     """
     Conditional Gaussian diffusion model
     
-    Completely based on https://github.com/openai/improved-diffusion
+    Completely based on https://github.com/lucidrains/denoising-diffusion-pytorch
     """
     
     def __init__(
@@ -65,7 +65,7 @@ class ConditionalGaussianDiffusion(GaussianDiffusion):
         
         t = torch.randint(0, self.num_timesteps, (b,), device=device).long()
         img = self.normalize(img)
-        cond_img = self.normalize(cond_img) # 
+        cond_img = self.normalize(cond_img)  
         
         return self.p_losses_conditioned_on_img(img, t, cond_img, *args, **kwargs)      
     

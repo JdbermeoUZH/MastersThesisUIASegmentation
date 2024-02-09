@@ -1,7 +1,7 @@
 import torch
 from torch.nn import Sequential
-from dataset.dataset_in_memory import get_sectors_from_index
-from utils.utils import assert_in
+from tta_uia_segmentation.src.dataset.dataset_in_memory import get_sectors_from_index
+from tta_uia_segmentation.src.utils.utils import assert_in
 
 
 def cosine_similarity(x1, x2):

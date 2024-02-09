@@ -7,9 +7,9 @@ import torch
 import numpy as np
 from torch.utils.data import DataLoader
 
-from models import UNet
-from utils.loss import DiceLoss, dice_score
-from utils.io import save_checkpoint
+from tta_uia_segmentation.src.models import UNet
+from tta_uia_segmentation.src.utils.loss import DiceLoss, dice_score
+from tta_uia_segmentation.src.utils.io import save_checkpoint
 
 
 class DAETrainer:
