@@ -151,7 +151,7 @@ if __name__ == '__main__':
         for split, dataset in zip(splits, datasets)
     }
     
-    print('Dataloaders defined')
+    print(f'Dataloaders for dataset {dataset} defined')
     
     # Define the 2D normalization model 
     # :=========================================================================:

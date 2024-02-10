@@ -119,7 +119,7 @@ if __name__ == '__main__':
     # :=========================================================================:
     dataset_config, model_config, train_config = get_configuration_arguments()
     
-    params          = {'datset': dataset_config, 'model': model_config,
+    params          = {'dataset': dataset_config, 'model': model_config,
                        'training': train_config}
     resume          = train_config['resume']
     seed            = train_config['seed']
@@ -199,14 +199,14 @@ if __name__ == '__main__':
         flash_attn=True,
         channels=channels, 
         self_condition=True,
-    )#.to(device)
+    )
     
     diffusion = ConditionalGaussianDiffusion(
         model,
         image_size=train_config[train_type]['image_size'][-1],
         timesteps=timesteps,    # Range of steps in diffusion process
         sampling_timesteps = sampling_timesteps 
-    )#.to(device)
+    )
 
     # Execute the training loop
     # :=========================================================================:

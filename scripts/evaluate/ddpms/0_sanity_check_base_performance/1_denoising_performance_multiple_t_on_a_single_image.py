@@ -72,7 +72,8 @@ def evaluate_linear_denoising(
     plot_every: int = 50,
     measure_metrics_every: int = 5,
     metrics: dict = metrics_to_log_default,
-    output_dir: str = None
+    output_dir: str = None,
+    device: torch.device = 'cpu'
 ) -> dict[str, dict]: 
     
     progress_dir = None
@@ -97,8 +98,8 @@ def evaluate_linear_denoising(
     
     # Generate noised verion of the image
     batch_size = img.shape[0]
-    t_tch = torch.full((batch_size,), t)
-    noise = torch.randn_like(img)
+    t_tch = torch.full((batch_size,), t).to(device)
+    noise = torch.randn_like(img).to(device)
     noised_img = ddpm.q_sample(img, t_tch, noise)
 
     metrics_logs = {k: list() for k in metrics.keys()}
@@ -111,7 +112,9 @@ def evaluate_linear_denoising(
         img_denoised_at_ti, img_denoised_at_t0 = ddpm.p_sample(img_denoised_at_ti_plus_1, t_i, seg)
         
         # Get a reference of how the original image looks when noised at t_i
-        example_noised_img_at_ti = ddpm.q_sample(img, torch.full((batch_size,), t_i), torch.randn_like(img))
+        t_i_tch = torch.full((batch_size,), t_i).to(device)
+        noise_t_i = torch.randn_like(img).to(device)
+        example_noised_img_at_ti = ddpm.q_sample(img, t_i_tch, noise_t_i)
         
         # Plot the progress
         if t_i % plot_every == 0 or t_i == 0:
@@ -236,7 +239,8 @@ if __name__ == '__main__':
         metrics_per_t[t] = evaluate_linear_denoising(
             rand_img, rand_seg, t, ddpm, 
             output_dir=out_dir, plot_every=args.save_plot_every,
-            measure_metrics_every=args.measure_metrics_every
+            measure_metrics_every=args.measure_metrics_every,
+            device=device
         )
     
     for metric_name in metrics_to_log_default.keys():

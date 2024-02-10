@@ -46,6 +46,14 @@ def tensor_collection_to_image_grid(
     ndarr = grid.mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).to("cpu", torch.uint8).numpy()
     return Image.fromarray(ndarr)
 
+def check_btw_0_1(*args: torch.Tensor):
+    for tensor in args:
+        assert tensor.min() >= 0 and tensor.max() <= 1, 'tensor values should be between 0 and 1'    
+
+def check_btw_minus_1_plus_1(*args: torch.Tensor):
+    for tensor in args:
+        assert tensor.min() >= -1 and tensor.max() <= 1, 'tensor values should be between -1 and 1'
+
 
 class CDDPMTrainer(Trainer):
 
@@ -260,31 +268,42 @@ class CDDPMTrainer(Trainer):
     def evaluate(self, sample_dl: DataLoader, device, prefix: str = '', ):
         samples_imgs = []                 
         milestone = self.step // self.save_and_sample_every
-           
+        
+        metric_cum = {metric_name: 0. for metric_name in self.metrics_to_log.keys()}
+        
         for img_gt, seg_gt in sample_dl:
             img_gt, seg_gt = img_gt.to(device), seg_gt.to(device)
             generated_img = self.ema.ema_model.sample(x_cond=seg_gt)
             
             # Store the generated image and the segmentation map side by side
-            # seg_gt = self.model.normalize(seg_gt)   # So that they are on the same range of intensities
-            samples_imgs.append(torch.cat([generated_img, seg_gt], dim = -1)) 
+            samples_imgs.append(torch.cat([seg_gt, img_gt, generated_img], dim = -1)) 
+            
+            check_btw_0_1(img_gt, seg_gt, generated_img)
             
             # log metrics
             if self.wandb_log:
                 for metric_name, metric_func in self.metrics_to_log.items():
-                    metric_value = metric_func(generated_img, img_gt).item()
-                    wandb.log({f'{prefix}_{metric_name}': metric_value}, step = self.step)
+                    metric_cum[metric_name] += metric_func(generated_img, img_gt).item()
+                    
+        if self.wandb_log:
+            for metric_name, metric_val in metric_cum.items():
+                metric_val /= len(sample_dl)
+                wandb.log({f'{prefix}_{metric_name}': metric_val}, step = self.step)
         
         all_images = torch.cat(samples_imgs, dim = 0)
 
-        all_images_fn = f'{prefix}_sample-m{milestone}-step-{self.step}.png'
+        all_images_fn = f'{prefix}-sample-m{milestone}-step-{self.step}-img_gt_seg_gt_gen_img.png'
         utils.save_image(all_images, str(self.results_folder / all_images_fn), 
                         nrow = int(math.sqrt(self.num_samples)))
         
         # Log images in wandb
         wandb.log(
-            {all_images_fn: wandb.Image(tensor_collection_to_image_grid(
-                all_images, nrow = int(math.sqrt(self.num_samples))))}, 
+            {all_images_fn: wandb.Image(
+                tensor_collection_to_image_grid(
+                    all_images, 
+                    nrow = int(math.sqrt(self.num_samples))
+                    )
+                )}, 
             step = self.step
             ) 
         

@@ -1,12 +1,12 @@
 
 seed: 0
 device:           cuda
-dataset:          hcp_t1
+dataset:          hcp_t2
 splits:           [train, val, test] 
 
 normalize_with_model:             True
 normalization_params:   
-  logdir:                         /scratch_net/biwidl319/jbermeo/logs/brain/preprocessing/hcp_t1
+  logdir:                         /scratch_net/biwidl319/jbermeo/logs/brain/preprocessing/hcp_t2
   batch_size: 16
   num_workers: 3
   image_size: [1, 256, 256]

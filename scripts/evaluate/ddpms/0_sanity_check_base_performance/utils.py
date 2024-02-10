@@ -114,25 +114,25 @@ def plot_denoising_progress(
     ):
     
     fig, ax = plt.subplots(1, 7, figsize=(35, 5))
-    ax[0].imshow(img_gt.squeeze().numpy(), cmap='gray')
+    ax[0].imshow(img_gt.squeeze().cpu().numpy(), cmap='gray')
     ax[0].set_title('Original')
 
-    ax[1].imshow(seg_gt.squeeze().numpy(), cmap='viridis')
+    ax[1].imshow(seg_gt.squeeze().cpu().numpy(), cmap='viridis')
     ax[1].set_title('Segmentation GT')
 
-    ax[2].imshow(img_w_noise.squeeze().numpy(), cmap='gray')
+    ax[2].imshow(img_w_noise.squeeze().cpu().numpy(), cmap='gray')
     ax[2].set_title(f'Starting Noised img @ T={noise_T}')
     
-    ax[3].imshow(ex_img_w_noise_ti.squeeze().numpy(), cmap='gray')
+    ax[3].imshow(ex_img_w_noise_ti.squeeze().cpu().numpy(), cmap='gray')
     ax[3].set_title(f'Example of Noised img @ t={t_i}')
 
-    ax[4].imshow(img_denoist_at_ti_plus_1.squeeze().numpy(), cmap='gray')
+    ax[4].imshow(img_denoist_at_ti_plus_1.squeeze().cpu().numpy(), cmap='gray')
     ax[4].set_title(f'Denoised - sampled est of t={t_i} (Current input)')
 
-    ax[5].imshow(img_denoised_sampled.squeeze().numpy(), cmap='gray')
+    ax[5].imshow(img_denoised_sampled.squeeze().cpu().numpy(), cmap='gray')
     ax[5].set_title(f'Denoised - sampled est. of t={t_i -1}')
 
-    ax[6].imshow(img_denoised.squeeze().numpy(), cmap='gray')
+    ax[6].imshow(img_denoised.squeeze().cpu().numpy(), cmap='gray')
     ax[6].set_title(f'Denoised img est. of t=0 @ t={t_i}')
     
     if return_fig:
