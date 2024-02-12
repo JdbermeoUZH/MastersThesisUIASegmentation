@@ -320,5 +320,5 @@ class CDDPMTrainer(Trainer):
             'version': __version__
         }
 
-        cpt_fp = str(self.results_folder / f'model-{milestone}-step_{self.step}.pt')
+        cpt_fp = str(self.results_folder / f'model-{milestone}.pt')
         torch.save(data, cpt_fp)

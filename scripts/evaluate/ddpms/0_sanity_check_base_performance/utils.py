@@ -1,6 +1,7 @@
 import os
-import glob
 import re
+import glob
+from typing import Literal
 
 import torch
 import numpy as np
@@ -26,13 +27,22 @@ metrics_to_log_default = {
     'MSE': mean_squared_error
 }
 
-metric_preference = {
+metric_preferences = {
     'PSNR': 'max',
     'SSIM': 'max',
     'MSSIM': 'max',
     'MAE': 'min',
     'MSE': 'min'
 }
+
+
+def is_new_value_better(old_value: float, new_value: float, preference: Literal['min', 'max']) -> bool:
+    if preference == 'min':
+        return new_value < old_value
+    elif preference == 'max':
+        return new_value > old_value
+    else:
+        raise ValueError(f"Unknown preference: {preference}, valid values are 'min' or 'max'")
 
 
 def get_last_milestone(logdir: str) -> int:

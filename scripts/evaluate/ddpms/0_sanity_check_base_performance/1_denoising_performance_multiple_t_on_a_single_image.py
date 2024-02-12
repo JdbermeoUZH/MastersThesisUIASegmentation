@@ -10,7 +10,6 @@ import numpy as np
 import pandas as pd
 from PIL import Image
 import matplotlib.pyplot as plt
-from denoising_diffusion_pytorch import Unet, GaussianDiffusion
 
 sys.path.append(os.path.normpath(os.path.join(
     os.path.dirname(__file__), '..', '..', '..', '..')))
@@ -18,7 +17,7 @@ sys.path.append(os.path.normpath(os.path.join(
 from tta_uia_segmentation.src.models import ConditionalGaussianDiffusion
 from utils import (
     fig_to_np,
-    metric_preference,
+    metric_preferences,
     metrics_to_log_default,
     plot_denoising_progress,
     load_dataset_from_configs,
@@ -134,8 +133,8 @@ def evaluate_linear_denoising(
             for metric_name, metric_log in metrics_logs.items():
                 metric_log.append((
                     t - t_i,
-                    metrics_to_log_default[metric_name](img, img_denoised_at_ti).item(),
-                    metrics_to_log_default[metric_name](img, img_denoised_at_t0).item()
+                    metrics[metric_name](img, img_denoised_at_ti).item(),
+                    metrics[metric_name](img, img_denoised_at_t0).item()
                 ))
             
     # Save the progress as a gif
@@ -198,7 +197,7 @@ if __name__ == '__main__':
         dataset_cfg     = dataset_params,
         training_cfg    = training_params,
     )
-
+    
     # Load trandom image
     img_size = dataset.image_size[-1]   # DHW
     vol_idx = random.randint(0, dataset.num_vols)
@@ -244,8 +243,8 @@ if __name__ == '__main__':
         )
     
     for metric_name in metrics_to_log_default.keys():
-        choose_best_fun = np.min if metric_preference[metric_name] == 'min' else np.max
-        find_best_pos_fun = np.argmin if metric_preference[metric_name] == 'min' else np.argmax
+        choose_best_fun = np.min if metric_preferences[metric_name] == 'min' else np.max
+        find_best_pos_fun = np.argmin if metric_preferences[metric_name] == 'min' else np.argmax
         
         last_ti_values = [metrics_df[f'{metric_name}_t_i'].iloc[-1] for metrics_df in metrics_per_t.values()]
         last_t0_values = [metrics_df[f'{metric_name}_t_0'].iloc[-1] for metrics_df in metrics_per_t.values()]
