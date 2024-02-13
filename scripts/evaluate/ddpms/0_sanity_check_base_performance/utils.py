@@ -24,7 +24,7 @@ metrics_to_log_default = {
     'SSIM': structural_similarity_index_measure,
     'MSSIM': multiscale_structural_similarity_index_measure,
     'MAE': mean_absolute_error,
-    'MSE': mean_squared_error
+    'MSE': mean_squared_error,
 }
 
 metric_preferences = {
@@ -32,7 +32,7 @@ metric_preferences = {
     'SSIM': 'max',
     'MSSIM': 'max',
     'MAE': 'min',
-    'MSE': 'min'
+    'MSE': 'min',
 }
 
 

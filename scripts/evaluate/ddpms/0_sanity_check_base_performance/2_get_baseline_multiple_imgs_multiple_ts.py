@@ -12,6 +12,7 @@ import numpy as np
 import pandas as pd
 from PIL import Image
 import matplotlib.pyplot as plt
+from torchmetrics.functional.regression import mean_squared_error
 
 sys.path.append(os.path.normpath(os.path.join(
     os.path.dirname(__file__), '..', '..', '..', '..')))
@@ -26,6 +27,18 @@ from utils import (
     load_dataset_from_configs,
     load_ddpm_from_configs_and_cpt
 )
+
+metrics_to_log_default = {
+    **metrics_to_log_default,
+    'MSE_v': mean_squared_error,
+    'MSE_noise': mean_squared_error,
+}
+
+metric_preferences = {
+    **metric_preferences,
+    'MSE_v': 'min',
+    'MSE_noise': 'min'
+}
 
 
 # Default args
@@ -115,6 +128,7 @@ def evaluate_linear_denoising_multiple_imgs(
     t_tch = torch.full((batch_size,), t).to(device)
     noise = torch.randn_like(img).to(device)
     noised_img = ddpm.q_sample(img, t_tch, noise)
+    v_gt = ddpm.predict_v(x_start=img, t=t_tch, noise=noise)
 
     # Initialize base case for metrics and denoising progress
     metrics_log_per_img = {batch_idx * batch_size + i: {} for i in range(batch_size)}
@@ -129,7 +143,7 @@ def evaluate_linear_denoising_multiple_imgs(
             } 
         for img_idx in metrics_log_per_img.keys()
         }
-
+    
     img_denoised_at_ti = noised_img
         
     for t_i in tqdm(reversed(range(0, t)), desc = 'sampling loop time step', total = t):
@@ -137,14 +151,25 @@ def evaluate_linear_denoising_multiple_imgs(
         
         # Take denoising step
         img_denoised_at_ti, img_denoised_at_t0 = ddpm.p_sample(img_denoised_at_ti_plus_1, t_i, seg)
-                
+        t_i_tch = torch.full((batch_size,), t).to(device)
+        noise_est = ddpm.predict_noise_from_start(x_t=img_denoised_at_ti_plus_1, t=t_i_tch, x0=img_denoised_at_t0)
+        with torch.inference_mode():
+            v_est = ddpm.model(img_denoised_at_ti_plus_1, t_i_tch, seg)
+            
         # Measure metrics   
         for metric_name, metric_fun in metrics.items():
-            metric_values_ti = [metric_fun(img[i: i+1, ...], img_denoised_at_ti[i: i+1, ...]).item() 
-                                if t_i == 0 else None for i in range(batch_size)]
-            metric_values_t0 = [metric_fun(img[i: i+1, ...], img_denoised_at_t0[i: i+1, ...]).item()
-                                for i in range(batch_size)]
-            
+            if '_v' in metric_name:
+                metric_values_t0 = [metric_fun(v_est[i, ...], v_gt[i, ...]).item() for i in range(batch_size)]
+                metric_values_ti = [metric_values_t0[i] if t_i == 0 else None for i in range(batch_size)]
+            elif '_noise' in metric_name:
+                metric_values_t0 = [metric_fun(noise_est[i, ...], noise[i, ...]).item() for i in range(batch_size)]
+                metric_values_ti = [metric_values_t0[i] if t_i == 0 else None for i in range(batch_size)]                
+            else:
+                metric_values_ti = [metric_fun(img[i: i+1, ...], img_denoised_at_ti[i: i+1, ...]).item() 
+                                    if t_i == 0 else None for i in range(batch_size)]
+                metric_values_t0 = [metric_fun(img[i: i+1, ...], img_denoised_at_t0[i: i+1, ...]).item()
+                                    for i in range(batch_size)]
+                
             for idx, img_idx in enumerate(list(metrics_log_per_img.keys())):
                 metrics_log_per_img[img_idx][metric_name]['last_value_t_i'] = metric_values_ti[idx]
                 
@@ -157,9 +182,8 @@ def evaluate_linear_denoising_multiple_imgs(
                 if new_value_better:
                     metrics_log_per_img[img_idx][metric_name]['best_value_t_0'] = metric_values_t0[idx]
                     metrics_log_per_img[img_idx][metric_name]['t_of_best_value_t_0'] = t_i
-            
+                    
     return metrics_log_per_img
-    
 
 
 if __name__ == '__main__':

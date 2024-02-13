@@ -1,12 +1,16 @@
+import random 
+
 import torch
 import numpy as np
 from typing import Union
 from torch.utils.data import Subset, Dataset
+from torchmetrics.functional.classification import dice
 
 from tta_uia_segmentation.src.dataset.dataset_in_memory import DatasetInMemory
 from tta_uia_segmentation.src.dataset.augmentation import apply_data_augmentation
 import tta_uia_segmentation.src.dataset.utils as du
 from tta_uia_segmentation.src.utils.utils import get_seed
+
 
 
 def num_to_groups(num, divisor):
@@ -105,19 +109,170 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
         else:
             return images, labels    
     
-    def sample_slices(self, sample_size: int, range: tuple[float, float] = (0.2, 0.8)) -> Dataset:
+    def sample_slices(self, sample_size: int, range_: tuple[float, float] = (0.2, 0.8)) -> Dataset:
         
         # Get the number of slices to sample from each volume
         n_slices_per_volume = distribute_n_in_m_slots(sample_size, self.num_vols)
         
         # Sample the idxs of the slices
-        min_slice_idx, max_slice_idx = int(self.dim_proc[-1] * range[0]), int(self.dim_proc[-1] * range[1])
+        min_slice_idx, max_slice_idx = int(self.dim_proc[-1] * range_[0]), int(self.dim_proc[-1] * range_[1])
         sampled_slices = [np.random.randint(idx_start * min_slice_idx, (idx_start + 1) * max_slice_idx, n_slices) 
                           for idx_start, n_slices in enumerate(n_slices_per_volume)]
         sampled_slices = list(np.concatenate(sampled_slices))
         
         return Subset(self, sampled_slices)
+    
+    # Create function that samples cuts based on a given volume and cut id
+    def get_related_images(
+        self, 
+        vol_idx: int, z_idx: int,
+        mode: str = 'different_same_patient', 
+        n: int = 10,
+        **kwargs):
         
+        valid_modes = [
+            'same_patient_very_different_labels', 'same_patient_similar_labels', 
+            'different_patient_similar_labels'] 
+        
+        assert mode in valid_modes, "Mode of sampling cuts not implemented"
+
+        random.seed(self.seed)
+        if mode == 'same_patient_very_different_labels':
+            idxs = self._get_same_patient_very_different_labels(
+                vol_idx, z_idx, n,
+                **kwargs
+            )
+            
+        elif mode == 'same_patient_similar_labels':
+            idxs = self._get_same_patient_similar_labels(
+                vol_idx, z_idx, n,
+                **kwargs
+            )
+            
+        elif mode == 'different_patient_similar_labels':
+            idxs = self._get_different_patient_similar_labels(
+                vol_idx, z_idx, n,
+                **kwargs
+            )
+            
+        else:
+            raise ValueError('Mode not implemented')
+        random.seed()
+        
+        return Subset(self, idxs)
+    
+    def _get_same_patient_very_different_labels(
+        self,
+        vol_idx: int, z_idx: int,
+        n: int,
+        min_dist_z_frac: float = 0.2, 
+        max_dice_score_threshold: float = 0.8,
+    ) -> list[int]:
+        
+        low_z_lim = max(0, z_idx - int(min_dist_z_frac * self.dim_proc[0]))
+        high_z_lim = min(self.dim_proc[0], z_idx + int(min_dist_z_frac * self.dim_proc[0]))
+        
+        # Sample positions in the range [high_z_lim, high_z_lim + low_z_lim] 
+        idxs_sample = random.sample(range(high_z_lim, self.dim_proc[0] + low_z_lim), n)
+        idxs_sample = [idx % self.dim_proc[0] for idx in idxs_sample]
+        
+        # Exclude all indexes that have a dice score that is too high
+        idxs_sample_filtered = []
+
+        _, seg_orig = self[self.vol_and_z_idx_to_idx(vol_idx, z_idx)]
+        for z_idx in idxs_sample:
+            img_idx = self.vol_and_z_idx_to_idx(vol_idx, z_idx)
+            _, seg_i = self[img_idx]
+            
+            if dice(seg_i, seg_orig, ignore_index=0).item() > max_dice_score_threshold:
+                continue
+            
+            idxs_sample_filtered.append(img_idx)
+            
+        if len(idxs_sample_filtered) < n:
+            print(f'WARNING: Could not sample enough slices from volume {vol_idx} \n',
+                  f'Sampled {len(idxs_sample_filtered)} images')
+        
+        return idxs_sample_filtered
+            
+    def _get_same_patient_similar_labels(
+        self,
+        vol_idx: int, z_idx: int,
+        n: int,
+        max_dist_z_frac: float = 0.2,
+        min_dice_score_threshold: float = 0.8,
+    ) -> list[int]:
+        low_z_lim = max(0, z_idx - int(max_dist_z_frac * self.dim_proc[0]))
+        high_z_lim = min(self.dim_proc[0], z_idx + int(max_dist_z_frac * self.dim_proc[0]))
+        
+        # Sample positions in the range [low_z_lim, high_z_lim] 
+        idxs_sample = random.sample(range(low_z_lim, high_z_lim), n)
+        
+        # Exclude all indexes that have a dice score that is too low
+        idxs_sample_filtered = []
+
+        _, seg_orig = self[self.vol_and_z_idx_to_idx(vol_idx, z_idx)]
+        for z_idx in idxs_sample:
+            img_idx = self.vol_and_z_idx_to_idx(vol_idx, z_idx)
+            _, seg_i = self[img_idx]
+            
+            if dice(seg_i, seg_orig) < min_dice_score_threshold:
+                continue
+            
+            idxs_sample_filtered.append(img_idx)
+            
+        return idxs_sample_filtered
+    
+    
+    def _get_different_patient_similar_labels(
+        self,
+        vol_idx: int, z_idx: int,
+        n: int,
+        max_dist_z_frac: float = 0.1,
+        min_dice_score_threshold: float = 0.8,
+    ) -> list[int]:
+        # Define the range of z indexes to sample from
+        low_z_lim = max(0, z_idx - int(max_dist_z_frac * self.dim_proc[0]))
+        high_z_lim = min(self.dim_proc[0], z_idx + int(max_dist_z_frac * self.dim_proc[0]))
+        
+        # Sample other volumes
+        #  Get the number of slices to sample from the other volumes
+        n_slices_per_volume = distribute_n_in_m_slots(n, self.num_vols - 1)
+        vol_idxs_to_sample = list(range(self.num_vols))
+        vol_idxs_to_sample.remove(vol_idx)
+        
+        n_slices_per_volume = {vol_idx: n_slices for vol_idx, n_slices in zip(vol_idxs_to_sample, n_slices_per_volume)}
+        
+        _, seg_orig = self[self.vol_and_z_idx_to_idx(vol_idx, z_idx)]
+        idxs_sample_filtered = []
+        for vol_idx, n_slices in n_slices_per_volume.items():
+            sampled = 0 
+            for z_idx in range(low_z_lim, high_z_lim + 1):
+                img_idx = self.vol_and_z_idx_to_idx(vol_idx, z_idx)
+                _, seg_i = self[img_idx]
+                
+                if dice(seg_i, seg_orig, ignore_index=0) < min_dice_score_threshold:
+                    continue
+                
+                idxs_sample_filtered.append(img_idx)
+                sampled += 1
+                
+                if sampled >= n_slices:
+                    break
+            
+            if sampled < n_slices:
+                print(f'WARNING: Could not sample enough slices from volume {vol_idx}')
+            
+        return idxs_sample_filtered
+    
+    
+    def vol_and_z_idx_to_idx(self, vol_idx: int, z_idx: int) -> int:
+        if self.image_size[0] != 1:
+            raise ValueError('Indexes of the dataset map to volumes, not images')
+        
+        return vol_idx * self.dim_proc[0] + z_idx
+
+            
         
         
 if __name__ == '__main__':
@@ -138,7 +293,7 @@ if __name__ == '__main__':
     ds = DatasetInMemoryForDDPM(
         split           = 'train',
         one_hot_encode  = True, 
-        normalize       = 'none',
+        normalize       = 'min_max',
         paths           = paths,
         paths_original  = paths_original,
         image_size      = (1, 256, 256),
@@ -158,3 +313,7 @@ if __name__ == '__main__':
     assert seg.max() <= 1, 'Segmentation should be normalized to [0, 1] range'
     assert seg.min() >= 0, 'Segmentation should be normalized to [0, 1] range'
     assert seg.shape == (15, 256, 256), 'Segmentation should have shape (15, 256, 256)'
+    
+    ds.get_related_images(vol_idx=5, z_idx=120, mode='different_patient_similar_labels', 
+                          n=10)
+    
