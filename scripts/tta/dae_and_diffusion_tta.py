@@ -10,14 +10,17 @@ import numpy as np
 sys.path.append(os.path.normpath(os.path.join(
     os.path.dirname(__file__), '..', '..')))
 
-from tta_uia_segmentation.src.tta import TTADAE
+from tta_uia_segmentation.src.tta import TTADAEandDDPM
 from tta_uia_segmentation.src.dataset.dataset_in_memory import get_datasets
 from tta_uia_segmentation.src.models import Normalization, UNet
+from tta_uia_segmentation.src.models.io import load_ddpm_from_configs_and_cpt, load_segmentation_model_and_cpt
 from tta_uia_segmentation.src.utils.io import load_config, dump_config, print_config, write_to_csv, rewrite_config_arguments
 from tta_uia_segmentation.src.utils.utils import seed_everything, define_device
 from tta_uia_segmentation.src.utils.logging import setup_wandb
 from tta_uia_segmentation.src.utils.loss import DiceLoss
 
+
+torch.autograd.set_detect_anomaly(True)
 
 def preprocess_cmd_args() -> argparse.Namespace:
     """_
@@ -124,9 +127,10 @@ if __name__ == '__main__':
     # :=========================================================================:
     dataset_config, tta_config = get_configuration_arguments()
     
-    tta_mode                = tta_config['tta_mode']
+    tta_mode                = 'dae_and_diffusion'
     dae_dir                 = tta_config[tta_mode]['dae_dir']
     seg_dir                 = tta_config[tta_mode]['seg_dir']
+    ddpm_dir                = tta_config[tta_mode]['ddpm_dir']
     
     params_dae              = load_config(os.path.join(dae_dir, 'params.yaml'))
     model_params_dae        = params_dae['model']['dae']
@@ -137,10 +141,16 @@ if __name__ == '__main__':
     model_params_seg        = params_dae['model']['segmentation_2D']
     train_params_seg        = params_dae['training']
     
+    params_ddpm             = load_config(os.path.join(ddpm_dir, 'params.yaml'))
+    model_params_ddpm       = params_ddpm['model']['ddpm_unet']
+    train_params_ddpm       = params_ddpm['training']['ddpm']
+    
     params                  = { 
                                'datset': dataset_config,
-                               'model': {'norm': model_params_norm, 'seg': model_params_seg, 'dae': model_params_dae},
-                               'training': {'seg': train_params_seg, 'dae': train_params_dae},
+                               'model': {'norm': model_params_norm, 'seg': model_params_seg, 
+                                         'dae': model_params_dae, 'ddpm': model_params_ddpm},
+                               'training': {'seg': train_params_seg, 'dae': train_params_dae,
+                                            'ddpm': train_params_ddpm},
                                'tta': tta_config
                                }
         
@@ -217,12 +227,14 @@ if __name__ == '__main__':
     ).to(device)
     
     ## Load their checkpoints
+    # Segmentation network
     checkpoint = torch.load(os.path.join(seg_dir, train_params_seg['checkpoint_best']), 
                             map_location=device)
     norm.load_state_dict(checkpoint['norm_state_dict'])
     seg.load_state_dict(checkpoint['seg_state_dict'])
     norm_state_dict = checkpoint['norm_state_dict']
 
+    # DAE
     checkpoint = torch.load(os.path.join(dae_dir, train_params_dae['checkpoint_best']), 
                             map_location=device)
     dae.load_state_dict(checkpoint['dae_state_dict'])
@@ -230,19 +242,35 @@ if __name__ == '__main__':
     checkpoint = torch.load(os.path.join(dae_dir, 'atlas.h5py'), map_location=device)
     atlas = checkpoint['atlas']
 
+    # DDPM
+
+    ddpm = load_ddpm_from_configs_and_cpt(
+        train_ddpm_cfg           = train_params_ddpm,
+        model_ddpm_cfg           = model_params_ddpm,
+        cpt_fp                   = os.path.join(ddpm_dir, tta_config[tta_mode]['cpt_fn']),
+        img_size                 = dataset_config[dataset]['dim'][-1],
+        device                   = device,
+        sampling_timesteps       = tta_config[tta_mode]['sampling_timesteps'],
+    )
+
     del checkpoint
    
     # Define the TTADAE object that does the test time adapatation
     # :=========================================================================:
     learning_rate               = tta_config[tta_mode]['learning_rate']
 
-    dae_tta = TTADAE(
+    tta = TTADAEandDDPM(
         norm                    = norm,
         seg                     = seg,
         dae                     = dae,
         atlas                   = atlas,
+        ddpm                    = ddpm,          
         loss_func               = DiceLoss(),
-        learning_rate           = learning_rate
+        learning_rate           = learning_rate,
+        dddpm_loss_alpha        = tta_config[tta_mode]['dddpm_loss_alpha'],
+        min_t_diffusion_tta     = tta_config[tta_mode]['min_t_diffusion_tta'],
+        max_t_diffusion_tta     = tta_config[tta_mode]['max_t_diffusion_tta'],
+        sampling_timesteps      = tta_config[tta_mode]['sampling_timesteps'],
     )
     
     # Do TTA with a DAE
@@ -289,12 +317,12 @@ if __name__ == '__main__':
 
         norm.load_state_dict(norm_state_dict)
 
-        norm, norm_dict, metrics_best = dae_tta.tta(
+        norm, norm_dict, metrics_best = tta.tta(
             volume_dataset = volume_dataset,
             dataset_name = dataset,
             n_classes =n_classes,
             index = i,
-            rescale_factor = rescale_factor,
+            rescale_factor_dae = rescale_factor,
             alpha = alpha,
             beta = beta,
             bg_suppression_opts = bg_suppression_opts,
@@ -312,7 +340,7 @@ if __name__ == '__main__':
             logdir = logdir
         )
         
-        dice_scores[i, :], _ = dae_tta.test_volume(
+        dice_scores[i, :], _ = tta.test_volume(
             volume_dataset = volume_dataset,
             dataset_name = dataset,
             index = i,
@@ -339,8 +367,8 @@ if __name__ == '__main__':
         for key in norm_dict.keys():
             print(f'Model at minimum {key} = {metrics_best[key]}')
 
-            dae_tta.norm.load_state_dict(norm_dict[key])
-            scores, _ = dae_tta.test_volume(
+            tta.norm.load_state_dict(norm_dict[key])
+            scores, _ = tta.test_volume(
                 volume_dataset=volume_dataset,
                 dataset_name=dataset,
                 index=i,

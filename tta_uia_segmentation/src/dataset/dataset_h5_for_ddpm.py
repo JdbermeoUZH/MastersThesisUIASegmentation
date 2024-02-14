@@ -1,5 +1,7 @@
 import random 
+from typing import Optional
 
+import h5py
 import torch
 import numpy as np
 from typing import Union
@@ -33,7 +35,6 @@ def distribute_n_in_m_slots(n, m):
 
 def get_datasets(
    splits,
-   concatenate_along_channel: bool = False,
    *args,
     **kwargs,
 ):
@@ -42,8 +43,7 @@ def get_datasets(
 
     for split in splits:
         datasets.append(
-            DatasetInMemoryForDDPM(split=split, concatenate_along_channel=concatenate_along_channel,
-                                   *args, **kwargs)
+            DatasetInMemoryForDDPM(split=split, *args, **kwargs)
         )
 
     return datasets
@@ -52,20 +52,33 @@ def get_datasets(
 class DatasetInMemoryForDDPM(DatasetInMemory):
     def __init__(
         self,
+        norm: torch.nn.Module,
+        device,
+        paths_normalized_h5: dict[str, str],
         concatenate_along_channel: bool = False,
         normalize: str = 'min_max',
-        one_hot_encode: bool = True,
+        one_hot_encode: bool = True, 
+        intensity_value_range: Optional[tuple[float, float]] = None,
         *args,
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
+        self.norm = norm
+        self.norm.eval()
+        self.norm.requires_grad_(False)
+        self.device = device
+        
+        self.normalized_img_path = paths_normalized_h5[self.split]
+        
         self.concatenate_along_channel = concatenate_along_channel
         self.normalize = normalize
         self.one_hot_encode = one_hot_encode
         self.num_vols = int(self.images.shape[0] / self.dim_proc[-1]) if self.image_size[0] == 1 else self.images.shape[0]
         
-        self.images_max = self.images.max()
-        self.images_min = self.images.min()
+        if intensity_value_range is not None:
+            self.images_min, self.images_max = intensity_value_range
+        else:
+            self.images_min, self.images_max = self._find_min_max_in_normalized_imgs()
         
     def __getitem__(self, index) -> Union[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]:
 
@@ -85,8 +98,12 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
                 rng=np.random.default_rng(seed),
             )
             
-        images = torch.from_numpy(images).float()
-        labels = torch.from_numpy(labels).float()
+        images = torch.from_numpy(images).float().to(self.device)
+        labels = torch.from_numpy(labels).float().to(self.device)
+    
+        # Use the normalization model to normalize the images
+        with torch.inference_mode():
+            images = self.norm(images[None, ...]).squeeze(0)
 
         # Normalize image and label map to [0, 1]
         if self.normalize == 'min_max':
@@ -121,6 +138,14 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
         sampled_slices = list(np.concatenate(sampled_slices))
         
         return Subset(self, sampled_slices)
+    
+    def _find_min_max_in_normalized_imgs(self):
+        with h5py.File(self.normalized_img_path, 'r') as data:
+            images = data['images'][:]
+            images_min = images.min()
+            images_max = images.max()
+            
+        return images_min, images_max 
     
     # Create function that samples cuts based on a given volume and cut id
     def get_related_images(

@@ -276,8 +276,11 @@ class DatasetInMemory(data.Dataset):
             return img_aug
 
 
-    def set_augmentation(self, augmentation):
+    def set_augmentation(self, augmentation: bool):
         self.augmentation = augmentation
+        
+    def get_augmentation(self) -> bool:
+        return self.augmentation
 
     def set_seed(self, seed=None):
         self.seed = seed

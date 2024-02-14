@@ -19,7 +19,7 @@ bg_suppression_opts:
 
 dae:
   wandb_project: mt-tta-dae-dae_tta
-  logdir: /scratch_net/biwidl319/jbermeo/logs/brain/sota/dae/hcp_t1_bg_supp
+  logdir: /scratch_net/biwidl319/jbermeo/logs/brain/sota/dae/hcp_t1_bg_supp_v2_augment_false_test
   dae_dir: /scratch_net/biwidl319/jbermeo/data/previous_results_nico/logs/brain/dae/hcp_t1
   seg_dir: /scratch_net/biwidl319/jbermeo/data/previous_results_nico/logs/brain/segmentation/hcp_t1_bg_supp
   batch_size: 16
@@ -33,27 +33,81 @@ dae:
   save_checkpoints: True
   const_aug_per_volume: False
   accumulate_over_volume: True
+
   bg_suppression_opts:
-      type: fixed_value  # possible values: none, fixed_value, random_value
-      bg_value: -0.5
-      bg_value_min: -0.5
-      bg_value_max: 1
-      mask_source: thresholding  # possible values: thresholding, ground_truth
-      thresholding: otsu  # possible values: isodata, li, mean, minimum, otsu, triangle, yen
-      hole_filling: True
+    type: fixed_value  # possible values: none, fixed_value, random_value
+    bg_value: -0.5
+    bg_value_min: -0.5
+    bg_value_max: 1
+    mask_source: thresholding  # possible values: thresholding, ground_truth
+    thresholding: otsu  # possible values: isodata, li, mean, minimum, otsu, triangle, yen
+    hole_filling: True
+  
   augmentation:
-      da_ratio: 0.25
-      sigma: 20
-      alpha: 0
-      trans_min: 0
-      trans_max: 0
-      rot_min: 0
-      rot_max: 0
-      scale_min: 1.0
-      scale_max: 1.0
-      gamma_min: 0.5
-      gamma_max: 2.0
-      brightness_min: 0.0
-      brightness_max: 0.1
-      noise_mean: 0.0
-      noise_std: 0.1
+    da_ratio: 0.25
+    sigma: 20
+    alpha: 0
+    trans_min: 0
+    trans_max: 0
+    rot_min: 0
+    rot_max: 0
+    scale_min: 1.0
+    scale_max: 1.0
+    gamma_min: 0.5
+    gamma_max: 2.0
+    brightness_min: 0.0
+    brightness_max: 0.1
+    noise_mean: 0.0
+    noise_std: 0.1
+
+
+dae_and_diffusion:
+  wandb_project: mt-tta-dae_and_diffusion_tta
+  logdir: /scratch_net/biwidl319/jbermeo/logs/brain/sota/dae_and_ddpm/hcp_t1_bg_supptest
+  dae_dir: /scratch_net/biwidl319/jbermeo/data/previous_results_nico/logs/brain/dae/hcp_t1
+  seg_dir: /scratch_net/biwidl319/jbermeo/data/previous_results_nico/logs/brain/segmentation/hcp_t1_bg_supp
+  ddpm_dir: /scratch_net/biwidl319/jbermeo/logs/brain/ddpm/not_one_hot_64_base_filters
+  cpt_fn: 'model-4.pt'
+  dddpm_loss_alpha: 0.5
+  min_t_diffusion_tta: 250
+  max_t_diffusion_tta: 1000
+  sampling_timesteps: 100
+  noise_estimates_per_img: 1
+  
+  batch_size: 4 
+  dataset_repetition: 1
+  num_steps: 500  # 500 for brain, 2700 for wmh
+  update_dae_output_every: 25
+  calculate_dice_every: 25  # 25 for brain, 135 for wmh (nuhs, umc, vu)
+  alpha: 1.0
+  beta: 0.25
+  learning_rate: 1.0e-2
+  save_checkpoints: True
+  const_aug_per_volume: False
+  accumulate_over_volume: True
+
+  bg_suppression_opts:
+    type: fixed_value  # possible values: none, fixed_value, random_value
+    bg_value: -0.5
+    bg_value_min: -0.5
+    bg_value_max: 1
+    mask_source: thresholding  # possible values: thresholding, ground_truth
+    thresholding: otsu  # possible values: isodata, li, mean, minimum, otsu, triangle, yen
+    hole_filling: True
+  
+  augmentation:
+    da_ratio: 0.25
+    sigma: 20
+    alpha: 0
+    trans_min: 0
+    trans_max: 0
+    rot_min: 0
+    rot_max: 0
+    scale_min: 1.0
+    scale_max: 1.0
+    gamma_min: 0.5
+    gamma_max: 2.0
+    brightness_min: 0.0
+    brightness_max: 0.1
+    noise_mean: 0.0
+    noise_std: 0.1

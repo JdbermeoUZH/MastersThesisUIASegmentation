@@ -5,14 +5,15 @@ from typing import Union, Optional, Any
 import torch
 import numpy as np
 from torch.nn import functional as F
-from torch.utils.data import DataLoader, TensorDataset, ConcatDataset
+from torch.utils.data import Dataset, TensorDataset, ConcatDataset, DataLoader
 
 
-from models.normalization import background_suppression
-from utils.io import save_checkpoint, write_to_csv
-from utils.loss import dice_score, DiceLoss
-from utils.visualization import export_images
-from utils.utils import get_seed
+from tta_uia_segmentation.src.models.normalization import background_suppression
+from tta_uia_segmentation.src.utils.io import save_checkpoint, write_to_csv
+from tta_uia_segmentation.src.utils.loss import dice_score, DiceLoss
+from tta_uia_segmentation.src.utils.visualization import export_images
+from tta_uia_segmentation.src.utils.utils import get_seed
+from tta_uia_segmentation.src.dataset import DatasetInMemory
 
 
 class TTADAE:
@@ -24,7 +25,8 @@ class TTADAE:
         dae: torch.nn.Module, 
         atlas: Any,
         loss_func: torch.nn.Module = DiceLoss(),
-        learning_rate: float = 1e-3
+        learning_rate: float = 1e-3,
+        num_imgs_diffusion_tta: int = 50, 
         ) -> None:
         
         self.norm = norm
@@ -47,13 +49,20 @@ class TTADAE:
         self.norm_dict = {'best_score': copy.deepcopy(self.norm.state_dict())}
         self.metrics_best = {'best_score': 0}
         
-        # Set the models in eval mode
+        # Set segmentation and DAE models in eval mode
         self.seg.eval()
+        self.seg.requires_grad_(False)
+        
         self.dae.eval()
+        self.dae.requires_grad_(False)
+        
+        # Diffusion TTA params
+        self.num_imgs_diffusion_tta = num_imgs_diffusion_tta
+        
         
     def tta(
         self,
-        volume_dataset: DataLoader,
+        volume_dataset: DatasetInMemory,
         dataset_name: str,
         n_classes: int, 
         index: int,
@@ -99,7 +108,9 @@ class TTADAE:
         )
         
         for step in range(num_steps):
-    
+            self.norm.eval()
+            volume_dataset.dataset.set_augmentation(False)
+            
             # Test performance during adaptation.
             if step % calculate_dice_every == 0 and calculate_dice_every != -1:
 
@@ -135,14 +146,15 @@ class TTADAE:
             tta_loss = 0
             n_samples = 0
 
-            volume_dataset.dataset.set_augmentation(True)
-
+            self.norm.train()
+            volume_dataset.dataset.set_augmentation(True)  
+            
             if accumulate_over_volume:
                 self.optimizer.zero_grad()
 
             if const_aug_per_volume:
                 volume_dataset.dataset.set_seed(get_seed())
-
+                                                        
             # Adapting to the target distribution.
             for (x,_,_,_, bg_mask), (y,) in zip(volume_dataloader, label_dataloader):
 
@@ -205,7 +217,7 @@ class TTADAE:
 
         return self.norm, self.norm_dict, self.metrics_best
 
-    
+    @torch.inference_mode()
     def test_volume(
         self,
         volume_dataset: DataLoader,
@@ -220,9 +232,6 @@ class TTADAE:
         device: Optional[Union[str, torch.device]] = None,
         logdir: Optional[str] = None,
     ):
-
-        self.norm.eval()
-        volume_dataset.dataset.set_augmentation(False)
 
         # Get original images
         x_original, y_original, bg = volume_dataset.dataset.get_original_images(index)
@@ -264,17 +273,17 @@ class TTADAE:
 
         x_norm = []
         y_pred = []
-        with torch.no_grad():
-            for x, _, bg_mask in volume_dataloader:
-                x_norm_part = self.norm(x.to(device))
-                bg_mask = bg_mask.to(device)
+        
+        for x, _, bg_mask in volume_dataloader:
+            x_norm_part = self.norm(x.to(device))
+            bg_mask = bg_mask.to(device)
 
-                x_norm_part = background_suppression(x_norm_part, bg_mask, bg_suppression_opts)
+            x_norm_part = background_suppression(x_norm_part, bg_mask, bg_suppression_opts)
 
-                x_norm.append(x_norm_part.cpu())
+            x_norm.append(x_norm_part.cpu())
 
-                y_pred_part, _ = self.seg(x_norm_part)
-                y_pred.append(y_pred_part.cpu())
+            y_pred_part, _ = self.seg(x_norm_part)
+            y_pred.append(y_pred_part.cpu())
 
         x_norm = torch.vstack(x_norm)
         y_pred = torch.vstack(y_pred)
@@ -299,11 +308,9 @@ class TTADAE:
         dices, dices_fg = dice_score(y_pred, y_original, soft=False, reduction='none', epsilon=1e-5)
         print(f'Iteration {iteration} - dice score {dices_fg.mean().item()}')
 
-        self.norm.train()
-        volume_dataset.dataset.set_augmentation(True)
-
         return dices.cpu(), dices_fg.cpu()
     
+    @torch.inference_mode()
     def generate_pseudo_labels(
         self,
         dae_dataloader: DataLoader,
@@ -316,50 +323,49 @@ class TTADAE:
         alpha: float = 1.0,
         beta: float = 0.25
     ) -> DataLoader:  
-    
-        with torch.no_grad():
-            masks = []
-            for x, _, _, _, bg_mask in dae_dataloader:
-                x = x.to(device).float()
+        
+        masks = []
+        for x, _, _, _, bg_mask in dae_dataloader:
+            x = x.to(device).float()
 
-                bg_mask = bg_mask.to(device)
-                x_norm = self.norm(x)
+            bg_mask = bg_mask.to(device)
+            x_norm = self.norm(x)
 
-                x_norm = background_suppression(
-                    x_norm, bg_mask, bg_suppression_opts_tta)
+            x_norm = background_suppression(
+                x_norm, bg_mask, bg_suppression_opts_tta)
 
-                mask, _ = self.seg(x_norm)
-                masks.append(mask)
+            mask, _ = self.seg(x_norm)
+            masks.append(mask)
 
-            masks = torch.cat(masks)
-            masks = masks.permute(1,0,2,3).unsqueeze(0)
+        masks = torch.cat(masks)
+        masks = masks.permute(1,0,2,3).unsqueeze(0)
 
-            if rescale_factor is not None:
-                masks = F.interpolate(masks, scale_factor=rescale_factor, mode='trilinear')
+        if rescale_factor is not None:
+            masks = F.interpolate(masks, scale_factor=rescale_factor, mode='trilinear')
 
-            dae_output, _ = self.dae(masks)
+        dae_output, _ = self.dae(masks)
 
-            dice_denoised, _ = dice_score(masks, dae_output, soft=True, reduction='mean')
-            dice_atlas, _ = dice_score(masks, self.atlas, soft=True, reduction='mean')
+        dice_denoised, _ = dice_score(masks, dae_output, soft=True, reduction='mean')
+        dice_atlas, _ = dice_score(masks, self.atlas, soft=True, reduction='mean')
 
-            if dice_denoised / dice_atlas >= alpha and dice_atlas >= beta:
-                target_labels = dae_output
-                dice = dice_denoised
-            else:
-                target_labels = self.atlas
-                dice = dice_atlas
+        if dice_denoised / dice_atlas >= alpha and dice_atlas >= beta:
+            target_labels = dae_output
+            dice = dice_denoised
+        else:
+            target_labels = self.atlas
+            dice = dice_atlas
 
-            target_labels = target_labels.squeeze(0)
-            target_labels = target_labels.permute(1,0,2,3)
+        target_labels = target_labels.squeeze(0)
+        target_labels = target_labels.permute(1,0,2,3)
 
         if self.metrics_best['best_score'] < dice:
             self.norm_dict['best_score'] = copy.deepcopy(self.norm.state_dict())
             self.metrics_best['best_score'] = dice
 
         return DataLoader(
-                    ConcatDataset([TensorDataset(target_labels.cpu())] * dataset_repetition),
-                    batch_size=label_batch_size,
-                    shuffle=False,
-                    num_workers=num_workers,
-                    drop_last=True,
-                )
+            ConcatDataset([TensorDataset(target_labels.cpu())] * dataset_repetition), 
+            batch_size=label_batch_size,
+            shuffle=False,
+            num_workers=num_workers,
+            drop_last=True, 
+            )

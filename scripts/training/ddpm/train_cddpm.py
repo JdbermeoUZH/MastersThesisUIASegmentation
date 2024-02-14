@@ -13,6 +13,7 @@ sys.path.append(os.path.normpath(os.path.join(
 
 from tta_uia_segmentation.src.dataset.dataset_h5_for_ddpm import get_datasets
 from tta_uia_segmentation.src.models import ConditionalGaussianDiffusion
+from tta_uia_segmentation.src.models.io import load_norm_from_configs_and_cpt
 from tta_uia_segmentation.src.train import CDDPMTrainer
 from tta_uia_segmentation.src.utils.io import (
     load_config, dump_config, print_config, rewrite_config_arguments)
@@ -119,8 +120,6 @@ if __name__ == '__main__':
     # :=========================================================================:
     dataset_config, model_config, train_config = get_configuration_arguments()
     
-    params          = {'dataset': dataset_config, 'model': model_config,
-                       'training': train_config}
     resume          = train_config['resume']
     seed            = train_config['seed']
     device          = train_config['device']
@@ -140,8 +139,24 @@ if __name__ == '__main__':
         dataset_config = params['dataset']
         model_config = params['model']
         
+        model_params_norm = params['model']['norm']
+        train_params_norm = params['training']['norm']
+        
     else:
         os.makedirs(logdir, exist_ok=True)
+        
+        params_norm = load_config(os.path.join(
+        train_config[train_type]['norm_dir'], 'params.yaml'))
+
+        model_params_norm = params_norm['model']['normalization_2D']
+        train_params_norm = params_norm['training']
+
+        params = {
+            'dataset': dataset_config, 
+            'model': {**model_config,  'norm': model_params_norm},
+            'training': {**train_config, 'norm': train_params_norm}, 
+        }
+
         dump_config(os.path.join(logdir, 'params.yaml'), params)
 
     print_config(params, keys=['training', 'model'])
@@ -159,13 +174,22 @@ if __name__ == '__main__':
     dataset             = train_config[train_type]['dataset']
     n_classes           = dataset_config[dataset]['n_classes']
     batch_size          = train_config[train_type]['batch_size']
-    paths_type          = 'paths_normalized_with_nn' if train_config[train_type]['use_nn_normalized'] \
-                            else 'paths_processed'
+    norm_dir            = train_config[train_type]['norm_dir']   
+                            
+    # Load normalization model used in the segmentation network
+    norm = load_norm_from_configs_and_cpt(
+        model_params_norm=model_params_norm,
+        cpt_fp=os.path.join(norm_dir, train_params_norm['checkpoint_best']),
+        device='cpu'
+    )
     
     # Dataset definition
     train_dataset, val_dataset = get_datasets(
         splits          = ['train', 'val'],
-        paths           = dataset_config[dataset][paths_type],
+        norm            = norm,
+        device          = 'cpu',   
+        paths           = dataset_config[dataset]['paths_processed'],
+        paths_normalized_h5 = dataset_config[dataset]['paths_normalized_with_nn'],
         one_hot_encode  = train_config[train_type]['one_hot_encode'],
         normalize       = train_config[train_type]['normalize'],
         paths_original  = dataset_config[dataset]['paths_original'],
@@ -221,21 +245,21 @@ if __name__ == '__main__':
     save_and_sample_every = train_config[train_type]['save_and_sample_every']
         
     trainer = CDDPMTrainer(
-            diffusion,
-            train_dataset=train_dataset,
-            val_dataset=val_dataset,
-            train_batch_size = batch_size,
-            train_lr = train_lr,
-            num_workers=num_workers,
-            train_num_steps = train_num_steps,# total training steps
-            num_samples=num_samples,          # number of samples to generate for metric evaluation
-            gradient_accumulate_every = gradient_accumulate_every,    # gradient accumulation steps
-            ema_decay = 0.995,                # exponential moving average decay
-            amp = True,                       # turn on mixed precision
-            calculate_fid = False,            # whether to calculate fid during training 
-            results_folder=logdir,
-            save_and_sample_every = save_and_sample_every,
-            )
+        diffusion,
+        train_dataset=train_dataset,
+        val_dataset=val_dataset,
+        train_batch_size = batch_size,
+        train_lr = train_lr,
+        num_workers=num_workers,
+        train_num_steps = train_num_steps,# total training steps
+        num_samples=num_samples,          # number of samples to generate for metric evaluation
+        gradient_accumulate_every = gradient_accumulate_every,    # gradient accumulation steps
+        ema_decay = 0.995,                # exponential moving average decay
+        amp = True,                       # turn on mixed precision
+        calculate_fid = False,            # whether to calculate fid during training 
+        results_folder=logdir,
+        save_and_sample_every = save_and_sample_every,
+        )
     
     if wandb_log:
         #wandb.save(os.path.join(wandb_dir, trainer.get_last_checkpoint_name()), base_path=wandb_dir)

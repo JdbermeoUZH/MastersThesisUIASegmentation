@@ -58,12 +58,17 @@ class ConditionalGaussianDiffusion(GaussianDiffusion):
         loss = loss * extract(self.loss_weight, t, loss.shape)
         return loss.mean()
 
-    def forward(self, img, cond_img, *args, **kwargs):
+    def forward(self, img, cond_img, min_t=None, max_t=None, *args, **kwargs):
         b, c, h, w, device, img_size, = *img.shape, img.device, self.image_size
-        assert h == img_size[0] and w == img_size[1], f'height and width of image must be {img_size}'
+        img_size = img_size[0] if isinstance(img_size, tuple) else img_size
+        assert h == img_size and w == img_size, f'height and width of image must be {img_size}, \
+            but got {h} and {w} respectively'
+            
         assert cond_img.shape == img.shape, 'cond_img and img must have the same shape'
         
-        t = torch.randint(0, self.num_timesteps, (b,), device=device).long()
+        min_t = default(min_t, 0)
+        max_t = default(max_t, self.num_timesteps)
+        t = torch.randint(min_t, max_t, (b,), device=device).long()
         img = self.normalize(img)
         cond_img = self.normalize(cond_img)  
         
@@ -129,3 +134,8 @@ class ConditionalGaussianDiffusion(GaussianDiffusion):
     def sample(self, x_cond: torch.Tensor, return_all_timesteps = False):
         sample_fn = self.p_sample_loop if not self.is_ddim_sampling else self.ddim_sample
         return sample_fn(x_cond, return_all_timesteps = return_all_timesteps)
+
+    def set_sampling_timesteps(self, sampling_timesteps):
+        self.sampling_timesteps = sampling_timesteps
+        self.is_ddim_sampling = self.sampling_timesteps < self.num_timesteps
+        

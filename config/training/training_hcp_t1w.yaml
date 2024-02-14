@@ -1,6 +1,6 @@
 wandb_log:        True
 seed:             0
-resume:           True
+resume:           False
 device:           cuda
 checkpoint_best:  checkpoint_best.pth
 checkpoint_last:  checkpoint_last.pth
@@ -84,9 +84,8 @@ segmentation:
 ddpm:
   batch_size:                   2
   gradient_accumulate_every:    8
-  num_workers:                  16
+  num_workers:                  8
   dataset:                      hcp_t1    # brain: hcp_t1, hcp_t2, abide_caltech, abide_stanford; wmh: nuhs, umc, vu
-  use_nn_normalized:            True
   one_hot_encode:               False
   normalize:                    min_max
   image_size:                   [1, 256, 256]
@@ -97,9 +96,27 @@ ddpm:
   sampling_timesteps:           100       # Number of sampling steps to generate images. If less than 1000, will use DDIM sampling. If null, will be the same as timesteps => linear denoising steps
   save_and_sample_every:        2000      # 1000 in the constructor 
   learning_rate:                8e-5      # 1e-4 in the constructor
-  logdir:                       /scratch_net/biwidl319/jbermeo/logs/brain/ddpm/not_one_hot_128_base_filters
+  logdir:                       /scratch_net/biwidl319/jbermeo/logs/brain/ddpm/not_one_hot_64_base_filters_with_aug
   wandb_project:                mt-ddpm
 
-  augmentation:                 null
+  norm_dir:                     /scratch_net/biwidl319/jbermeo/data/models/brain/hcp_t1/bg_supp
+
+  augmentation:                 
+    da_ratio:           0.25
+    sigma:              20
+    alpha:              1000
+    trans_min:          -10
+    trans_max:          10
+    rot_min:            -10
+    rot_max:            10
+    scale_min:          0.9
+    scale_max:          1.1
+    gamma_min:          0.5
+    gamma_max:          2.0
+    brightness_min:     0.0
+    brightness_max:     0.1
+    noise_mean:         0.0
+    noise_std:          0.1
+
   bg_suppression_opts:          null
   deformation:                  null
