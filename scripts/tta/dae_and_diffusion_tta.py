@@ -13,7 +13,7 @@ sys.path.append(os.path.normpath(os.path.join(
 from tta_uia_segmentation.src.tta import TTADAEandDDPM
 from tta_uia_segmentation.src.dataset.dataset_in_memory import get_datasets
 from tta_uia_segmentation.src.models import Normalization, UNet
-from tta_uia_segmentation.src.models.io import load_ddpm_from_configs_and_cpt, load_segmentation_model_and_cpt
+from tta_uia_segmentation.src.models.io import load_ddpm_from_configs_and_cpt, load_norm_and_seg_from_configs_and_cpt
 from tta_uia_segmentation.src.utils.io import load_config, dump_config, print_config, write_to_csv, rewrite_config_arguments
 from tta_uia_segmentation.src.utils.utils import seed_everything, define_device
 from tta_uia_segmentation.src.utils.logging import setup_wandb
@@ -157,6 +157,7 @@ if __name__ == '__main__':
     seed                    = tta_config['seed']
     device                  = tta_config['device']
     wandb_log               = tta_config['wandb_log']
+    start_new_exp           = tta_config['start_new_exp']
     logdir                  = tta_config[tta_mode]['logdir']
     wandb_project           = tta_config[tta_mode]['wandb_project']
     
@@ -167,7 +168,7 @@ if __name__ == '__main__':
     # Setup wandb logging
     # :=========================================================================:
     if wandb_log:
-        wandb_dir = setup_wandb(params, logdir, wandb_project)
+        wandb_dir = setup_wandb(params, logdir, wandb_project, start_new_exp)
     
     # Define the dataset that is to be used for training
     # :=========================================================================:
@@ -243,7 +244,6 @@ if __name__ == '__main__':
     atlas = checkpoint['atlas']
 
     # DDPM
-
     ddpm = load_ddpm_from_configs_and_cpt(
         train_ddpm_cfg           = train_params_ddpm,
         model_ddpm_cfg           = model_params_ddpm,

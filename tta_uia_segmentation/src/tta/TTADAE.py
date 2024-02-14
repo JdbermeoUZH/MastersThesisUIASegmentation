@@ -26,7 +26,7 @@ class TTADAE:
         atlas: Any,
         loss_func: torch.nn.Module = DiceLoss(),
         learning_rate: float = 1e-3,
-        num_imgs_diffusion_tta: int = 50, 
+        wandb_log: bool = False,
         ) -> None:
         
         self.norm = norm
@@ -56,8 +56,8 @@ class TTADAE:
         self.dae.eval()
         self.dae.requires_grad_(False)
         
-        # Diffusion TTA params
-        self.num_imgs_diffusion_tta = num_imgs_diffusion_tta
+        # wandb logging
+        self.wandb_log = wandb_log
         
         
     def tta(

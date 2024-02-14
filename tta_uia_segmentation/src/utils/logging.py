@@ -5,7 +5,7 @@ import wandb
 from tta_uia_segmentation.src.utils.io import load_config, dump_config
 
 
-def setup_wandb(params: dict, logdir: str, wandb_project: str) -> str:
+def setup_wandb(params: dict, logdir: str, wandb_project: str, start_new_exp: bool = False) -> str:
     """
     Setup wandb logging and store its parameters in logdir.
     
@@ -27,7 +27,7 @@ def setup_wandb(params: dict, logdir: str, wandb_project: str) -> str:
 
     """
     wandb_params_path = os.path.join(logdir, 'wandb.yaml')
-    if os.path.exists(wandb_params_path):
+    if os.path.exists(wandb_params_path) and not start_new_exp:
         wandb_params = load_config(wandb_params_path)
     else:
         wandb_params = {'id': wandb.util.generate_id()}

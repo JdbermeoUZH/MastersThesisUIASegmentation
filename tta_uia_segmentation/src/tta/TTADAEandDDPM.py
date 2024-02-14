@@ -3,6 +3,7 @@ import copy
 from typing import Union, Optional, Any
 from tqdm import tqdm
 
+import wandb
 import torch
 import numpy as np
 from torch.nn import functional as F
@@ -23,6 +24,7 @@ class TTADAEandDDPM(TTADAE):
     def __init__(
         self,
         ddpm: ConditionalGaussianDiffusion,
+        num_imgs_diffusion_tta: int = 64,
         dddpm_loss_alpha: float = 0.5,
         min_t_diffusion_tta: int = 250,
         max_t_diffusion_tta: int = 1000,
@@ -35,6 +37,7 @@ class TTADAEandDDPM(TTADAE):
         
         assert (0 <= dddpm_loss_alpha <= 1), 'dddpm_loss_alpha must be between 0 and 1'
         self.dddpm_loss_alpha = dddpm_loss_alpha
+        self.num_imgs_diffusion_tta = num_imgs_diffusion_tta
         self.min_t_diffusion_tta = min_t_diffusion_tta
         self.max_t_diffusion_tta = max_t_diffusion_tta
         self.sampling_timesteps = sampling_timesteps
@@ -136,7 +139,10 @@ class TTADAEandDDPM(TTADAE):
                 )
 
             tta_loss = 0
+            ddpm_loss = 0
+            dae_loss = 0
             n_samples = 0
+            n_samples_diffusion = 0
 
             self.norm.train()
             volume_dataset.dataset.set_augmentation(True)
@@ -148,7 +154,6 @@ class TTADAEandDDPM(TTADAE):
                 volume_dataset.dataset.set_seed(get_seed())
                 
             # Sample batches of images on which to use the noise estimation task
-            
             num_batches_sample = self.num_imgs_diffusion_tta // batch_size
             b_i_for_diffusion_loss = np.random.choice(
                 range(len(volume_dataloader)), num_batches_sample, replace=False)
@@ -168,9 +173,10 @@ class TTADAEandDDPM(TTADAE):
                 x_norm = self.norm(x)
                 
                 # Calculate the noise estimation loss
-                noise_estimation_loss = self.get_ddpm_loss(x_norm, y.detach().clone()) \
-                    if b_i in b_i_for_diffusion_loss else 0
-                
+                if b_i in b_i_for_diffusion_loss:
+                    ddpm_loss = self.get_ddpm_loss(x_norm, y.detach().clone()) 
+                    n_samples_diffusion += x.shape[0]
+                    
                 # x_norm = background_suppression(x_norm, bg_mask, bg_suppression_opts_tta)
 
                 # mask, _ = self.seg(x_norm)
@@ -184,20 +190,22 @@ class TTADAEandDDPM(TTADAE):
 
                 if accumulate_over_volume:
                     # loss = loss / len(volume_dataloader)
-                    noise_estimation_loss = noise_estimation_loss / len(b_i_for_diffusion_loss)
+                    ddpm_loss = ddpm_loss / len(b_i_for_diffusion_loss)
                     
                 #loss = (1 - self.dddpm_loss_alpha) * loss +\
                 #    self.dddpm_loss_alpha * noise_estimation_loss
 
-                loss = noise_estimation_loss
+                total_loss = ddpm_loss                
                 
-                loss.backward()
+                total_loss.backward()
 
                 if not accumulate_over_volume:
-                    self.optimizer.step()
+                    self.optimizer.step()                      
 
                 with torch.no_grad():
-                    tta_loss += loss.detach() * x.shape[0]
+                    tta_loss += total_loss.detach() * x.shape[0]
+                    ddpm_loss += ddpm_loss.detach() * x.shape[0]
+                    # dae_loss += loss.detach() * x.shape[0]
                     n_samples += x.shape[0]
 
             if accumulate_over_volume:
@@ -205,6 +213,14 @@ class TTADAEandDDPM(TTADAE):
 
             self.tta_losses.append((tta_loss / n_samples).item())
 
+            if self.wandb_log:
+                wandb.log(
+                    {
+                        f'noise_estimation_loss_img_{index}': (ddpm_loss / n_samples_diffusion).item(),
+                        #f'dae_loss_img_{vol_idx}': (loss / n_samples).item(),
+                        f'total_loss_img_{index}': (tta_loss / n_samples).item(),
+                    },
+                    step=step)  
 
         if save_checkpoints:
             os.makedirs(os.path.join(logdir, 'checkpoints'), exist_ok=True)
