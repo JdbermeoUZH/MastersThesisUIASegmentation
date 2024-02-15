@@ -2,6 +2,7 @@ import os
 import copy
 from typing import Union, Optional, Any
 
+import wandb
 import torch
 import numpy as np
 from torch.nn import functional as F
@@ -14,6 +15,7 @@ from tta_uia_segmentation.src.utils.loss import dice_score, DiceLoss
 from tta_uia_segmentation.src.utils.visualization import export_images
 from tta_uia_segmentation.src.utils.utils import get_seed
 from tta_uia_segmentation.src.dataset import DatasetInMemory
+
 
 
 class TTADAE:
@@ -58,7 +60,8 @@ class TTADAE:
         
         # wandb logging
         self.wandb_log = wandb_log
-        
+        if self.wandb_log:
+            self._define_custom_wandb_metrics()
         
     def tta(
         self,
@@ -193,7 +196,9 @@ class TTADAE:
                 self.optimizer.step()
 
             self.tta_losses.append((tta_loss / n_samples).item())
-
+            
+            if self.wandb_log:
+                wandb.log({f'tta_loss/img_{index}': self.tta_losses[-1]}, step=step)
 
         if save_checkpoints:
             os.makedirs(os.path.join(logdir, 'checkpoints'), exist_ok=True)
@@ -307,6 +312,9 @@ class TTADAE:
 
         dices, dices_fg = dice_score(y_pred, y_original, soft=False, reduction='none', epsilon=1e-5)
         print(f'Iteration {iteration} - dice score {dices_fg.mean().item()}')
+        
+        if self.wandb_log:
+            wandb.log({f'dice_score_fg/img_{index}': dices_fg.mean().item()}, step=iteration)
 
         return dices.cpu(), dices_fg.cpu()
     
@@ -369,3 +377,11 @@ class TTADAE:
             num_workers=num_workers,
             drop_last=True, 
             )
+        
+    def load_state_dict_norm(self, state_dict: dict) -> None:
+        self.norm.load_state_dict(state_dict)
+        
+    def _define_custom_wandb_metrics(self):
+        wandb.define_metric("custom_step")
+        wandb.define_metric('dice_score_fg/*', step_metric='custom_step')
+        wandb.define_metric('tta_loss/*', step_metric='custom_step')

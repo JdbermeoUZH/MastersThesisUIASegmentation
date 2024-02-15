@@ -256,9 +256,15 @@ if __name__ == '__main__':
     del checkpoint
    
     # Define the TTADAE object that does the test time adapatation
-    # :=========================================================================:
+    # :=========================================================================:    
     learning_rate               = tta_config[tta_mode]['learning_rate']
-
+    dae_loss_alpha              = tta_config[tta_mode]['dae_loss_alpha']
+    ddpm_loss_beta              = tta_config[tta_mode]['dddpm_loss_beta']
+    frac_vol_diffusion_tta      = tta_config[tta_mode]['frac_vol_diffusion_tta']
+    min_t_diffusion_tta         = tta_config[tta_mode]['min_t_diffusion_tta']
+    max_t_diffusion_tta         = tta_config[tta_mode]['max_t_diffusion_tta']
+    sampling_timesteps          = tta_config[tta_mode]['sampling_timesteps']
+    
     tta = TTADAEandDDPM(
         norm                    = norm,
         seg                     = seg,
@@ -267,10 +273,13 @@ if __name__ == '__main__':
         ddpm                    = ddpm,          
         loss_func               = DiceLoss(),
         learning_rate           = learning_rate,
-        dddpm_loss_alpha        = tta_config[tta_mode]['dddpm_loss_alpha'],
-        min_t_diffusion_tta     = tta_config[tta_mode]['min_t_diffusion_tta'],
-        max_t_diffusion_tta     = tta_config[tta_mode]['max_t_diffusion_tta'],
-        sampling_timesteps      = tta_config[tta_mode]['sampling_timesteps'],
+        dae_loss_alpha          = dae_loss_alpha,
+        ddpm_loss_beta          = ddpm_loss_beta,
+        frac_vol_diffusion_tta  = frac_vol_diffusion_tta,
+        min_t_diffusion_tta     = min_t_diffusion_tta,
+        max_t_diffusion_tta     = max_t_diffusion_tta,
+        sampling_timesteps      = sampling_timesteps,
+        wandb_log               = wandb_log,
     )
     
     # Do TTA with a DAE
@@ -305,6 +314,16 @@ if __name__ == '__main__':
     print('---------------------TTA---------------------')
     print('start vol_idx:', start_idx)
     print('end vol_idx:', stop_idx)
+    
+    if dae_loss_alpha > 0 and ddpm_loss_beta > 0:
+        print(f'Using DAE {dae_loss_alpha: .5f} and DDPM {ddpm_loss_beta: .5f} for TTA')
+    elif dae_loss_alpha > 0:
+        print(f'Using DAE {dae_loss_alpha: .5f} for TTA')
+    elif ddpm_loss_beta > 0:
+        print(f'Using DDPM {ddpm_loss_beta} for TTA')
+    else:
+        raise ValueError('Both dae_loss_alpha and ddpm_loss_beta are <= 0.'
+                         'Please specify at least one of them to be > 0')
         
     dice_scores = torch.zeros((len(indices_per_volume), n_classes))
     
@@ -315,7 +334,7 @@ if __name__ == '__main__':
 
         volume_dataset = Subset(test_dataset, indices)
 
-        norm.load_state_dict(norm_state_dict)
+        tta.load_state_dict_norm(norm_state_dict)
 
         norm, norm_dict, metrics_best = tta.tta(
             volume_dataset = volume_dataset,
@@ -367,7 +386,7 @@ if __name__ == '__main__':
         for key in norm_dict.keys():
             print(f'Model at minimum {key} = {metrics_best[key]}')
 
-            tta.norm.load_state_dict(norm_dict[key])
+            tta.load_state_dict_norm(norm_dict[key])
             scores, _ = tta.test_volume(
                 volume_dataset=volume_dataset,
                 dataset_name=dataset,

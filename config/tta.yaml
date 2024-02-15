@@ -1,4 +1,4 @@
-start_new_exp: True
+start_new_exp: False
 wandb_log: True
 dataset: hcp_t2   # brain: hcp_t1, hcp_t2, abide_caltech, abide_stanford; wmh: nuhs, umc, vu
 start: null       # Index of the test dataset to start at
@@ -20,20 +20,20 @@ bg_suppression_opts:
 
 dae:
   wandb_project: mt-tta-dae-dae_tta
-  logdir: /scratch_net/biwidl319/jbermeo/logs/brain/sota/dae/hcp_t1_bg_supp_v2_augment_false_test
-  dae_dir: /scratch_net/biwidl319/jbermeo/data/previous_results_nico/logs/brain/dae/hcp_t1
-  seg_dir: /scratch_net/biwidl319/jbermeo/data/previous_results_nico/logs/brain/segmentation/hcp_t1_bg_supp
-  batch_size: 16
+  logdir: /scratch_net/biwidl319/jbermeo/logs/brain/sota/dae/hcp_t1_bg_supp_bs_32_no_grad_accumulation
+  dae_dir: /scratch_net/biwidl319/jbermeo/data/models/brain/dae/hcp_t1
+  seg_dir: /scratch_net/biwidl319/jbermeo/data/models/brain/segmentation/hcp_t1/bg_supp
+  batch_size: 32
   dataset_repetition: 1
   num_steps: 500  # 500 for brain, 2700 for wmh
   update_dae_output_every: 25
   calculate_dice_every: 25  # 25 for brain, 135 for wmh (nuhs, umc, vu)
   alpha: 1.0
   beta: 0.25
-  learning_rate: 1.0e-2
+  learning_rate: 0.001
   save_checkpoints: True
   const_aug_per_volume: False
-  accumulate_over_volume: True
+  accumulate_over_volume: False
 
   bg_suppression_opts:
     type: fixed_value  # possible values: none, fixed_value, random_value
@@ -64,28 +64,29 @@ dae:
 
 dae_and_diffusion:
   wandb_project: mt-tta-dae_and_diffusion_tta
-  logdir: /scratch_net/biwidl319/jbermeo/logs/brain/sota/dae_and_ddpm/hcp_t1_bg_supptest
-  dae_dir: /scratch_net/biwidl319/jbermeo/data/previous_results_nico/logs/brain/dae/hcp_t1
-  seg_dir: /scratch_net/biwidl319/jbermeo/data/previous_results_nico/logs/brain/segmentation/hcp_t1_bg_supp
-  ddpm_dir: /scratch_net/biwidl319/jbermeo/logs/brain/ddpm/not_one_hot_64_base_filters
-  cpt_fn: 'model-4.pt'
-  dddpm_loss_alpha: 0.5
+  logdir: /scratch_net/biwidl319/jbermeo/logs/brain/sota/dae_and_ddpm/ddpm_only_lr_1em2_bs_32_no_grad_accumulation_beta_100
+  dae_dir: /scratch_net/biwidl319/jbermeo/data/models/brain/dae/hcp_t1
+  seg_dir: /scratch_net/biwidl319/jbermeo/data/models/brain/segmentation/hcp_t1/bg_supp
+  ddpm_dir: /scratch_net/biwidl319/jbermeo/logs/brain/ddpm/not_one_hot_64_base_filters_with_aug
+  cpt_fn: 'model-7.pt'
+  dae_loss_alpha: 0.0
+  dddpm_loss_beta: 100
+  frac_vol_diffusion_tta: 1.0
   min_t_diffusion_tta: 250
   max_t_diffusion_tta: 1000
   sampling_timesteps: 100
-  noise_estimates_per_img: 1
   
-  batch_size: 4 
+  batch_size: 32
   dataset_repetition: 1
   num_steps: 500  # 500 for brain, 2700 for wmh
   update_dae_output_every: 25
   calculate_dice_every: 25  # 25 for brain, 135 for wmh (nuhs, umc, vu)
   alpha: 1.0
   beta: 0.25
-  learning_rate: 1.0e-2
+  learning_rate: 1.0 #0.00001
   save_checkpoints: True
   const_aug_per_volume: False
-  accumulate_over_volume: True
+  accumulate_over_volume: False
 
   bg_suppression_opts:
     type: fixed_value  # possible values: none, fixed_value, random_value

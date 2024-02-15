@@ -242,7 +242,8 @@ if __name__ == '__main__':
         dae                     = dae,
         atlas                   = atlas,
         loss_func               = DiceLoss(),
-        learning_rate           = learning_rate
+        learning_rate           = learning_rate,
+        wandb_log               = wandb_log,
     )
     
     # Do TTA with a DAE
@@ -287,7 +288,7 @@ if __name__ == '__main__':
 
         volume_dataset = Subset(test_dataset, indices)
 
-        norm.load_state_dict(norm_state_dict)
+        dae_tta.load_state_dict_norm(norm_state_dict)
 
         norm, norm_dict, metrics_best = dae_tta.tta(
             volume_dataset = volume_dataset,
@@ -339,7 +340,8 @@ if __name__ == '__main__':
         for key in norm_dict.keys():
             print(f'Model at minimum {key} = {metrics_best[key]}')
 
-            dae_tta.norm.load_state_dict(norm_dict[key])
+            dae_tta.load_state_dict_norm(norm_dict[key])
+            
             scores, _ = dae_tta.test_volume(
                 volume_dataset=volume_dataset,
                 dataset_name=dataset,
