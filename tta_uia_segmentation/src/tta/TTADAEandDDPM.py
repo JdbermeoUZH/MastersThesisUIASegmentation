@@ -27,6 +27,7 @@ class TTADAEandDDPM(TTADAE):
         min_t_diffusion_tta: int = 250,
         max_t_diffusion_tta: int = 1000,
         sampling_timesteps: Optional[int] = None,
+        min_max_int_norm_imgs: tuple[float, float] = (0, 1),
         **kwargs
         ) -> None:
         
@@ -35,9 +36,15 @@ class TTADAEandDDPM(TTADAE):
         
         self.dae_loss_alpha = dae_loss_alpha
         self.ddpm_loss_beta = ddpm_loss_beta
+        
         self.frac_vol_diffusion_tta = frac_vol_diffusion_tta
+        
         self.min_t_diffusion_tta = min_t_diffusion_tta
         self.max_t_diffusion_tta = max_t_diffusion_tta
+        
+        self.min_int_norm_imgs = min_max_int_norm_imgs[0]
+        self.max_int_norm_imgs = min_max_int_norm_imgs[1]
+        
         self.sampling_timesteps = sampling_timesteps
         self.ddpm.set_sampling_timesteps(sampling_timesteps)
         
@@ -137,8 +144,8 @@ class TTADAEandDDPM(TTADAE):
                 )
 
             tta_loss = 0
-            ddpm_loss = 0
-            dae_loss = 0
+            dae_loss = torch.tensor(0).float().to(device)
+            ddpm_loss = torch.tensor(0).float().to(device)
             n_samples = 0
             n_samples_diffusion = 0
 
@@ -155,12 +162,14 @@ class TTADAEandDDPM(TTADAE):
             num_batches_sample = int(self.frac_vol_diffusion_tta * len(volume_dataloader))
             b_i_for_diffusion_loss = np.random.choice(
                 range(len(volume_dataloader)), num_batches_sample, replace=False)
+            print(f'DEBUG, delete me: len(volume_dataloader): {len(volume_dataloader)}')
             print(f'DEBUG, delete me: num_batches_sample: {num_batches_sample}')
             
             # Reweigh factor for the ddpm loss to take into account how many 
             #  times less it is used than the dae loss or if averaged over entire volume
-            ddpm_reweight_factor = (1 / len(b_i_for_diffusion_loss)) * \
-                1 if accumulate_over_volume else len(volume_dataloader)  
+            ddpm_reweigh_factor = (1 / len(b_i_for_diffusion_loss)) * \
+                (1 if accumulate_over_volume else len(volume_dataloader))  
+            print('DEBUG, delete me: ddpm_reweight_factor:', ddpm_reweigh_factor)
 
             # Adapting to the target distribution
             # :===========================================:
@@ -168,8 +177,6 @@ class TTADAEandDDPM(TTADAE):
             # To avoid memory issues, we compute x_norm twice to separate the gradient
             #  computation for the DAE and DDPM losses. 
             for b_i, ((x,_,_,_, bg_mask), (y,)) in enumerate(zip(volume_dataloader, label_dataloader)):
-                dae_loss = torch.tensor(0).float().to(device)
-                ddpm_loss = torch.tensor(0).float().to(device)
 
                 if not accumulate_over_volume:
                     self.optimizer.zero_grad()
@@ -178,14 +185,14 @@ class TTADAEandDDPM(TTADAE):
                 y = y.to(device)
                 bg_mask = bg_mask.to(device)
                 
-                # Calculate the noise estimation loss
+                # Calculate gradients from the noise estimation loss
                 if b_i in b_i_for_diffusion_loss and self.ddpm_loss_beta > 0:
                     x_norm = self.norm(x)
                     ddpm_loss = self.calculate_ddpm_gradients(
                         x_norm,
                         y,
-                        minibatch_size=3,
-                        ddpm_reweight_factor=ddpm_reweight_factor
+                        minibatch_size=2,
+                        ddpm_reweight_factor=ddpm_reweigh_factor
                     )
                                         
                     n_samples_diffusion += x.shape[0] 
@@ -212,24 +219,26 @@ class TTADAEandDDPM(TTADAE):
 
                 with torch.no_grad():
                     ddpm_loss += ddpm_loss.detach() * x.shape[0]
-                    dae_loss += dae_loss * x.shape[0]
+                    dae_loss += dae_loss.detach() * x.shape[0]
                     n_samples += x.shape[0]
 
             if accumulate_over_volume:
                 self.optimizer.step()
 
-            tta_loss = (ddpm_loss + dae_loss) / n_samples
+            ddpm_loss = (ddpm_loss / n_samples_diffusion).item()
+            dae_loss = (dae_loss / n_samples).item()
+            tta_loss = ddpm_loss + dae_loss
             
-            self.tta_losses.append(tta_loss.item())
+            self.tta_losses.append(tta_loss)
 
             if self.wandb_log:
-                wandb.log(
-                    {
-                        f'ddpm_loss/img_{index}': (ddpm_loss / n_samples_diffusion).item(),
-                        f'dae_loss/img_{index}': (dae_loss / n_samples).item(),
-                        f'total_loss/img_{index}': self.tta_losses[-1],
-                    },
-                    step=step)  
+                wandb.log({
+                    f'ddpm_loss/img_{index}': ddpm_loss, 
+                    f'dae_loss/img_{index}': dae_loss, 
+                    f'total_loss/img_{index}': tta_loss, 
+                    }, 
+                    step=step
+                )  
 
         if save_checkpoints:
             os.makedirs(os.path.join(logdir, 'checkpoints'), exist_ok=True)
@@ -261,8 +270,12 @@ class TTADAEandDDPM(TTADAE):
         ddpm_reweight_factor: float = 1
         ) -> torch.Tensor:
         
-        # Normalize the input image between 0 and 1
-        img = du.normalize_min_max(img)
+        # Normalize the input image between 0 and 1, (required by the DDPM)
+        img = du.normalize_min_max(
+            img,
+            min=self.min_int_norm_imgs, 
+            max=self.max_int_norm_imgs
+            )
         
         # if img.max() > 1 or img.min() < 0:
         #     print(f'WARNING: img.max()={img.max()}, img.min()={img.min()}')
@@ -270,22 +283,23 @@ class TTADAEandDDPM(TTADAE):
         # Upsample the segmentation mask to the same size as the input image
         rescale_factor = np.array(img.shape) / np.array(seg.shape)
         rescale_factor = tuple(rescale_factor[[0, 2, 3]])
+        should_rescale = not all([f == 1. for f in rescale_factor])
         
-        seg = seg.permute(1, 0, 2, 3).unsqueeze(0)
-        seg = F.interpolate(seg, scale_factor=rescale_factor, mode='trilinear')
-        seg = (seg > 0.5).float()                
-        seg = seg.squeeze(0).permute(1, 0, 2, 3)
+        if should_rescale:
+            seg = seg.permute(1, 0, 2, 3).unsqueeze(0)
+            seg = F.interpolate(seg, scale_factor=rescale_factor, mode='trilinear')
+            seg = (seg > 0.5).float()                
+            seg = seg.squeeze(0).permute(1, 0, 2, 3)
         # assert torch.isin(seg, torch.tensor([0, 1], device=seg.device)).all()
         
         # Map seg to a single channel and normalize between 0 and 1
         n_classes = seg.shape[1]
         seg = du.onehot_to_class(seg)
-        
         # assert torch.isin(seg, torch.tensor(list(range(n_classes)), device=seg.device)).all()
         # print(f'DEBUG delete me: values: {seg.unique().tolist()}') 
         seg = seg.float() / (n_classes - 1)
         
-        # The DDPM is memory intensive, compute the loss in smaller batches
+        # The DDPM is memory intensive, accumulate gradients over minibatches
         ddpm_loss_value = 0
         ddpm_reweight_factor = ddpm_reweight_factor * (minibatch_size / img.shape[0])  
         for i in range(0, img.shape[0], minibatch_size):
@@ -301,7 +315,7 @@ class TTADAEandDDPM(TTADAE):
             
             ddpm_loss_value += ddpm_loss.detach()
                         
-        return ddpm_loss_value / img.shape[0] 
+        return ddpm_loss_value
 
     def _define_custom_wandb_metrics(self):
         wandb.define_metric("custom_step")

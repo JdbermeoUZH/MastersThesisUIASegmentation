@@ -99,7 +99,7 @@ ddpm:
   logdir:                       /scratch_net/biwidl319/jbermeo/logs/brain/ddpm/not_one_hot_64_base_filters_with_aug
   wandb_project:                mt-ddpm
 
-  norm_dir:                     /scratch_net/biwidl319/jbermeo/data/models/brain/hcp_t1/bg_supp
+  norm_dir:                     /scratch_net/biwidl319/jbermeo/data/models/brain/segmentation/hcp_t1/bg_supp
 
   augmentation:                 
     da_ratio:           0.25

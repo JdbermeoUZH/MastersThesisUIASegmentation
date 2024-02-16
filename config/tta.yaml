@@ -1,11 +1,12 @@
 start_new_exp: False
 wandb_log: True
 dataset: hcp_t2   # brain: hcp_t1, hcp_t2, abide_caltech, abide_stanford; wmh: nuhs, umc, vu
+split:   val       # val, test
 start: null       # Index of the test dataset to start at
 stop:  null       # Index of the test dataset to stop at
 num_workers: 0
 device: cuda
-tta_mode: dae # no_tta, gnn, gt
+tta_mode: dae_and_diffusion # no_tta, gnn, gt, dae, dae_and_diffusion
 image_size: [1, 256, 256]
 seed: 0
 
@@ -64,18 +65,19 @@ dae:
 
 dae_and_diffusion:
   wandb_project: mt-tta-dae_and_diffusion_tta
-  logdir: /scratch_net/biwidl319/jbermeo/logs/brain/sota/dae_and_ddpm/ddpm_only_lr_1em2_bs_32_no_grad_accumulation_beta_100
+  logdir: /scratch_net/biwidl319/jbermeo/logs/brain/sota/dae_and_ddpm/ddpm_0.5_dae_0.5_lr_1em3_bs_32_no_grad_accumulation
   dae_dir: /scratch_net/biwidl319/jbermeo/data/models/brain/dae/hcp_t1
   seg_dir: /scratch_net/biwidl319/jbermeo/data/models/brain/segmentation/hcp_t1/bg_supp
   ddpm_dir: /scratch_net/biwidl319/jbermeo/logs/brain/ddpm/not_one_hot_64_base_filters_with_aug
   cpt_fn: 'model-7.pt'
-  dae_loss_alpha: 0.0
-  dddpm_loss_beta: 100
+  dae_loss_alpha: 0.5
+  dddpm_loss_beta: 0.5
   frac_vol_diffusion_tta: 1.0
-  min_t_diffusion_tta: 250
+  min_t_diffusion_tta: 0
   max_t_diffusion_tta: 1000
   sampling_timesteps: 100
-  
+  min_max_int_norm_imgs: [-0.5313728, 0.67584044]
+
   batch_size: 32
   dataset_repetition: 1
   num_steps: 500  # 500 for brain, 2700 for wmh
@@ -83,7 +85,7 @@ dae_and_diffusion:
   calculate_dice_every: 25  # 25 for brain, 135 for wmh (nuhs, umc, vu)
   alpha: 1.0
   beta: 0.25
-  learning_rate: 1.0 #0.00001
+  learning_rate: 0.001
   save_checkpoints: True
   const_aug_per_volume: False
   accumulate_over_volume: False
