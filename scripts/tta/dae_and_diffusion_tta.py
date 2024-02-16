@@ -264,6 +264,7 @@ if __name__ == '__main__':
     min_t_diffusion_tta         = tta_config[tta_mode]['min_t_diffusion_tta']
     max_t_diffusion_tta         = tta_config[tta_mode]['max_t_diffusion_tta']
     sampling_timesteps          = tta_config[tta_mode]['sampling_timesteps']
+    min_max_int_norm_imgs       = tta_config[tta_mode]['min_max_int_norm_imgs']
     
     tta = TTADAEandDDPM(
         norm                    = norm,
@@ -280,6 +281,7 @@ if __name__ == '__main__':
         max_t_diffusion_tta     = max_t_diffusion_tta,
         sampling_timesteps      = sampling_timesteps,
         wandb_log               = wandb_log,
+        min_max_int_norm_imgs   = min_max_int_norm_imgs
     )
     
     # Do TTA with a DAE
