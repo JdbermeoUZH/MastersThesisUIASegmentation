@@ -5,7 +5,9 @@ import argparse
 import wandb
 import torch
 from torch.utils.data import Subset
+import pandas as pd 
 import numpy as np
+import matplotlib.pyplot as plt 
 
 sys.path.append(os.path.normpath(os.path.join(
     os.path.dirname(__file__), '..', '..')))
@@ -45,13 +47,27 @@ def preprocess_cmd_args() -> argparse.Namespace:
 
     # TTA loop
     # -------------:
-    parser.add_argument('--alpha', type=float, help='Proportion of how much better the dice of the DAE pseudolabel and predicted segmentation'
-                                                    'should be than the dice of the Atlas pseudolabel. Default: 1')
-    parser.add_argument('--beta', type=float, help='Minimum dice of the Atlas pseudolabel and the predicted segmentation. Default: 0.25')
+    # optimization params
     parser.add_argument('--num_steps', type=int, help='Number of steps to take in TTA loop. Default: 100')
     parser.add_argument('--learning_rate', type=float, help='Learning rate for optimizer. Default: 1e-4')
     parser.add_argument('--batch_size', type=int, help='Batch size for tta. Default: 4')
     parser.add_argument('--num_workers', type=int, help='Number of workers for dataloader. Default: 0')
+    
+    parser.add_argument('--dddpm_loss_beta', type=float, help='Weight for DDPM loss. Default: 1.0')
+    parser.add_argument('--dae_loss_alpha', type=float, help='Weight for DAE loss. Default: 1.0')
+    parser.add_argument('--frac_vol_diffusion_tta', type=float, help='Fraction of volume to diffuse. Default: 0.5')
+    
+    # DPM params
+    parser.add_argument('--min_t_diffusion_tta', type=int, help='Minimum value for diffusion time. Default: 0')
+    parser.add_argument('--max_t_diffusion_tta', type=int, help='Maximum value for diffusion time. Default: 1000')       
+    parser.add_argument('--use_x_cond_gt', type=lambda s: s.strip().lower() == 'true', help='Whether to use ground truth segmetnation as conditional for DDPM. ONLY FOR DEBUGGING. Default: False')
+    
+    # DAE and Atlas params
+    parser.add_argument('--alpha', type=float, help='Proportion of how much better the dice of the DAE pseudolabel and predicted segmentation'
+                                                    'should be than the dice of the Atlas pseudolabel. Default: 1')
+    parser.add_argument('--beta', type=float, help='Minimum dice of the Atlas pseudolabel and the predicted segmentation. Default: 0.25')
+    
+    # Probably not used arguments
     parser.add_argument('--seed', type=int, help='Seed for random number generators. Default: 0')   
     parser.add_argument('--device', type=str, help='Device to use for tta. Default cuda', )
     parser.add_argument('--save_checkpoints', type=lambda s: s.strip().lower() == 'true',
@@ -60,6 +76,8 @@ def preprocess_cmd_args() -> argparse.Namespace:
     # Dataset and its transformations to use for TTA
     # ---------------------------------------------------:
     parser.add_argument('--dataset', type=str, help='Name of dataset to use for tta. Default: USZ')
+    
+    # Probably not used arguments
     parser.add_argument('--n_classes', type=int, help='Number of classes in dataset. Default: 21')
     parser.add_argument('--image_size', type=int, nargs='+', help='Size of images in dataset. Default: [560, 640, 160]')
     parser.add_argument('--resolution_proc', type=float, nargs='+', help='Resolution of images in dataset. Default: [0.3, 0.3, 0.6]')
@@ -104,15 +122,15 @@ def get_configuration_arguments() -> tuple[dict, dict]:
     tta_config = load_config(args.tta_config_file)
     tta_config = rewrite_config_arguments(tta_config, args, 'tta')
     
-    tta_config['dae'] = rewrite_config_arguments(
-        tta_config['dae'], args, 'tta, dae')
+    tta_config['dae_and_diffusion'] = rewrite_config_arguments(
+        tta_config['dae_and_diffusion'], args, 'tta, dae_and_diffusion')
     
-    tta_config['dae']['augmentation'] = rewrite_config_arguments(
-        tta_config['dae']['augmentation'], args, 'tta, dae, augmentation',
+    tta_config['dae_and_diffusion']['augmentation'] = rewrite_config_arguments(
+        tta_config['dae_and_diffusion']['augmentation'], args, 'tta, dae_and_diffusion, augmentation',
         prefix_to_remove='aug_')
     
-    tta_config['dae']['bg_suppression_opts'] = rewrite_config_arguments(
-        tta_config['dae']['bg_suppression_opts'], args, 'tta, dae, bg_suppression_opts',
+    tta_config['dae_and_diffusion']['bg_suppression_opts'] = rewrite_config_arguments(
+        tta_config['dae_and_diffusion']['bg_suppression_opts'], args, 'tta, dae_and_diffusion, bg_suppression_opts',
         prefix_to_remove='bg_supression_')
     
     return dataset_config, tta_config
@@ -341,6 +359,8 @@ if __name__ == '__main__':
         
     dice_scores = torch.zeros((len(indices_per_volume), n_classes))
     
+    dice_per_vol = {}
+    
     for i in range(start_idx, stop_idx):
 
         indices = indices_per_volume[i]
@@ -350,7 +370,7 @@ if __name__ == '__main__':
 
         tta.load_state_dict_norm(norm_state_dict)
 
-        norm, norm_dict, metrics_best = tta.tta(
+        norm, norm_dict, metrics_best, dice_scores_wrt_gt = tta.tta(
             volume_dataset = volume_dataset,
             dataset_name = dataset,
             n_classes =n_classes,
@@ -384,7 +404,15 @@ if __name__ == '__main__':
             device = device,
             logdir = logdir,
         )
-
+        
+        dice_scores_wrt_gt[num_steps] = dice_scores[i, :].numpy() 
+        
+        dice_per_vol[i] = dice_scores_wrt_gt
+        
+        # Store csv of dice_scores
+        dice_per_vol_df = pd.DataFrame(dice_per_vol).add_prefix('vol_')
+        dice_per_vol_df.to_csv(os.path.join(logdir, f'dice_scores_{dataset}_per_step.csv'))
+        
         write_to_csv(
             os.path.join(logdir, f'scores_{dataset}_last_iteration.csv'),
             np.hstack([[[f'volume_{i:02d}']], dice_scores[None, i, :].numpy()]),
@@ -421,7 +449,26 @@ if __name__ == '__main__':
             )
 
     print(f'Overall mean dice (only foreground): {dice_scores[:, 1:].mean()}')
-
+    
+    # Log the dice scores history over the volumes
+    # :=========================================================================:
+    # plot the mean and std confidence interval of the dice scores over the volumes
+        
+    plt.errorbar(
+        x=dice_per_vol_df.index.values(),
+        y=dice_per_vol_df.mean().values(),
+        yerr=dice_per_vol_df.mean().values(), 
+        fmt='-x',
+    )
+    
+    plt.xlabel('Step')
+    plt.ylabel('Dice score aggregated over volumes')
+    plt.savefig(os.path.join(logdir, 'Dice score aggregated over volumes vs TTA step.png'))    
+    plt.close()
+    
     if wandb_log:
+        for step, mean_dice_over_vols in dice_per_vol_df.mean().items():
+            wandb.log({f'mean_dice_over_vols_{step}': mean_dice_over_vols})
+    
         wandb.finish()
 

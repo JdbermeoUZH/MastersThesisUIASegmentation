@@ -29,6 +29,7 @@ class TTADAEandDDPM(TTADAE):
         sampling_timesteps: Optional[int] = None,
         min_max_int_norm_imgs: tuple[float, float] = (0, 1),
         use_x_cond_gt: bool = False,    # Of course use only for debugging
+        
         **kwargs
         ) -> None:
         
@@ -175,15 +176,12 @@ class TTADAEandDDPM(TTADAE):
             num_batches_sample = int(self.frac_vol_diffusion_tta * len(volume_dataloader))
             b_i_for_diffusion_loss = np.random.choice(
                 range(len(volume_dataloader)), num_batches_sample, replace=False)
-            #print(f'DEBUG, delete me: len(volume_dataloader): {len(volume_dataloader)}')
-            #print(f'DEBUG, delete me: num_batches_sample: {num_batches_sample}')
             
             # Reweigh factor for the ddpm loss to take into account how many 
             #  times less it is used than the dae loss or if averaged over entire volume
             ddpm_reweigh_factor = (1 / len(b_i_for_diffusion_loss)) * \
                 (1 if accumulate_over_volume else len(volume_dataloader))  
-            #print('DEBUG, delete me: ddpm_reweight_factor:', ddpm_reweigh_factor)
-
+            
             # Adapting to the target distribution
             # :===========================================:
             
@@ -289,8 +287,10 @@ class TTADAEandDDPM(TTADAE):
             header=['tta_score'],
             mode='w',
         )
+        
+        dice_scores = {i * calculate_dice_every: score for i, score in enumerate(self.test_scores)}
 
-        return self.norm, self.norm_dict, self.metrics_best
+        return self.norm, self.norm_dict, self.metrics_best, dice_scores
     
     def calculate_ddpm_gradients(
         self,
