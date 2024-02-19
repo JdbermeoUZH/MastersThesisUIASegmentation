@@ -463,6 +463,7 @@ if __name__ == '__main__':
     
     plt.xlabel('Step')
     plt.ylabel('Dice score aggregated over volumes')
+    plt.title('Dice score (foreground only) aggregated over volumes vs TTA step')
     plt.savefig(os.path.join(logdir, 'Dice score aggregated over volumes vs TTA step.png'))    
     plt.close()
     
