@@ -60,8 +60,10 @@ class TTADAE:
         
         # wandb logging
         self.wandb_log = wandb_log
+        
         if self.wandb_log:
             self._define_custom_wandb_metrics()
+
         
     def tta(
         self,
@@ -85,7 +87,11 @@ class TTADAE:
         save_checkpoints: bool,
         device: str,
         logdir: Optional[str] = None,        
-    ):       
+    ):
+        # Set loss and dice scores to empty lists for each new TTA
+        self.tta_losses = []
+        self.test_scores = []
+            
         self.seg.requires_grad_(False)
 
         if rescale_factor is not None:
@@ -314,7 +320,12 @@ class TTADAE:
         print(f'Iteration {iteration} - dice score {dices_fg.mean().item()}')
         
         if self.wandb_log:
-            wandb.log({f'dice_score_fg/img_{index}': dices_fg.mean().item()}, step=iteration)
+            wandb.log(
+                {
+                    f'dice_score_fg/img_{index}': dices_fg.mean().item(),
+                    'tta_step': iteration
+                }
+            )
 
         return dices.cpu(), dices_fg.cpu()
     
@@ -384,6 +395,6 @@ class TTADAE:
         self.norm.load_state_dict(state_dict)
         
     def _define_custom_wandb_metrics(self):
-        wandb.define_metric("custom_step")
-        wandb.define_metric('dice_score_fg/*', step_metric='custom_step')
-        wandb.define_metric('tta_loss/*', step_metric='custom_step')
+        wandb.define_metric("tta_step")
+        wandb.define_metric('dice_score_fg/*', step_metric='tta_step')
+        wandb.define_metric('tta_loss/*', step_metric='tta_step')

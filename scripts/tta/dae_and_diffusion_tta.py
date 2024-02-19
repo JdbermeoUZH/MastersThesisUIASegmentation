@@ -44,6 +44,8 @@ def preprocess_cmd_args() -> argparse.Namespace:
     parser.add_argument('--dae_dir', type=str, help='Path to directory where DAE checkpoints are saved')
     parser.add_argument('--seg_dir', type=str, help='Path to directory where segmentation checkpoints are saved')
     parser.add_argument('--wandb_log', type=lambda s: s.strip().lower() == 'true', help='Log tta to wandb. Default: False.')
+    parser.add_argument('--start_new_exp', type=lambda s: s.strip().lower() == 'true', help='Start a new wandb experiment. Default: False')
+    parser.add_argument('--calculate_dice_every', type=int, help='Calculate dice every x steps. Default: 25')
 
     # TTA loop
     # -------------:
@@ -60,6 +62,7 @@ def preprocess_cmd_args() -> argparse.Namespace:
     # DPM params
     parser.add_argument('--min_t_diffusion_tta', type=int, help='Minimum value for diffusion time. Default: 0')
     parser.add_argument('--max_t_diffusion_tta', type=int, help='Maximum value for diffusion time. Default: 1000')       
+    parser.add_argument('--use_y_pred_for_ddpm_loss', type=lambda s: s.strip().lower() == 'true', help='Whether to use predicted segmentation as conditional for DDPM. Default: True')
     parser.add_argument('--use_x_cond_gt', type=lambda s: s.strip().lower() == 'true', help='Whether to use ground truth segmetnation as conditional for DDPM. ONLY FOR DEBUGGING. Default: False')
     
     # DAE and Atlas params
@@ -285,6 +288,8 @@ if __name__ == '__main__':
     max_t_diffusion_tta         = tta_config[tta_mode]['max_t_diffusion_tta']
     sampling_timesteps          = tta_config[tta_mode]['sampling_timesteps']
     min_max_int_norm_imgs       = tta_config[tta_mode]['min_max_int_norm_imgs']
+    use_y_pred_for_ddpm_loss    = tta_config[tta_mode]['use_y_pred_for_ddpm_loss']
+    use_x_cond_gt               = tta_config[tta_mode]['use_x_cond_gt']
     
     tta = TTADAEandDDPM(
         norm                    = norm,
@@ -302,7 +307,8 @@ if __name__ == '__main__':
         sampling_timesteps      = sampling_timesteps,
         wandb_log               = wandb_log,
         min_max_int_norm_imgs   = min_max_int_norm_imgs,
-        use_x_cond_gt           = tta_config[tta_mode]['use_x_cond_gt'],
+        use_y_pred_for_ddpm_loss=use_y_pred_for_ddpm_loss,
+        use_x_cond_gt           = use_x_cond_gt,
     )
     
     # Do TTA with a DAE
@@ -397,6 +403,7 @@ if __name__ == '__main__':
             volume_dataset = volume_dataset,
             dataset_name = dataset,
             index = i,
+            iteration = num_steps,
             n_classes = n_classes,
             batch_size = batch_size,
             num_workers = num_workers,
@@ -405,7 +412,7 @@ if __name__ == '__main__':
             logdir = logdir,
         )
         
-        dice_scores_wrt_gt[num_steps] = dice_scores[i, :].numpy() 
+        dice_scores_wrt_gt[num_steps] = dice_scores[i, :].mean().item() 
         
         dice_per_vol[i] = dice_scores_wrt_gt
         
@@ -455,9 +462,9 @@ if __name__ == '__main__':
     # plot the mean and std confidence interval of the dice scores over the volumes
         
     plt.errorbar(
-        x=dice_per_vol_df.index.values(),
-        y=dice_per_vol_df.mean().values(),
-        yerr=dice_per_vol_df.mean().values(), 
+        x=dice_per_vol_df.index.values,
+        y=dice_per_vol_df.mean(axis=1).values,
+        yerr=dice_per_vol_df.mean(axis=1).values, 
         fmt='-x',
     )
     
@@ -469,7 +476,7 @@ if __name__ == '__main__':
     
     if wandb_log:
         for step, mean_dice_over_vols in dice_per_vol_df.mean().items():
-            wandb.log({f'mean_dice_over_vols_{step}': mean_dice_over_vols})
+            wandb.log({f'mean_dice_over_vols_{step}': mean_dice_over_vols}, step=step)
     
         wandb.finish()
 

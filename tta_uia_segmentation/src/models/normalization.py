@@ -21,7 +21,8 @@ def background_suppression(x, bg_mask, opts=None, bg_class=0):
 
     if suppression_type == 'fixed_value':
         bg_value = deep_get(opts, 'bg_value', default=0)
-        x[bg_mask] = bg_value
+        x = torch.where(bg_mask, bg_value, x)
+        #x[bg_mask] = bg_value
 
     elif suppression_type == 'random_value':
         bg_value_min = deep_get(opts, 'bg_value_min', default=-1)
@@ -29,7 +30,8 @@ def background_suppression(x, bg_mask, opts=None, bg_class=0):
         b,c,h,w = x.shape
         bg_value = torch.empty(b,c,1,1).uniform_(bg_value_min, bg_value_max)
         bg_value = bg_value.repeat(1,1,h,w).to(device)
-        x[bg_mask] = bg_value[bg_mask]
+        x = torch.where(bg_mask, bg_value, x)
+        #x[bg_mask] = bg_value[bg_mask]
 
     return x
 

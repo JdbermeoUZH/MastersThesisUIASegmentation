@@ -28,6 +28,8 @@ class TTADAEandDDPM(TTADAE):
         max_t_diffusion_tta: int = 1000,
         sampling_timesteps: Optional[int] = None,
         min_max_int_norm_imgs: tuple[float, float] = (0, 1),
+        use_x_norm_for_ddpm_loss: bool = True,
+        use_y_pred_for_ddpm_loss: bool = False,
         use_x_cond_gt: bool = False,    # Of course use only for debugging
         
         **kwargs
@@ -47,6 +49,9 @@ class TTADAEandDDPM(TTADAE):
         self.min_int_norm_imgs = min_max_int_norm_imgs[0]
         self.max_int_norm_imgs = min_max_int_norm_imgs[1]
         
+        self.use_y_pred_for_ddpm_loss = use_y_pred_for_ddpm_loss   
+        self.use_x_norm_for_ddpm_loss = use_x_norm_for_ddpm_loss 
+        
         self.sampling_timesteps = sampling_timesteps
         self.ddpm.set_sampling_timesteps(sampling_timesteps)
         
@@ -56,6 +61,10 @@ class TTADAEandDDPM(TTADAE):
         
         # Attributes used only for debugging
         self.use_x_cond_gt = use_x_cond_gt
+        
+        # Setup the custom metrics and steps wandb
+        if self.wandb_log:
+            self._define_custom_wandb_metrics() 
     
     def tta(
         self,
@@ -87,6 +96,9 @@ class TTADAEandDDPM(TTADAE):
         volume_dataset : DatasetInMemory
             Dataset containing slices of a single volume on which to perform TTA.
         """
+        self.tta_losses = []
+        self.test_scores = []
+            
         self.seg.requires_grad_(False)
 
         if rescale_factor_dae is not None:
@@ -187,13 +199,13 @@ class TTADAEandDDPM(TTADAE):
             
             # To avoid memory issues, we compute x_norm twice to separate the gradient
             #  computation for the DAE and DDPM losses. 
-            for b_i, ((x, y_gt,_,_, bg_mask), (y,)) in enumerate(zip(volume_dataloader, label_dataloader)):
+            for b_i, ((x, y_gt,_,_, bg_mask), (y_pl,)) in enumerate(zip(volume_dataloader, label_dataloader)):
 
                 if not accumulate_over_volume:
                     self.optimizer.zero_grad()
 
                 x = x.to(device).float()
-                y = y.to(device)
+                y_pl = y_pl.to(device)
                 y_gt = y_gt.to(device)
                 
                 bg_mask = bg_mask.to(device)
@@ -201,9 +213,21 @@ class TTADAEandDDPM(TTADAE):
                 # Calculate gradients from the noise estimation loss
                 if b_i in b_i_for_diffusion_loss and self.ddpm_loss_beta > 0:
                     x_norm = self.norm(x)
+                    
+                    img = x_norm if self.use_x_norm_for_ddpm_loss else x
+                    
+                    if self.use_x_cond_gt:
+                        x_cond = y_gt
+                    elif self.use_y_pred_for_ddpm_loss:
+                        x_norm_bg_supp = background_suppression(x_norm, bg_mask, bg_suppression_opts_tta)
+                        x_cond = self.seg(x_norm_bg_supp)
+                    else:
+                        # Uses the pseudo label for the DDPM loss
+                        x_cond = y_pl
+                    
                     ddpm_loss = self.calculate_ddpm_gradients(
-                        x_norm,
-                        y_gt if self.use_x_cond_gt else y,
+                        img,
+                        x_cond,
                         minibatch_size=2,
                         ddpm_reweight_factor=ddpm_reweigh_factor,
                         max_int_norm_imgs=running_max,
@@ -220,6 +244,7 @@ class TTADAEandDDPM(TTADAE):
                     step_max = max(step_max, x.max().item())
                     step_min = min(step_min, x.min().item())
                     
+                    
                 if self.dae_loss_alpha > 0:
                     x_norm = self.norm(x)
                     x_norm = background_suppression(x_norm, bg_mask, bg_suppression_opts_tta)
@@ -231,7 +256,7 @@ class TTADAEandDDPM(TTADAE):
                         mask = F.interpolate(mask, scale_factor=rescale_factor_dae, mode='trilinear')
                         mask = mask.squeeze(0).permute(1, 0, 2, 3)
 
-                    dae_loss = self.dae_loss_alpha * self.loss_func(mask, y)
+                    dae_loss = self.dae_loss_alpha * self.loss_func(mask, y_pl)
                     dae_loss = dae_loss / len(volume_dataloader) \
                         if accumulate_over_volume else dae_loss
         
@@ -264,8 +289,8 @@ class TTADAEandDDPM(TTADAE):
                     f'ddpm_loss/img_{index}': ddpm_loss, 
                     f'dae_loss/img_{index}': dae_loss, 
                     f'total_loss/img_{index}': tta_loss, 
-                    }, 
-                    step=step
+                    'tta_step': step
+                    }
                 )  
 
         if save_checkpoints:
@@ -350,9 +375,8 @@ class TTADAEandDDPM(TTADAE):
         return ddpm_loss_value
     
     def _define_custom_wandb_metrics(self):
-        wandb.define_metric("custom_step")
-        wandb.define_metric('ddpm_loss/*', step_metric='custom_step')
-        wandb.define_metric('dae_loss/*', step_metric='custom_step')
-        wandb.define_metric('tta_loss/*', step_metric='custom_step')
-        wandb.define_metric('dice_score_fg/*', step_metric='custom_step')
-    
+        wandb.define_metric(f'tta_step')
+        wandb.define_metric(f'ddpm_loss/*', step_metric=f'tta_step')
+        wandb.define_metric(f'dae_loss/*', step_metric=f'tta_step')
+        wandb.define_metric(f'total_loss/*', step_metric=f'tta_step')   
+        wandb.define_metric(f'dice_score_fg/*', step_metric=f'tta_step')    
