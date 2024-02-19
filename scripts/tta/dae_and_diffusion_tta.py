@@ -176,14 +176,16 @@ if __name__ == '__main__':
     seed_everything(seed)
     device                 = define_device(device)
     dataset                = tta_config['dataset']
+    split                  = tta_config['split']
     n_classes              = dataset_config[dataset]['n_classes']
     bg_suppression_opts    = tta_config[tta_mode]['bg_suppression_opts']
     aug_params             = tta_config[tta_mode]['augmentation']
+    
   
     test_dataset, = get_datasets(
         paths           = dataset_config[dataset]['paths_processed'],
         paths_original  = dataset_config[dataset]['paths_original'],
-        splits          = ['test'],
+        splits          = [split],
         image_size      = tta_config['image_size'],
         resolution_proc = dataset_config[dataset]['resolution_proc'],
         dim_proc        = dataset_config[dataset]['dim'],
@@ -281,7 +283,8 @@ if __name__ == '__main__':
         max_t_diffusion_tta     = max_t_diffusion_tta,
         sampling_timesteps      = sampling_timesteps,
         wandb_log               = wandb_log,
-        min_max_int_norm_imgs   = min_max_int_norm_imgs
+        min_max_int_norm_imgs   = min_max_int_norm_imgs,
+        use_x_cond_gt           = tta_config[tta_mode]['use_x_cond_gt'],
     )
     
     # Do TTA with a DAE
@@ -318,11 +321,20 @@ if __name__ == '__main__':
     print('end vol_idx:', stop_idx)
     
     if dae_loss_alpha > 0 and ddpm_loss_beta > 0:
-        print(f'Using DAE {dae_loss_alpha: .5f} and DDPM {ddpm_loss_beta: .5f} for TTA')
+        if beta <= 1.0:
+            print(f'Using DAE {dae_loss_alpha: .5f} and DDPM {ddpm_loss_beta: .5f} for TTA')
+        else:
+            print(f'Using DDPM {ddpm_loss_beta: .5f} and ATLAS guided segmentation {dae_loss_alpha: .5f} for TTA')    
+        
     elif dae_loss_alpha > 0:
-        print(f'Using DAE {dae_loss_alpha: .5f} for TTA')
+        if beta <= 1.0:
+            print(f'Using DAE {dae_loss_alpha: .5f} for TTA')
+        else: 
+            print(f'Using ATLAS guided segmentation {dae_loss_alpha: .5f} for TTA')
+            
     elif ddpm_loss_beta > 0:
         print(f'Using DDPM {ddpm_loss_beta} for TTA')
+        
     else:
         raise ValueError('Both dae_loss_alpha and ddpm_loss_beta are <= 0.'
                          'Please specify at least one of them to be > 0')

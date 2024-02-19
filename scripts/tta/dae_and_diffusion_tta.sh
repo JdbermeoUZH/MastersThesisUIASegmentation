@@ -10,5 +10,5 @@ python dae_and_diffusion_tta.py \
  /scratch_net/biwidl319/jbermeo/MastersThesisUIASegmentation/config/datasets.yaml \
  /scratch_net/biwidl319/jbermeo/MastersThesisUIASegmentation/config/tta.yaml \
  --start 0 \
- --stop 5 \
+ --stop 2 \
  "$@"  
