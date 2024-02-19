@@ -356,6 +356,8 @@ class TTADAE:
         dice_denoised, _ = dice_score(masks, dae_output, soft=True, reduction='mean')
         dice_atlas, _ = dice_score(masks, self.atlas, soft=True, reduction='mean')
 
+        print(f'DEBUG: dice_denoised: {dice_denoised}, dice_atlas: {dice_atlas}')  # TODO: Delete me
+        
         if dice_denoised / dice_atlas >= alpha and dice_atlas >= beta:
             target_labels = dae_output
             dice = dice_denoised

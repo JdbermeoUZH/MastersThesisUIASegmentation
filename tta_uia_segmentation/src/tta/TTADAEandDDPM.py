@@ -6,7 +6,7 @@ import wandb
 import torch
 import numpy as np
 from torch.nn import functional as F
-from torch.utils.data import ConcatDataset, DataLoader
+from torch.utils.data import ConcatDataset, DataLoader, TensorDataset
 
 from tta_uia_segmentation.src.tta.TTADAE import TTADAE
 from tta_uia_segmentation.src.models import ConditionalGaussianDiffusion
@@ -28,6 +28,7 @@ class TTADAEandDDPM(TTADAE):
         max_t_diffusion_tta: int = 1000,
         sampling_timesteps: Optional[int] = None,
         min_max_int_norm_imgs: tuple[float, float] = (0, 1),
+        use_x_cond_gt: bool = False,    # Of course use only for debugging
         **kwargs
         ) -> None:
         
@@ -51,6 +52,9 @@ class TTADAEandDDPM(TTADAE):
         # Set segmentation, DAE, and DDPM models in eval mode
         self.ddpm.eval()
         self.ddpm.requires_grad_(False)
+        
+        # Attributes used only for debugging
+        self.use_x_cond_gt = use_x_cond_gt
     
     def tta(
         self,
@@ -106,10 +110,16 @@ class TTADAEandDDPM(TTADAE):
             drop_last=True,
         )
         
+        running_max = self.max_int_norm_imgs
+        running_min = self.min_int_norm_imgs
+        m = 0.8
+        
         for step in tqdm(range(num_steps)):
             
             self.norm.eval()
             volume_dataset.dataset.set_augmentation(False)
+            
+            step_min, step_max = np.inf, -np.inf
     
             # Test performance during adaptation.
             if step % calculate_dice_every == 0 and calculate_dice_every != -1:
@@ -130,18 +140,21 @@ class TTADAEandDDPM(TTADAE):
 
             # Update Pseudo label, with DAE or Atlas, depending on which has a better agreement
             if step % update_dae_output_every == 0:
-                
-                label_dataloader = self.generate_pseudo_labels(
-                    dae_dataloader=dae_dataloader,
-                    label_batch_size=label_batch_size,
-                    bg_suppression_opts_tta=bg_suppression_opts_tta,
-                    rescale_factor=rescale_factor_dae,
-                    device=device,
-                    num_workers=num_workers,
-                    dataset_repetition=dataset_repetition,
-                    alpha=alpha,
-                    beta=beta
-                )
+                # Only update the pseudo label if it has not been calculated yet or
+                #  if the beta is less than 1.0
+
+                if step == 0 or beta <= 1.0:
+                    label_dataloader = self.generate_pseudo_labels(
+                        dae_dataloader=dae_dataloader,
+                        label_batch_size=label_batch_size,
+                        bg_suppression_opts_tta=bg_suppression_opts_tta,
+                        rescale_factor=rescale_factor_dae,
+                        device=device,
+                        num_workers=num_workers,
+                        dataset_repetition=dataset_repetition,
+                        alpha=alpha,
+                        beta=beta
+                    )
 
             tta_loss = 0
             dae_loss = torch.tensor(0).float().to(device)
@@ -162,27 +175,29 @@ class TTADAEandDDPM(TTADAE):
             num_batches_sample = int(self.frac_vol_diffusion_tta * len(volume_dataloader))
             b_i_for_diffusion_loss = np.random.choice(
                 range(len(volume_dataloader)), num_batches_sample, replace=False)
-            print(f'DEBUG, delete me: len(volume_dataloader): {len(volume_dataloader)}')
-            print(f'DEBUG, delete me: num_batches_sample: {num_batches_sample}')
+            #print(f'DEBUG, delete me: len(volume_dataloader): {len(volume_dataloader)}')
+            #print(f'DEBUG, delete me: num_batches_sample: {num_batches_sample}')
             
             # Reweigh factor for the ddpm loss to take into account how many 
             #  times less it is used than the dae loss or if averaged over entire volume
             ddpm_reweigh_factor = (1 / len(b_i_for_diffusion_loss)) * \
                 (1 if accumulate_over_volume else len(volume_dataloader))  
-            print('DEBUG, delete me: ddpm_reweight_factor:', ddpm_reweigh_factor)
+            #print('DEBUG, delete me: ddpm_reweight_factor:', ddpm_reweigh_factor)
 
             # Adapting to the target distribution
             # :===========================================:
             
             # To avoid memory issues, we compute x_norm twice to separate the gradient
             #  computation for the DAE and DDPM losses. 
-            for b_i, ((x,_,_,_, bg_mask), (y,)) in enumerate(zip(volume_dataloader, label_dataloader)):
+            for b_i, ((x, y_gt,_,_, bg_mask), (y,)) in enumerate(zip(volume_dataloader, label_dataloader)):
 
                 if not accumulate_over_volume:
                     self.optimizer.zero_grad()
 
                 x = x.to(device).float()
                 y = y.to(device)
+                y_gt = y_gt.to(device)
+                
                 bg_mask = bg_mask.to(device)
                 
                 # Calculate gradients from the noise estimation loss
@@ -190,12 +205,22 @@ class TTADAEandDDPM(TTADAE):
                     x_norm = self.norm(x)
                     ddpm_loss = self.calculate_ddpm_gradients(
                         x_norm,
-                        y,
+                        y_gt if self.use_x_cond_gt else y,
                         minibatch_size=2,
-                        ddpm_reweight_factor=ddpm_reweigh_factor
+                        ddpm_reweight_factor=ddpm_reweigh_factor,
+                        max_int_norm_imgs=running_max,
+                        min_int_norm_imgs=running_min
                     )
                                         
                     n_samples_diffusion += x.shape[0] 
+                    
+                    # Check if the max and min values of the input images have changed
+                    running_max = max(running_max, x.max().item())
+                    running_min = min(running_min, x.min().item())
+                    
+                    # Keep track of the max and min in the current step
+                    step_max = max(step_max, x.max().item())
+                    step_min = min(step_min, x.min().item())
                     
                 if self.dae_loss_alpha > 0:
                     x_norm = self.norm(x)
@@ -221,12 +246,17 @@ class TTADAEandDDPM(TTADAE):
                     ddpm_loss += ddpm_loss.detach() * x.shape[0]
                     dae_loss += dae_loss.detach() * x.shape[0]
                     n_samples += x.shape[0]
+                    
+            # Update the max and min values with those of the current step
+            #  Only affects running max and min if it is to decrease their range
+            running_max = (1 - m) * step_max + m * running_max 
+            running_min = (1 - m) * step_min + m * running_min  
 
             if accumulate_over_volume:
                 self.optimizer.step()
 
-            ddpm_loss = (ddpm_loss / n_samples_diffusion).item()
-            dae_loss = (dae_loss / n_samples).item()
+            ddpm_loss = (ddpm_loss / n_samples_diffusion).item() if n_samples_diffusion > 0 else 0
+            dae_loss = (dae_loss / n_samples).item() if n_samples > 0 else 0
             tta_loss = ddpm_loss + dae_loss
             
             self.tta_losses.append(tta_loss)
@@ -267,14 +297,16 @@ class TTADAEandDDPM(TTADAE):
         img,
         seg,
         minibatch_size: int = 2,
-        ddpm_reweight_factor: float = 1
+        ddpm_reweight_factor: float = 1,
+        min_int_norm_imgs: float = 0,
+        max_int_norm_imgs: float = 1
         ) -> torch.Tensor:
         
         # Normalize the input image between 0 and 1, (required by the DDPM)
         img = du.normalize_min_max(
             img,
-            min=self.min_int_norm_imgs, 
-            max=self.max_int_norm_imgs
+            min=min_int_norm_imgs, 
+            max=max_int_norm_imgs
             )
         
         # if img.max() > 1 or img.min() < 0:
@@ -316,12 +348,11 @@ class TTADAEandDDPM(TTADAE):
             ddpm_loss_value += ddpm_loss.detach()
                         
         return ddpm_loss_value
-
+    
     def _define_custom_wandb_metrics(self):
-        wandb.define_metric("custom_step")
         wandb.define_metric("custom_step")
         wandb.define_metric('ddpm_loss/*', step_metric='custom_step')
         wandb.define_metric('dae_loss/*', step_metric='custom_step')
         wandb.define_metric('tta_loss/*', step_metric='custom_step')
-        
+        wandb.define_metric('dice_score_fg/*', step_metric='custom_step')
     
