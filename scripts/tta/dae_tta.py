@@ -6,6 +6,8 @@ import wandb
 import torch
 from torch.utils.data import Subset
 import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
 
 sys.path.append(os.path.normpath(os.path.join(
     os.path.dirname(__file__), '..', '..')))
@@ -49,6 +51,7 @@ def preprocess_cmd_args() -> argparse.Namespace:
     parser.add_argument('--learning_rate', type=float, help='Learning rate for optimizer. Default: 1e-4')
     parser.add_argument('--batch_size', type=int, help='Batch size for tta. Default: 4')
     parser.add_argument('--num_workers', type=int, help='Number of workers for dataloader. Default: 0')
+    parser.add_argument('--calculate_dice_every', type=int, help='Calculate dice every n steps. Default: 25')
     parser.add_argument('--seed', type=int, help='Seed for random number generators. Default: 0')   
     parser.add_argument('--device', type=str, help='Device to use for tta. Default cuda', )
     parser.add_argument('--save_checkpoints', type=lambda s: s.strip().lower() == 'true',
@@ -57,6 +60,7 @@ def preprocess_cmd_args() -> argparse.Namespace:
     # Dataset and its transformations to use for TTA
     # ---------------------------------------------------:
     parser.add_argument('--dataset', type=str, help='Name of dataset to use for tta. Default: USZ')
+    parser.add_argument('--split', type=str, help='Name of split to use for tta. Default: test')
     parser.add_argument('--n_classes', type=int, help='Number of classes in dataset. Default: 21')
     parser.add_argument('--image_size', type=int, nargs='+', help='Size of images in dataset. Default: [560, 640, 160]')
     parser.add_argument('--resolution_proc', type=float, nargs='+', help='Resolution of images in dataset. Default: [0.3, 0.3, 0.6]')
@@ -124,7 +128,7 @@ if __name__ == '__main__':
     # :=========================================================================:
     dataset_config, tta_config = get_configuration_arguments()
     
-    tta_mode                = tta_config['tta_mode']
+    tta_mode                = 'dae'
     dae_dir                 = tta_config[tta_mode]['dae_dir']
     seg_dir                 = tta_config[tta_mode]['seg_dir']
     
@@ -165,6 +169,7 @@ if __name__ == '__main__':
     seed_everything(seed)
     device                 = define_device(device)
     dataset                = tta_config['dataset']
+    split                  = tta_config['split']
     n_classes              = dataset_config[dataset]['n_classes']
     bg_suppression_opts    = tta_config[tta_mode]['bg_suppression_opts']
     aug_params             = tta_config[tta_mode]['augmentation']
@@ -172,7 +177,7 @@ if __name__ == '__main__':
     test_dataset, = get_datasets(
         paths           = dataset_config[dataset]['paths_processed'],
         paths_original  = dataset_config[dataset]['paths_original'],
-        splits          = ['test'],
+        splits          = [split],
         image_size      = tta_config['image_size'],
         resolution_proc = dataset_config[dataset]['resolution_proc'],
         dim_proc        = dataset_config[dataset]['dim'],
@@ -281,6 +286,8 @@ if __name__ == '__main__':
         
     dice_scores = torch.zeros((len(indices_per_volume), n_classes))
     
+    dice_per_vol = {}
+    
     for i in range(start_idx, stop_idx):
 
         indices = indices_per_volume[i]
@@ -290,7 +297,7 @@ if __name__ == '__main__':
 
         dae_tta.load_state_dict_norm(norm_state_dict)
 
-        norm, norm_dict, metrics_best = dae_tta.tta(
+        norm, norm_dict, metrics_best, dice_scores_wrt_gt = dae_tta.tta(
             volume_dataset = volume_dataset,
             dataset_name = dataset,
             n_classes =n_classes,
@@ -317,12 +324,31 @@ if __name__ == '__main__':
             volume_dataset = volume_dataset,
             dataset_name = dataset,
             index = i,
+            iteration=num_steps,
             n_classes = n_classes,
             batch_size = batch_size,
             num_workers = num_workers,
             bg_suppression_opts = bg_suppression_opts,
             device = device,
             logdir = logdir,
+        )
+        
+        dice_scores_wrt_gt[num_steps] = dice_scores[i, :].mean().item() 
+        
+        dice_per_vol[i] = dice_scores_wrt_gt
+        
+        # Store csv of dice_scores
+        dice_per_vol_df = pd.DataFrame(dice_per_vol).add_prefix('vol_')
+        dice_per_vol_df.to_csv(os.path.join(
+            logdir, 
+            f'dice_scores_{dataset}_per_step_'
+            f'start_vol_{start_idx}_stop_vol_{stop_idx}.csv')
+        )
+        
+        write_to_csv(
+            os.path.join(logdir, f'scores_{dataset}_last_iteration.csv'),
+            np.hstack([[[f'volume_{i:02d}']], dice_scores[None, i, :].numpy()]),
+            mode='a',
         )
 
         write_to_csv(
@@ -360,9 +386,28 @@ if __name__ == '__main__':
                 np.hstack([[[f'volume_{i:02d}']], scores.numpy()]),
                 mode='a',
             )
-
+            
     print(f'Overall mean dice (only foreground): {dice_scores[:, 1:].mean()}')
 
+    # Log the dice scores history over the volumes
+    # :=========================================================================:
+    # plot the mean and std confidence interval of the dice scores over the volumes
+        
+    plt.errorbar(
+        x=dice_per_vol_df.index.values,
+        y=dice_per_vol_df.mean(axis=1).values,
+        yerr=dice_per_vol_df.mean(axis=1).values, 
+        fmt='-x',
+    )
+    
+    plt.xlabel('Step')
+    plt.ylabel('Dice score aggregated over volumes')
+    plt.title('Dice score (foreground only) aggregated over volumes vs TTA step')
+    plt.savefig(os.path.join(logdir, 'Dice score aggregated over volumes vs TTA step.png'))    
+    plt.close()
+    
     if wandb_log:
+        for step, mean_dice_over_vols in dice_per_vol_df.mean(axis=1).items():
+            wandb.log({f'mean_dice_over_vols': mean_dice_over_vols}, step=int(step))
+    
         wandb.finish()
-

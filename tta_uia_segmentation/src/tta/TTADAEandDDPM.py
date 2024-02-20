@@ -220,7 +220,7 @@ class TTADAEandDDPM(TTADAE):
                         x_cond = y_gt
                     elif self.use_y_pred_for_ddpm_loss:
                         x_norm_bg_supp = background_suppression(x_norm, bg_mask, bg_suppression_opts_tta)
-                        x_cond = self.seg(x_norm_bg_supp)
+                        x_cond, _  = self.seg(x_norm_bg_supp)
                     else:
                         # Uses the pseudo label for the DDPM loss
                         x_cond = y_pl
@@ -352,8 +352,6 @@ class TTADAEandDDPM(TTADAE):
         # Map seg to a single channel and normalize between 0 and 1
         n_classes = seg.shape[1]
         seg = du.onehot_to_class(seg)
-        # assert torch.isin(seg, torch.tensor(list(range(n_classes)), device=seg.device)).all()
-        # print(f'DEBUG delete me: values: {seg.unique().tolist()}') 
         seg = seg.float() / (n_classes - 1)
         
         # The DDPM is memory intensive, accumulate gradients over minibatches
@@ -374,7 +372,7 @@ class TTADAEandDDPM(TTADAE):
                         
         return ddpm_loss_value
     
-    def _define_custom_wandb_metrics(self):
+    def _define_custom_wandb_metrics(self, ):
         wandb.define_metric(f'tta_step')
         wandb.define_metric(f'ddpm_loss/*', step_metric=f'tta_step')
         wandb.define_metric(f'dae_loss/*', step_metric=f'tta_step')

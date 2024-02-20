@@ -418,8 +418,12 @@ if __name__ == '__main__':
         
         # Store csv of dice_scores
         dice_per_vol_df = pd.DataFrame(dice_per_vol).add_prefix('vol_')
-        dice_per_vol_df.to_csv(os.path.join(logdir, f'dice_scores_{dataset}_per_step.csv'))
-        
+        dice_per_vol_df.to_csv(os.path.join(
+            logdir, 
+            f'dice_scores_{dataset}_per_step_'
+            f'start_vol_{start_idx}_stop_vol_{stop_idx}.csv')
+        )
+                
         write_to_csv(
             os.path.join(logdir, f'scores_{dataset}_last_iteration.csv'),
             np.hstack([[[f'volume_{i:02d}']], dice_scores[None, i, :].numpy()]),
@@ -475,8 +479,8 @@ if __name__ == '__main__':
     plt.close()
     
     if wandb_log:
-        for step, mean_dice_over_vols in dice_per_vol_df.mean().items():
-            wandb.log({f'mean_dice_over_vols_{step}': mean_dice_over_vols}, step=step)
+        for step, mean_dice_over_vols in dice_per_vol_df.mean(axis=1).items():
+            wandb.log({f'mean_dice_over_vols': mean_dice_over_vols}, step=int(step))
     
         wandb.finish()
 

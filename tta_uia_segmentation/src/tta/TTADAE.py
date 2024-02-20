@@ -204,7 +204,10 @@ class TTADAE:
             self.tta_losses.append((tta_loss / n_samples).item())
             
             if self.wandb_log:
-                wandb.log({f'tta_loss/img_{index}': self.tta_losses[-1]}, step=step)
+                wandb.log({
+                    f'tta_loss/img_{index}': self.tta_losses[-1],
+                    'tta_step': step
+                    })
 
         if save_checkpoints:
             os.makedirs(os.path.join(logdir, 'checkpoints'), exist_ok=True)
@@ -225,8 +228,10 @@ class TTADAE:
             header=['tta_score'],
             mode='w',
         )
+        
+        dice_scores = {i * calculate_dice_every: score for i, score in enumerate(self.test_scores)}
 
-        return self.norm, self.norm_dict, self.metrics_best
+        return self.norm, self.norm_dict, self.metrics_best, dice_scores
 
     @torch.inference_mode()
     def test_volume(

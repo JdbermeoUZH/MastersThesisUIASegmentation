@@ -9,6 +9,7 @@ conda activate /scratch_net/biwidl319/jbermeo/GNN-Domain-Generalization-main/net
 python dae_and_diffusion_tta.py \
  /scratch_net/biwidl319/jbermeo/MastersThesisUIASegmentation/config/datasets.yaml \
  /scratch_net/biwidl319/jbermeo/MastersThesisUIASegmentation/config/tta.yaml \
- --start 0 \
- --stop 2 \
  "$@"  
+#  --start 0 \
+#  --stop 2 \
+
