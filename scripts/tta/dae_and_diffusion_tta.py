@@ -64,6 +64,7 @@ def preprocess_cmd_args() -> argparse.Namespace:
     parser.add_argument('--max_t_diffusion_tta', type=int, help='Maximum value for diffusion time. Default: 1000')       
     parser.add_argument('--use_y_pred_for_ddpm_loss', type=lambda s: s.strip().lower() == 'true', help='Whether to use predicted segmentation as conditional for DDPM. Default: True')
     parser.add_argument('--use_x_cond_gt', type=lambda s: s.strip().lower() == 'true', help='Whether to use ground truth segmetnation as conditional for DDPM. ONLY FOR DEBUGGING. Default: False')
+    parser.add_argument('--minibatch_size_ddpm', type=int, help='Minibatch size for DDPM. Default: 2')
     
     # DAE and Atlas params
     parser.add_argument('--alpha', type=float, help='Proportion of how much better the dice of the DAE pseudolabel and predicted segmentation'
@@ -326,7 +327,7 @@ if __name__ == '__main__':
     const_aug_per_volume        = tta_config[tta_mode]['const_aug_per_volume']
     accumulate_over_volume      = tta_config[tta_mode]['accumulate_over_volume']
     calculate_dice_every        = tta_config[tta_mode]['calculate_dice_every']
-    
+    minibatch_size_ddpm         = tta_config[tta_mode]['minibatch_size_ddpm']
 
     if wandb_log:
         wandb.watch([norm], log='all', log_freq=1)
@@ -388,6 +389,7 @@ if __name__ == '__main__':
             bg_suppression_opts_tta = bg_suppression_opts_tta,
             num_steps = num_steps,
             batch_size = batch_size,
+            minibatch_size_ddpm=minibatch_size_ddpm,
             num_workers=num_workers,
             calculate_dice_every = calculate_dice_every,
             update_dae_output_every = update_dae_output_every,

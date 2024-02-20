@@ -79,6 +79,7 @@ class TTADAEandDDPM(TTADAE):
         bg_suppression_opts_tta: dict,
         num_steps: int,
         batch_size: int,
+        minibatch_size_ddpm: int,
         num_workers: int,
         calculate_dice_every: int,
         update_dae_output_every: int,
@@ -228,7 +229,7 @@ class TTADAEandDDPM(TTADAE):
                     ddpm_loss = self.calculate_ddpm_gradients(
                         img,
                         x_cond,
-                        minibatch_size=2,
+                        minibatch_size=minibatch_size_ddpm,
                         ddpm_reweight_factor=ddpm_reweigh_factor,
                         max_int_norm_imgs=running_max,
                         min_int_norm_imgs=running_min
@@ -334,8 +335,8 @@ class TTADAEandDDPM(TTADAE):
             max=max_int_norm_imgs
             )
         
-        # if img.max() > 1 or img.min() < 0:
-        #     print(f'WARNING: img.max()={img.max()}, img.min()={img.min()}')
+        if img.max() > 1 or img.min() < 0:
+            print(f'WARNING: img.max()={img.max()}, img.min()={img.min()}')
         
         # Upsample the segmentation mask to the same size as the input image
         rescale_factor = np.array(img.shape) / np.array(seg.shape)
@@ -347,7 +348,6 @@ class TTADAEandDDPM(TTADAE):
             seg = F.interpolate(seg, scale_factor=rescale_factor, mode='trilinear')
             seg = (seg > 0.5).float()                
             seg = seg.squeeze(0).permute(1, 0, 2, 3)
-        # assert torch.isin(seg, torch.tensor([0, 1], device=seg.device)).all()
         
         # Map seg to a single channel and normalize between 0 and 1
         n_classes = seg.shape[1]
