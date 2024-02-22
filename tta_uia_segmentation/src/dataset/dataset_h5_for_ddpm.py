@@ -52,9 +52,9 @@ def get_datasets(
 class DatasetInMemoryForDDPM(DatasetInMemory):
     def __init__(
         self,
-        norm: torch.nn.Module,
-        device,
+        norm: Optional[torch.nn.Module],
         paths_normalized_h5: dict[str, str],
+        use_original_imgs: bool = False,
         concatenate_along_channel: bool = False,
         normalize: str = 'min_max',
         one_hot_encode: bool = True, 
@@ -62,11 +62,16 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
         *args,
         **kwargs,
     ):
+        
+        if norm is None and not use_original_imgs:
+            kwargs['paths'] = paths_normalized_h5
+        
         super().__init__(*args, **kwargs)
+        
         self.norm = norm
-        self.norm.eval()
-        self.norm.requires_grad_(False)
-        self.device = device
+        if self.norm is not None:
+            self.norm.eval()
+            self.norm.requires_grad_(False)
         
         self.normalized_img_path = paths_normalized_h5[self.split]
         
@@ -77,6 +82,8 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
         
         if intensity_value_range is not None:
             self.images_min, self.images_max = intensity_value_range
+        elif use_original_imgs:
+            self.images_min, self.images_max = self._find_min_max_in_original_imgs()
         else:
             self.images_min, self.images_max = self._find_min_max_in_normalized_imgs()
         
@@ -98,12 +105,15 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
                 rng=np.random.default_rng(seed),
             )
             
-        images = torch.from_numpy(images).float().to(self.device)
-        labels = torch.from_numpy(labels).float().to(self.device)
+        images = torch.from_numpy(images).float()
+        labels = torch.from_numpy(labels).float()
     
-        # Use the normalization model to normalize the images
-        with torch.inference_mode():
-            images = self.norm(images[None, ...]).squeeze(0)
+        # Use the normalization model to normalize the images, if one is given
+        if self.norm is not None:
+            with torch.inference_mode():
+                images = images.to(self.norm.device)
+                labels = labels.to(self.norm.device)
+                images = self.norm(images[None, ...]).squeeze(0)
 
         # Normalize image and label map to [0, 1]
         if self.normalize == 'min_max':
@@ -146,6 +156,9 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
             images_max = images.max()
             
         return images_min, images_max 
+
+    def _find_min_max_in_original_imgs(self):
+        return self.images.min(), self.images.max() 
     
     # Create function that samples cuts based on a given volume and cut id
     def get_related_images(

@@ -89,6 +89,8 @@ class TTADAEandDDPM(TTADAE):
         save_checkpoints: bool,
         device: str,
         logdir: Optional[str] = None,        
+        accumulate_grad_every_n_batches: Optional[int] = None,
+        running_min_max_momentum: float = 0.8,
     ):       
         """_summary_
 
@@ -97,6 +99,13 @@ class TTADAEandDDPM(TTADAE):
         volume_dataset : DatasetInMemory
             Dataset containing slices of a single volume on which to perform TTA.
         """
+        
+        if accumulate_grad_every_n_batches is None and accumulate_over_volume:
+            raise ValueError('`accumulate_grad_every_n_batches` cannot be used when `accumulate_over_volume` is True')
+        
+        accumulate_grad_every_n_batches = accumulate_grad_every_n_batches \
+            if accumulate_grad_every_n_batches is not None else np.inf
+        
         self.tta_losses = []
         self.test_scores = []
             
@@ -126,7 +135,8 @@ class TTADAEandDDPM(TTADAE):
         
         running_max = self.max_int_norm_imgs
         running_min = self.min_int_norm_imgs
-        m = 0.8
+        m = running_min_max_momentum
+        batch_count = 0
         
         for step in tqdm(range(num_steps)):
             
@@ -194,16 +204,24 @@ class TTADAEandDDPM(TTADAE):
             #  times less it is used than the dae loss or if averaged over entire volume
             ddpm_reweigh_factor = (1 / len(b_i_for_diffusion_loss)) * \
                 (1 if accumulate_over_volume else len(volume_dataloader))  
+                
+            ddpm_reweigh_factor = ddpm_reweigh_factor * (1 / accumulate_grad_every_n_batches) \
+                if accumulate_grad_every_n_batches != np.inf else ddpm_reweigh_factor
             
             # Adapting to the target distribution
             # :===========================================:
             
             # To avoid memory issues, we compute x_norm twice to separate the gradient
             #  computation for the DAE and DDPM losses. 
+            zero_grads = False
             for b_i, ((x, y_gt,_,_, bg_mask), (y_pl,)) in enumerate(zip(volume_dataloader, label_dataloader)):
-
-                if not accumulate_over_volume:
+                
+                take_update_step = not accumulate_over_volume and \
+                    batch_count % accumulate_grad_every_n_batches == 0 and batch_count > 0
+                
+                if zero_grads:
                     self.optimizer.zero_grad()
+                    zero_grads = False
 
                 x = x.to(device).float()
                 y_pl = y_pl.to(device)
@@ -263,13 +281,16 @@ class TTADAEandDDPM(TTADAE):
         
                     dae_loss.backward()
             
-                if not accumulate_over_volume:
-                    self.optimizer.step()                      
+                if take_update_step:
+                    self.optimizer.step()  
+                    zero_grads = True                       
 
                 with torch.no_grad():
                     ddpm_loss += ddpm_loss.detach() * x.shape[0]
                     dae_loss += dae_loss.detach() * x.shape[0]
                     n_samples += x.shape[0]
+                    
+                batch_count += 1
                     
             # Update the max and min values with those of the current step
             #  Only affects running max and min if it is to decrease their range

@@ -177,19 +177,22 @@ if __name__ == '__main__':
     norm_dir            = train_config[train_type]['norm_dir']   
                             
     # Load normalization model used in the segmentation network
-    norm = load_norm_from_configs_and_cpt(
-        model_params_norm=model_params_norm,
-        cpt_fp=os.path.join(norm_dir, train_params_norm['checkpoint_best']),
-        device='cpu'
-    )
+    if train_config[train_type]['norm_with_nn_on_fly']:
+        norm = load_norm_from_configs_and_cpt(
+            model_params_norm=model_params_norm,
+            cpt_fp=os.path.join(norm_dir, train_params_norm['checkpoint_best']),
+            device='cpu'
+        )
+    else: 
+        norm = None
     
     # Dataset definition
     train_dataset, val_dataset = get_datasets(
         splits          = ['train', 'val'],
         norm            = norm,
-        device          = 'cpu',   
         paths           = dataset_config[dataset]['paths_processed'],
         paths_normalized_h5 = dataset_config[dataset]['paths_normalized_with_nn'],
+        use_original_imgs = train_config[train_type]['use_original_imgs'],
         one_hot_encode  = train_config[train_type]['one_hot_encode'],
         normalize       = train_config[train_type]['normalize'],
         paths_original  = dataset_config[dataset]['paths_original'],
@@ -203,7 +206,6 @@ if __name__ == '__main__':
         load_original   = False,
     )
     print('Dataloaders defined')
-    a = train_dataset[125]
     
     # Define the denoiser model diffusion pipeline
     # :=========================================================================:

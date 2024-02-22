@@ -328,6 +328,7 @@ if __name__ == '__main__':
     accumulate_over_volume      = tta_config[tta_mode]['accumulate_over_volume']
     calculate_dice_every        = tta_config[tta_mode]['calculate_dice_every']
     minibatch_size_ddpm         = tta_config[tta_mode]['minibatch_size_ddpm']
+    accumulate_grad_every_n_batches = tta_config[tta_mode]['accumulate_grad_every_n_batches']
 
     if wandb_log:
         wandb.watch([norm], log='all', log_freq=1)
@@ -390,6 +391,7 @@ if __name__ == '__main__':
             num_steps = num_steps,
             batch_size = batch_size,
             minibatch_size_ddpm=minibatch_size_ddpm,
+            accumulate_grad_every_n_batches = accumulate_grad_every_n_batches,
             num_workers=num_workers,
             calculate_dice_every = calculate_dice_every,
             update_dae_output_every = update_dae_output_every,

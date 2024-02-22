@@ -375,9 +375,11 @@ class TTADAE:
         print(f'DEBUG: dice_denoised: {dice_denoised}, dice_atlas: {dice_atlas}')  # TODO: Delete me
         
         if dice_denoised / dice_atlas >= alpha and dice_atlas >= beta:
+            print('Using DAE output as pseudo label')
             target_labels = dae_output
             dice = dice_denoised
         else:
+            print('Using Atlas as pseudo label')
             target_labels = self.atlas
             dice = dice_atlas
 
