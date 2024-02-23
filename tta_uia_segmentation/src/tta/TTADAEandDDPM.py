@@ -210,6 +210,7 @@ class TTADAEandDDPM(TTADAE):
                     self.optimizer.zero_grad()
 
                 x = x.to(device).float()
+                
                 y_pl = y_pl.to(device)
                 y_gt = y_gt.to(device)
                 
@@ -230,7 +231,7 @@ class TTADAEandDDPM(TTADAE):
                         x_cond = y_gt
                     elif self.use_y_pred_for_ddpm_loss:
                         x_norm_bg_supp = background_suppression(x_norm, bg_mask, bg_suppression_opts_tta)
-                        x_cond, _  = self.seg(x_norm_bg_supp)
+                        x_cond, _ = self.seg(x_norm_bg_supp)
                     else:
                         # Uses the pseudo label for the DDPM loss
                         x_cond = y_pl
@@ -244,7 +245,7 @@ class TTADAEandDDPM(TTADAE):
                         min_int_norm_imgs=running_min
                     )
                                     
-                    # Check if the max and min values of the input images have changed
+                    # Check if the max and min values of the input images have changed           
                     running_max = max(running_max, img.max().item())
                     running_min = min(running_min, img.min().item())
                     

@@ -1,5 +1,5 @@
-start_new_exp: False
-wandb_log: True
+start_new_exp: True
+wandb_log: False
 dataset: hcp_t2   # brain: hcp_t1, hcp_t2, abide_caltech, abide_stanford; wmh: nuhs, umc, vu
 split:   test       # val, test
 start: null       # Index of the test dataset to start at
@@ -20,7 +20,7 @@ bg_suppression_opts:
   hole_filling: True
 
 dae:
-  wandb_project: mt-tta-brain-hcp_t2
+  wandb_project: # mt-tta-brain-hcp_t2
   logdir: /scratch_net/biwidl319/jbermeo/logs/brain/sota/baselines/2_19/dae_only_orig/test_split_lr_1em3_no_grad_acc
   dae_dir: /scratch_net/biwidl319/jbermeo/data/models/brain/dae/hcp_t1
   seg_dir: /scratch_net/biwidl319/jbermeo/data/models/brain/segmentation/hcp_t1/bg_supp
@@ -64,7 +64,7 @@ dae:
 
 
 dae_and_diffusion:
-  wandb_project: mt-tta-dae_and_diffusion_tta-baselines
+  wandb_project: mt-tta-dae_and_diffusion_tta-baselines # mt-tta-brain-hcp_t2
   logdir: /scratch_net/biwidl319/jbermeo/logs/brain/sota/dae_and_ddpm/2_21/ddpm(1.0)_and_atlas(0.5)_lr_1em3_no_grad_acc_frac_0.25_bs_16_y_dae_or_atlas_beta_0.25
   dae_dir: /scratch_net/biwidl319/jbermeo/data/models/brain/dae/hcp_t1
   seg_dir: /scratch_net/biwidl319/jbermeo/data/models/brain/segmentation/hcp_t1/bg_supp
