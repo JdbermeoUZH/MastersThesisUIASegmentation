@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 sys.path.append(os.path.normpath(os.path.join(
     os.path.dirname(__file__), '..', '..')))
 
-from tta_uia_segmentation.src.tta import TTADAEandDDPM
+from tta_uia_segmentation.src.tta import DiffusionTTA
 from tta_uia_segmentation.src.dataset.dataset_in_memory import get_datasets
 from tta_uia_segmentation.src.models import Normalization, UNet
 from tta_uia_segmentation.src.models.io import load_ddpm_from_configs_and_cpt, load_norm_and_seg_from_configs_and_cpt
@@ -41,7 +41,6 @@ def preprocess_cmd_args() -> argparse.Namespace:
     parser.add_argument('--start', required=False, type=int, help='starting volume index to be used for testing')
     parser.add_argument('--stop', required=False, type=int, help='stopping volume index to be used for testing (index not included)')
     parser.add_argument('--logdir', type=str, help='Path to directory where logs and checkpoints are saved. Default: logs')  
-    parser.add_argument('--dae_dir', type=str, help='Path to directory where DAE checkpoints are saved')
     parser.add_argument('--seg_dir', type=str, help='Path to directory where segmentation checkpoints are saved')
     parser.add_argument('--wandb_log', type=lambda s: s.strip().lower() == 'true', help='Log tta to wandb. Default: False.')
     parser.add_argument('--start_new_exp', type=lambda s: s.strip().lower() == 'true', help='Start a new wandb experiment. Default: False')
@@ -54,23 +53,11 @@ def preprocess_cmd_args() -> argparse.Namespace:
     parser.add_argument('--learning_rate', type=float, help='Learning rate for optimizer. Default: 1e-4')
     parser.add_argument('--batch_size', type=int, help='Batch size for tta. Default: 4')
     parser.add_argument('--num_workers', type=int, help='Number of workers for dataloader. Default: 0')
-    parser.add_argument('--accumulate_over_volume', type=lambda s: s.strip().lower() == 'true', help='Whether to accumulate gradients over volume. Default: False')
-    
-    parser.add_argument('--dddpm_loss_beta', type=float, help='Weight for DDPM loss. Default: 1.0')
-    parser.add_argument('--dae_loss_alpha', type=float, help='Weight for DAE loss. Default: 1.0')
-    parser.add_argument('--frac_vol_diffusion_tta', type=float, help='Fraction of volume to diffuse. Default: 0.5')
     
     # DPM params
     parser.add_argument('--min_t_diffusion_tta', type=int, help='Minimum value for diffusion time. Default: 0')
     parser.add_argument('--max_t_diffusion_tta', type=int, help='Maximum value for diffusion time. Default: 1000')       
-    parser.add_argument('--use_y_pred_for_ddpm_loss', type=lambda s: s.strip().lower() == 'true', help='Whether to use predicted segmentation as conditional for DDPM. Default: True')
-    parser.add_argument('--use_x_cond_gt', type=lambda s: s.strip().lower() == 'true', help='Whether to use ground truth segmetnation as conditional for DDPM. ONLY FOR DEBUGGING. Default: False')
     parser.add_argument('--minibatch_size_ddpm', type=int, help='Minibatch size for DDPM. Default: 2')
-    
-    # DAE and Atlas params
-    parser.add_argument('--alpha', type=float, help='Proportion of how much better the dice of the DAE pseudolabel and predicted segmentation'
-                                                    'should be than the dice of the Atlas pseudolabel. Default: 1')
-    parser.add_argument('--beta', type=float, help='Minimum dice of the Atlas pseudolabel and the predicted segmentation. Default: 0.25')
     
     # Probably not used arguments
     parser.add_argument('--seed', type=int, help='Seed for random number generators. Default: 0')   
@@ -81,7 +68,6 @@ def preprocess_cmd_args() -> argparse.Namespace:
     # Dataset and its transformations to use for TTA
     # ---------------------------------------------------:
     parser.add_argument('--dataset', type=str, help='Name of dataset to use for tta. Default: USZ')
-    parser.add_argument('--split', type=str, help='Name of split to use for tta. Default: test')
     
     # Probably not used arguments
     parser.add_argument('--n_classes', type=int, help='Number of classes in dataset. Default: 21')
@@ -128,15 +114,15 @@ def get_configuration_arguments() -> tuple[dict, dict]:
     tta_config = load_config(args.tta_config_file)
     tta_config = rewrite_config_arguments(tta_config, args, 'tta')
     
-    tta_config['dae_and_diffusion'] = rewrite_config_arguments(
-        tta_config['dae_and_diffusion'], args, 'tta, dae_and_diffusion')
+    tta_config['diffusion_tta'] = rewrite_config_arguments(
+        tta_config['diffusion_tta'], args, 'tta, diffusion_tta')
     
-    tta_config['dae_and_diffusion']['augmentation'] = rewrite_config_arguments(
-        tta_config['dae_and_diffusion']['augmentation'], args, 'tta, dae_and_diffusion, augmentation',
+    tta_config['diffusion_tta']['augmentation'] = rewrite_config_arguments(
+        tta_config['diffusion_tta']['augmentation'], args, 'tta, diffusion_tta, augmentation',
         prefix_to_remove='aug_')
     
-    tta_config['dae_and_diffusion']['bg_suppression_opts'] = rewrite_config_arguments(
-        tta_config['dae_and_diffusion']['bg_suppression_opts'], args, 'tta, dae_and_diffusion, bg_suppression_opts',
+    tta_config['diffusion_tta']['bg_suppression_opts'] = rewrite_config_arguments(
+        tta_config['diffusion_tta']['bg_suppression_opts'], args, 'tta, diffusion_tta, bg_suppression_opts',
         prefix_to_remove='bg_supression_')
     
     return dataset_config, tta_config
@@ -151,15 +137,10 @@ if __name__ == '__main__':
     # :=========================================================================:
     dataset_config, tta_config = get_configuration_arguments()
     
-    tta_mode                = 'dae_and_diffusion'
-    dae_dir                 = tta_config[tta_mode]['dae_dir']
+    tta_mode                = 'diffusion_tta'
     seg_dir                 = tta_config[tta_mode]['seg_dir']
     ddpm_dir                = tta_config[tta_mode]['ddpm_dir']
-    
-    params_dae              = load_config(os.path.join(dae_dir, 'params.yaml'))
-    model_params_dae        = params_dae['model']['dae']
-    train_params_dae        = params_dae['training']
-    
+        
     params_seg              = load_config(os.path.join(seg_dir, 'params.yaml'))
     model_params_norm       = params_seg['model']['normalization_2D']
     model_params_seg        = params_seg['model']['segmentation_2D']
@@ -172,9 +153,8 @@ if __name__ == '__main__':
     params                  = { 
                                'datset': dataset_config,
                                'model': {'norm': model_params_norm, 'seg': model_params_seg, 
-                                         'dae': model_params_dae, 'ddpm': model_params_ddpm},
-                               'training': {'seg': train_params_seg, 'dae': train_params_dae,
-                                            'ddpm': train_params_ddpm},
+                                         'ddpm': model_params_ddpm},
+                               'training': {'seg': train_params_seg, 'ddpm': train_params_ddpm},
                                'tta': tta_config
                                }
         
@@ -244,15 +224,6 @@ if __name__ == '__main__':
         n_dimensions            = model_params_seg['n_dimensions'] 
     ).to(device)
     
-    dae = UNet(
-        in_channels             = n_classes,
-        n_classes               = n_classes,
-        channels                = model_params_dae['channel_size'],
-        channels_bottleneck     = model_params_dae['channels_bottleneck'],
-        skips                   = model_params_dae['skips'],
-        n_dimensions            = model_params_dae['n_dimensions']
-    ).to(device)
-    
     ## Load their checkpoints
     # Segmentation network
     checkpoint = torch.load(os.path.join(seg_dir, train_params_seg['checkpoint_best']), 
@@ -260,14 +231,6 @@ if __name__ == '__main__':
     norm.load_state_dict(checkpoint['norm_state_dict'])
     seg.load_state_dict(checkpoint['seg_state_dict'])
     norm_state_dict = checkpoint['norm_state_dict']
-
-    # DAE
-    checkpoint = torch.load(os.path.join(dae_dir, train_params_dae['checkpoint_best']), 
-                            map_location=device)
-    dae.load_state_dict(checkpoint['dae_state_dict'])
-
-    checkpoint = torch.load(os.path.join(dae_dir, 'atlas.h5py'), map_location=device)
-    atlas = checkpoint['atlas']
 
     # DDPM
     ddpm = load_ddpm_from_configs_and_cpt(
@@ -284,57 +247,48 @@ if __name__ == '__main__':
     # Define the TTADAE object that does the test time adapatation
     # :=========================================================================:    
     learning_rate               = tta_config[tta_mode]['learning_rate']
-    dae_loss_alpha              = tta_config[tta_mode]['dae_loss_alpha']
-    ddpm_loss_beta              = tta_config[tta_mode]['dddpm_loss_beta']
-    frac_vol_diffusion_tta      = tta_config[tta_mode]['frac_vol_diffusion_tta']
+    learning_rate_norm          = tta_config[tta_mode]['learning_rate_norm']
+    learning_rate_seg           = tta_config[tta_mode]['learning_rate_seg']
+    learning_rate_ddpm          = tta_config[tta_mode]['learning_rate_ddpm']    
     min_t_diffusion_tta         = tta_config[tta_mode]['min_t_diffusion_tta']
     max_t_diffusion_tta         = tta_config[tta_mode]['max_t_diffusion_tta']
-    sampling_timesteps          = tta_config[tta_mode]['sampling_timesteps']
+    frac_vol_diffusion_tta      = tta_config[tta_mode]['frac_vol_diffusion_tta']
     min_max_int_norm_imgs       = tta_config[tta_mode]['min_max_int_norm_imgs']
-    use_x_norm_for_ddpm_loss    = tta_config[tta_mode]['use_x_norm_for_ddpm_loss']
-    use_y_pred_for_ddpm_loss    = tta_config[tta_mode]['use_y_pred_for_ddpm_loss']
-    use_x_cond_gt               = tta_config[tta_mode]['use_x_cond_gt']
+    fit_norm_params             = tta_config[tta_mode]['fit_norm_params']
+    fit_seg_params              = tta_config[tta_mode]['fit_seg_params']
+    fit_ddpm_params             = tta_config[tta_mode]['fit_ddpm_params']
     
-    tta = TTADAEandDDPM(
+    tta = DiffusionTTA(
         norm                    = norm,
         seg                     = seg,
-        dae                     = dae,
-        atlas                   = atlas,
         ddpm                    = ddpm,          
-        loss_func               = DiceLoss(),
         learning_rate           = learning_rate,
-        dae_loss_alpha          = dae_loss_alpha,
-        ddpm_loss_beta          = ddpm_loss_beta,
-        frac_vol_diffusion_tta  = frac_vol_diffusion_tta,
+        learning_rate_norm      = learning_rate_norm,
+        learning_rate_seg       = learning_rate_seg,
+        learning_rate_ddpm      = learning_rate_ddpm,
         min_t_diffusion_tta     = min_t_diffusion_tta,
         max_t_diffusion_tta     = max_t_diffusion_tta,
-        sampling_timesteps      = sampling_timesteps,
+        min_max_intensity_imgs  = min_max_int_norm_imgs,
+        frac_vol_diffusion_tta  = frac_vol_diffusion_tta,
+        fit_norm_params         = fit_norm_params,
+        fit_seg_params          = fit_seg_params,
+        fit_ddpm_params         = fit_ddpm_params,
         wandb_log               = wandb_log,
-        min_max_int_norm_imgs   = min_max_int_norm_imgs,
-        use_x_norm_for_ddpm_loss=use_x_norm_for_ddpm_loss,
-        use_y_pred_for_ddpm_loss=use_y_pred_for_ddpm_loss,
-        use_x_cond_gt           = use_x_cond_gt,
     )
     
     # Do TTA with a DAE
     # :=========================================================================:
+    original_algo               = tta_config[tta_mode]['original_algo']
     bg_suppression_opts_tta     = tta_config[tta_mode]['bg_suppression_opts']
-    alpha                       = tta_config[tta_mode]['alpha']
-    beta                        = tta_config[tta_mode]['beta']
-    rescale_factor              = train_params_dae['dae']['rescale_factor']
     num_steps                   = tta_config[tta_mode]['num_steps']
     batch_size                  = tta_config[tta_mode]['batch_size']
+    batch_size_ddpm             = tta_config[tta_mode]['batch_size_ddpm']
     num_workers                 = tta_config['num_workers']
-    save_checkpoints            = tta_config[tta_mode]['save_checkpoints']
-    update_dae_output_every     = tta_config[tta_mode]['update_dae_output_every']
-    dataset_repetition          = tta_config[tta_mode]['dataset_repetition']
     const_aug_per_volume        = tta_config[tta_mode]['const_aug_per_volume']
-    accumulate_over_volume      = tta_config[tta_mode]['accumulate_over_volume']
-    calculate_dice_every        = tta_config[tta_mode]['calculate_dice_every']
     minibatch_size_ddpm         = tta_config[tta_mode]['minibatch_size_ddpm']
 
     if wandb_log:
-        wandb.watch([norm], log='all', log_freq=1)
+        wandb.watch([norm, seg, ddpm], log='all', log_freq=1)
         
     indices_per_volume = test_dataset.get_volume_indices()
     
@@ -349,24 +303,6 @@ if __name__ == '__main__':
     print('start vol_idx:', start_idx)
     print('end vol_idx:', stop_idx)
     
-    if dae_loss_alpha > 0 and ddpm_loss_beta > 0:
-        if beta <= 1.0:
-            print(f'Using DAE {dae_loss_alpha: .5f} and DDPM {ddpm_loss_beta: .5f} for TTA')
-        else:
-            print(f'Using DDPM {ddpm_loss_beta: .5f} and ATLAS guided segmentation {dae_loss_alpha: .5f} for TTA')    
-        
-    elif dae_loss_alpha > 0:
-        if beta <= 1.0:
-            print(f'Using DAE {dae_loss_alpha: .5f} for TTA')
-        else: 
-            print(f'Using ATLAS guided segmentation {dae_loss_alpha: .5f} for TTA')
-            
-    elif ddpm_loss_beta > 0:
-        print(f'Using DDPM {ddpm_loss_beta} for TTA')
-        
-    else:
-        raise ValueError('Both dae_loss_alpha and ddpm_loss_beta are <= 0.'
-                         'Please specify at least one of them to be > 0')
         
     dice_scores = torch.zeros((len(indices_per_volume), n_classes))
     
@@ -378,115 +314,128 @@ if __name__ == '__main__':
         print(f'processing volume {i}')
 
         volume_dataset = Subset(test_dataset, indices)
-
-        tta.load_state_dict_norm(norm_state_dict)
-
-        norm, norm_dict, metrics_best, dice_scores_wrt_gt = tta.tta(
-            volume_dataset = volume_dataset,
-            dataset_name = dataset,
-            n_classes =n_classes,
-            index = i,
-            rescale_factor_dae = rescale_factor,
-            alpha = alpha,
-            beta = beta,
-            bg_suppression_opts = bg_suppression_opts,
-            bg_suppression_opts_tta = bg_suppression_opts_tta,
-            num_steps = num_steps,
-            batch_size = batch_size,
-            minibatch_size_ddpm=minibatch_size_ddpm,
-            num_workers=num_workers,
-            calculate_dice_every = calculate_dice_every,
-            update_dae_output_every = update_dae_output_every,
-            accumulate_over_volume = accumulate_over_volume,
-            dataset_repetition = dataset_repetition,
-            const_aug_per_volume = const_aug_per_volume,
-            save_checkpoints = save_checkpoints,
-            device=device,
-            logdir = logdir
-        )
         
-        dice_scores[i, :], _ = tta.test_volume(
-            volume_dataset = volume_dataset,
-            dataset_name = dataset,
-            index = i,
-            iteration = num_steps,
-            n_classes = n_classes,
-            batch_size = batch_size,
-            num_workers = num_workers,
-            bg_suppression_opts = bg_suppression_opts,
-            device = device,
-            logdir = logdir,
-        )
-        
-        dice_scores_wrt_gt[num_steps] = dice_scores[i, :].mean().item() 
-        
-        dice_per_vol[i] = dice_scores_wrt_gt
-        
-        # Store csv of dice_scores
-        dice_per_vol_df = pd.DataFrame(dice_per_vol).add_prefix('vol_')
-        dice_per_vol_df.to_csv(os.path.join(
-            logdir, 
-            f'dice_scores_{dataset}_per_step_'
-            f'start_vol_{start_idx}_stop_vol_{stop_idx}.csv')
-        )
-                
-        write_to_csv(
-            os.path.join(logdir, f'scores_{dataset}_last_iteration.csv'),
-            np.hstack([[[f'volume_{i:02d}']], dice_scores[None, i, :].numpy()]),
-            mode='a',
-        )
-
-        os.makedirs(os.path.join(logdir, 'optimal_metrics'), exist_ok=True)
-        dump_config(
-            os.path.join(logdir, 'optimal_metrics', f'{dataset}_{i:02d}.yaml'),
-            metrics_best,
-        )
-
-        for key in norm_dict.keys():
-            print(f'Model at minimum {key} = {metrics_best[key]}')
-
-            tta.load_state_dict_norm(norm_dict[key])
-            scores, _ = tta.test_volume(
-                volume_dataset=volume_dataset,
-                dataset_name=dataset,
-                index=i,
-                n_classes=n_classes,
-                batch_size=batch_size,
-                num_workers=num_workers,
-                appendix=f'_min_{key}',
-                bg_suppression_opts=bg_suppression_opts,
-                logdir=logdir,
-                device=device,
+        if original_algo:
+            print('Using the orginal Diffusion TTA algorithm')
+            tta.tta_original_algorithm(
+                volume_dataset = volume_dataset,
+                dataset_name = dataset,
+                n_classes = n_classes,
+                index = i,
+                bg_suppression_opts = bg_suppression_opts,
+                bg_suppression_opts_tta = bg_suppression_opts_tta,
+                num_steps = num_steps,
+                batch_size = batch_size,
+                batch_size_ddpm = batch_size_ddpm,
+                minibatch_size_ddpm = minibatch_size_ddpm,
+                num_workers = num_workers,
+                device = device,
+                logdir = logdir
             )
+            
+        else:
 
+            tta.load_state_dict_norm(norm_state_dict)
+
+            norm, norm_dict, metrics_best, dice_scores_wrt_gt = tta.tta(
+                volume_dataset = volume_dataset,
+                dataset_name = dataset,
+                n_classes =n_classes,
+                index = i,
+                bg_suppression_opts = bg_suppression_opts,
+                bg_suppression_opts_tta = bg_suppression_opts_tta,
+                num_steps = num_steps,
+                batch_size = batch_size,
+                minibatch_size_ddpm=minibatch_size_ddpm,
+                num_workers=num_workers,
+                const_aug_per_volume = const_aug_per_volume,
+                device = device,
+                logdir = logdir
+            )
+            
+            dice_scores[i, :], _ = tta.test_volume(
+                volume_dataset = volume_dataset,
+                dataset_name = dataset,
+                index = i,
+                iteration = num_steps,
+                n_classes = n_classes,
+                batch_size = batch_size,
+                num_workers = num_workers,
+                bg_suppression_opts = bg_suppression_opts,
+                device = device,
+                logdir = logdir,
+            )
+            
+            dice_scores_wrt_gt[num_steps] = dice_scores[i, :].mean().item() 
+            
+            dice_per_vol[i] = dice_scores_wrt_gt
+            
+            # Store csv of dice_scores
+            dice_per_vol_df = pd.DataFrame(dice_per_vol).add_prefix('vol_')
+            dice_per_vol_df.to_csv(os.path.join(
+                logdir, 
+                f'dice_scores_{dataset}_per_step_'
+                f'start_vol_{start_idx}_stop_vol_{stop_idx}.csv')
+            )
+                    
             write_to_csv(
-                os.path.join(logdir, f'scores_{dataset}_{key}.csv'),
-                np.hstack([[[f'volume_{i:02d}']], scores.numpy()]),
+                os.path.join(logdir, f'scores_{dataset}_last_iteration.csv'),
+                np.hstack([[[f'volume_{i:02d}']], dice_scores[None, i, :].numpy()]),
                 mode='a',
             )
 
-    print(f'Overall mean dice (only foreground): {dice_scores[:, 1:].mean()}')
-    
-    # Log the dice scores history over the volumes
-    # :=========================================================================:
-    # plot the mean and std confidence interval of the dice scores over the volumes
+            os.makedirs(os.path.join(logdir, 'optimal_metrics'), exist_ok=True)
+            dump_config(
+                os.path.join(logdir, 'optimal_metrics', f'{dataset}_{i:02d}.yaml'),
+                metrics_best,
+            )
+
+            for key in norm_dict.keys():
+                print(f'Model at minimum {key} = {metrics_best[key]}')
+
+                tta.load_state_dict_norm(norm_dict[key])
+                scores, _ = tta.test_volume(
+                    volume_dataset=volume_dataset,
+                    dataset_name=dataset,
+                    index=i,
+                    n_classes=n_classes,
+                    batch_size=batch_size,
+                    num_workers=num_workers,
+                    appendix=f'_min_{key}',
+                    bg_suppression_opts=bg_suppression_opts,
+                    logdir=logdir,
+                    device=device,
+                )
+
+                write_to_csv(
+                    os.path.join(logdir, f'scores_{dataset}_{key}.csv'),
+                    np.hstack([[[f'volume_{i:02d}']], scores.numpy()]),
+                    mode='a',
+                )
+
+    if not original_algo:
+        print(f'Overall mean dice (only foreground): {dice_scores[:, 1:].mean()}')
         
-    plt.errorbar(
-        x=dice_per_vol_df.index.values,
-        y=dice_per_vol_df.mean(axis=1).values,
-        yerr=dice_per_vol_df.mean(axis=1).values, 
-        fmt='-x',
-    )
-    
-    plt.xlabel('Step')
-    plt.ylabel('Dice score aggregated over volumes')
-    plt.title('Dice score (foreground only) aggregated over volumes vs TTA step')
-    plt.savefig(os.path.join(logdir, 'Dice score aggregated over volumes vs TTA step.png'))    
-    plt.close()
-    
-    if wandb_log:
-        for step, mean_dice_over_vols in dice_per_vol_df.mean(axis=1).items():
-            wandb.log({f'mean_dice_over_vols': mean_dice_over_vols}, step=int(step))
-    
-        wandb.finish()
+        # Log the dice scores history over the volumes
+        # :=========================================================================:
+        # plot the mean and std confidence interval of the dice scores over the volumes
+            
+        plt.errorbar(
+            x=dice_per_vol_df.index.values,
+            y=dice_per_vol_df.mean(axis=1).values,
+            yerr=dice_per_vol_df.mean(axis=1).values, 
+            fmt='-x',
+        )
+        
+        plt.xlabel('Step')
+        plt.ylabel('Dice score aggregated over volumes')
+        plt.title('Dice score (foreground only) aggregated over volumes vs TTA step')
+        plt.savefig(os.path.join(logdir, 'Dice score aggregated over volumes vs TTA step.png'))    
+        plt.close()
+        
+        if wandb_log:
+            for step, mean_dice_over_vols in dice_per_vol_df.mean(axis=1).items():
+                wandb.log({f'mean_dice_over_vols': mean_dice_over_vols}, step=int(step))
+        
+            wandb.finish()
 

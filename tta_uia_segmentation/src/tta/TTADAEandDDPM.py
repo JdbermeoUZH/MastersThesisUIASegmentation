@@ -89,7 +89,6 @@ class TTADAEandDDPM(TTADAE):
         save_checkpoints: bool,
         device: str,
         logdir: Optional[str] = None,        
-        accumulate_grad_every_n_batches: Optional[int] = None,
         running_min_max_momentum: float = 0.8,
     ):       
         """_summary_
@@ -99,12 +98,6 @@ class TTADAEandDDPM(TTADAE):
         volume_dataset : DatasetInMemory
             Dataset containing slices of a single volume on which to perform TTA.
         """
-        
-        if accumulate_grad_every_n_batches is None and accumulate_over_volume:
-            raise ValueError('`accumulate_grad_every_n_batches` cannot be used when `accumulate_over_volume` is True')
-        
-        accumulate_grad_every_n_batches = accumulate_grad_every_n_batches \
-            if accumulate_grad_every_n_batches is not None else np.inf
         
         self.tta_losses = []
         self.test_scores = []
@@ -136,7 +129,6 @@ class TTADAEandDDPM(TTADAE):
         running_max = self.max_int_norm_imgs
         running_min = self.min_int_norm_imgs
         m = running_min_max_momentum
-        batch_count = 0
         
         for step in tqdm(range(num_steps)):
             
@@ -181,8 +173,8 @@ class TTADAEandDDPM(TTADAE):
                     )
 
             tta_loss = 0
-            dae_loss = torch.tensor(0).float().to(device)
-            ddpm_loss = torch.tensor(0).float().to(device)
+            step_dae_loss = 0
+            step_ddpm_loss = 0
             n_samples = 0
             n_samples_diffusion = 0
 
@@ -204,24 +196,18 @@ class TTADAEandDDPM(TTADAE):
             #  times less it is used than the dae loss or if averaged over entire volume
             ddpm_reweigh_factor = (1 / len(b_i_for_diffusion_loss)) * \
                 (1 if accumulate_over_volume else len(volume_dataloader))  
-                
-            ddpm_reweigh_factor = ddpm_reweigh_factor * (1 / accumulate_grad_every_n_batches) \
-                if accumulate_grad_every_n_batches != np.inf else ddpm_reweigh_factor
-            
+
             # Adapting to the target distribution
             # :===========================================:
             
             # To avoid memory issues, we compute x_norm twice to separate the gradient
             #  computation for the DAE and DDPM losses. 
-            zero_grads = False
             for b_i, ((x, y_gt,_,_, bg_mask), (y_pl,)) in enumerate(zip(volume_dataloader, label_dataloader)):
-                
-                take_update_step = not accumulate_over_volume and \
-                    batch_count % accumulate_grad_every_n_batches == 0 and batch_count > 0
-                
-                if zero_grads:
+                dae_loss = torch.tensor(0).float().to(device)
+                ddpm_loss = torch.tensor(0).float().to(device)
+                            
+                if not accumulate_over_volume:
                     self.optimizer.zero_grad()
-                    zero_grads = False
 
                 x = x.to(device).float()
                 y_pl = y_pl.to(device)
@@ -229,13 +215,18 @@ class TTADAEandDDPM(TTADAE):
                 
                 bg_mask = bg_mask.to(device)
                 
+                n_samples += x.shape[0]
+                
                 # Calculate gradients from the noise estimation loss
                 if b_i in b_i_for_diffusion_loss and self.ddpm_loss_beta > 0:
+                    n_samples_diffusion += x.shape[0] 
+                    
                     x_norm = self.norm(x)
                     
                     img = x_norm if self.use_x_norm_for_ddpm_loss else x
                     
                     if self.use_x_cond_gt:
+                        # Only for debugging
                         x_cond = y_gt
                     elif self.use_y_pred_for_ddpm_loss:
                         x_norm_bg_supp = background_suppression(x_norm, bg_mask, bg_suppression_opts_tta)
@@ -252,18 +243,16 @@ class TTADAEandDDPM(TTADAE):
                         max_int_norm_imgs=running_max,
                         min_int_norm_imgs=running_min
                     )
-                                        
-                    n_samples_diffusion += x.shape[0] 
-                    
+                                    
                     # Check if the max and min values of the input images have changed
-                    running_max = max(running_max, x.max().item())
-                    running_min = min(running_min, x.min().item())
+                    running_max = max(running_max, img.max().item())
+                    running_min = min(running_min, img.min().item())
                     
                     # Keep track of the max and min in the current step
-                    step_max = max(step_max, x.max().item())
-                    step_min = min(step_min, x.min().item())
+                    step_max = max(step_max, img.max().item())
+                    step_min = min(step_min, img.min().item())
                     
-                    
+                # Calculate gradients from the segmentation task on the pseudo label    
                 if self.dae_loss_alpha > 0:
                     x_norm = self.norm(x)
                     x_norm = background_suppression(x_norm, bg_mask, bg_suppression_opts_tta)
@@ -276,40 +265,37 @@ class TTADAEandDDPM(TTADAE):
                         mask = mask.squeeze(0).permute(1, 0, 2, 3)
 
                     dae_loss = self.dae_loss_alpha * self.loss_func(mask, y_pl)
-                    dae_loss = dae_loss / len(volume_dataloader) \
-                        if accumulate_over_volume else dae_loss
+                    
+                    if accumulate_over_volume:
+                        dae_loss = dae_loss / len(volume_dataloader)
         
                     dae_loss.backward()
             
-                if take_update_step:
-                    self.optimizer.step()  
-                    zero_grads = True                       
+                if not accumulate_over_volume:
+                    self.optimizer.step()              
 
                 with torch.no_grad():
-                    ddpm_loss += ddpm_loss.detach() * x.shape[0]
-                    dae_loss += dae_loss.detach() * x.shape[0]
-                    n_samples += x.shape[0]
-                    
-                batch_count += 1
-                    
+                    step_ddpm_loss += (ddpm_loss.detach() * x.shape[0]).item()
+                    step_dae_loss += (dae_loss.detach() * x.shape[0]).item()
+                                              
             # Update the max and min values with those of the current step
             #  Only affects running max and min if it is to decrease their range
-            running_max = (1 - m) * step_max + m * running_max 
-            running_min = (1 - m) * step_min + m * running_min  
+            running_max = m * running_max + (1 - m) * step_max  
+            running_min = m * running_min + (1 - m) * step_min  
 
             if accumulate_over_volume:
                 self.optimizer.step()
 
-            ddpm_loss = (ddpm_loss / n_samples_diffusion).item() if n_samples_diffusion > 0 else 0
-            dae_loss = (dae_loss / n_samples).item() if n_samples > 0 else 0
-            tta_loss = ddpm_loss + dae_loss
+            step_ddpm_loss = (step_ddpm_loss / n_samples_diffusion) if n_samples_diffusion > 0 else 0
+            step_dae_loss = (step_dae_loss / n_samples) if n_samples > 0 else 0
+            tta_loss = step_ddpm_loss + step_dae_loss
             
             self.tta_losses.append(tta_loss)
 
             if self.wandb_log:
                 wandb.log({
-                    f'ddpm_loss/img_{index}': ddpm_loss, 
-                    f'dae_loss/img_{index}': dae_loss, 
+                    f'ddpm_loss/img_{index}': step_ddpm_loss, 
+                    f'dae_loss/img_{index}': step_dae_loss, 
                     f'total_loss/img_{index}': tta_loss, 
                     'tta_step': step
                     }
@@ -359,7 +345,7 @@ class TTADAEandDDPM(TTADAE):
         if img.max() > 1 or img.min() < 0:
             print(f'WARNING: img.max()={img.max()}, img.min()={img.min()}')
         
-        # Upsample the segmentation mask to the same size as the input image
+        # Upsample the segmentation mask to the same size as the input image, if neccessary
         rescale_factor = np.array(img.shape) / np.array(seg.shape)
         rescale_factor = tuple(rescale_factor[[0, 2, 3]])
         should_rescale = not all([f == 1. for f in rescale_factor])
@@ -377,10 +363,11 @@ class TTADAEandDDPM(TTADAE):
         
         # The DDPM is memory intensive, accumulate gradients over minibatches
         ddpm_loss_value = 0
-        ddpm_reweight_factor = ddpm_reweight_factor * (minibatch_size / img.shape[0])  
+        num_minibatches = np.ceil(img.shape[0] / minibatch_size)
+        ddpm_reweight_factor = ddpm_reweight_factor * (1 / num_minibatches)  
         for i in range(0, img.shape[0], minibatch_size):
-            img_batch = img[i:i+minibatch_size]
-            seg_batch = seg[i:i+minibatch_size]
+            img_batch = img[i: i+minibatch_size]
+            seg_batch = seg[i: i+minibatch_size]
             ddpm_loss = ddpm_reweight_factor * self.ddpm_loss_beta * self.ddpm(img_batch, seg_batch)
             
             # Do backward retaining the graph except for the last step
