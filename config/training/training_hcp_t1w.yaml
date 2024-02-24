@@ -51,11 +51,12 @@ segmentation:
   epochs:                       150  # 150 for brain, 1000 for WMH (nuhs, umc)
   validate_every:               3
   learning_rate:                1.0e-3
-  logdir:                       /scratch_net/biwidl319/jbermeo/logs/brain/segmentation/hcp_t1_bg_supp_k_size_1
-  wandb_project:                mt-tta-dae-segmenter_2d_training
+  logdir:                       /scratch_net/biwidl319/jbermeo/data/models/brain/segmentation/hcp_t1/no_bg_supp_norm_w_3x3_conv
+  wandb_project:                mt-segmentation_models
   
+  with_bg_supression:           False
   bg_suppression_opts:
-      type:               fixed_value  # possible values: none, fixed_value, random_value
+      type:               none  # possible values: none, fixed_value, random_value
       bg_value:           -0.5
       bg_value_min:       -0.5
       bg_value_max:       1

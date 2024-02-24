@@ -124,10 +124,6 @@ class NormSegTrainer:
                 x = x.to(device).float()
                 y = y.to(device)
                 bg_mask = bg_mask.to(device)
-
-                print('-----------------debugging----------------------')
-                print(x.shape)
-                print(y.shape)
                 
                 x_norm = self.norm(x)
                 if with_bg_supression:
@@ -157,7 +153,7 @@ class NormSegTrainer:
                 print(f'Validating for epoch {epoch}')
                 validation_loss, validation_score = self.evaluate(val_dataloader, device=device)
                 self.validation_losses.append(validation_loss.item())
-                self.validation_scores.append(validation_score.item())
+                self.validation_scores.append(validation_score.nanmean().item())
 
                 # Checkpoint last state
                 self._save_checkpoint(os.path.join(logdir, checkpoint_last))
@@ -172,16 +168,15 @@ class NormSegTrainer:
                 
                 if val_dataloader is not None:
                     validation_metrics_to_log = {
-                        'validation_loss': validation_loss,
-                        'validation_score': validation_score.nanmean(),
+                        'validation_loss': validation_loss.item(),
+                        'validation_score': validation_score.nanmean().item(),
                     }
                     
-                    if validation_score.shape[1] > 1:
-                        score_per_class = validation_score.nanmean(dim=0)
-                        for i in range(validation_score.shape[1]):
+                    if validation_score.shape[0] > 1:
+                        for i, score_per_class in enumerate(validation_score):
                             label_idx = i + 1
                             label_name = val_dataloader.dataset.get_label_name(label_idx)
-                            validation_metrics_to_log[f'validation_score_{label_name}'] = score_per_class[i].item()
+                            validation_metrics_to_log[f'validation_score_{label_name}'] = score_per_class.item()
                 else :
                     validation_metrics_to_log = {}
                 
@@ -192,6 +187,7 @@ class NormSegTrainer:
                 wandb.save(os.path.join(wandb_dir, checkpoint_last), base_path=wandb_dir)
                 wandb.save(os.path.join(wandb_dir, checkpoint_best), base_path=wandb_dir)
     
+    @torch.inference_mode()
     def evaluate(
         self,
         val_dataloader: DataLoader,
@@ -208,27 +204,27 @@ class NormSegTrainer:
         self.norm.eval()
         self.seg.eval()
 
-        with torch.no_grad():
-            for x, y, _, _, bg_mask in val_dataloader:
-                x = x.to(device).float()
-                y = y.to(device)
-                bg_mask = bg_mask.to(device)
+        for x, y, _, _, bg_mask in val_dataloader:
+            x = x.to(device).float()
+            y = y.to(device)
+            bg_mask = bg_mask.to(device)
 
-                x_norm = self.norm(x)
-                if with_bg_supression:
-                    x_norm = background_suppression(x_norm, bg_mask, self.bg_suppression_opts)
-                y_pred, _ = self.seg(x_norm)
-                
-                loss = self.loss_func(y_pred, y)
-                
-                _, dice_fg = dice_score(y_pred, y, soft=False, reduction='none')
+            x_norm = self.norm(x)
+            if with_bg_supression:
+                x_norm = background_suppression(x_norm, bg_mask, self.bg_suppression_opts)
+            y_pred, _ = self.seg(x_norm)
+            
+            loss = self.loss_func(y_pred, y)
+            
+            _, dice_fg = dice_score(y_pred, y, soft=False, reduction='none')
+            dice_fg = dice_fg.nanmean(0)
 
-                validation_loss += loss * x.shape[0]
-                validation_score += dice_fg * x.shape[0]
-                n_samples_val += x.shape[0]
+            validation_loss += loss * x.shape[0]
+            validation_score += dice_fg * x.shape[0]
+            n_samples_val += x.shape[0]
 
-            validation_loss /= n_samples_val
-            validation_score /= n_samples_val
+        validation_loss /= n_samples_val
+        validation_score /= n_samples_val
 
         return validation_loss, validation_score
     

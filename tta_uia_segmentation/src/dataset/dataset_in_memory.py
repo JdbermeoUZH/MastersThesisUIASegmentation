@@ -1,8 +1,10 @@
+import os
+from typing import Optional
+
 import h5py
 import numpy as np
-import os
-from skimage import filters, morphology
 from scipy import ndimage
+from skimage import filters, morphology
 from skimage.transform import rescale
 import torch
 import torch.nn.functional as F
@@ -126,6 +128,7 @@ class DatasetInMemory(data.Dataset):
         image_transform_args={},
         bg_suppression_opts={},
         seed=None,
+        label_names: Optional[dict] = None
     ):
 
         assert_in(split, 'split', ['train', 'val', 'test'])
@@ -185,6 +188,13 @@ class DatasetInMemory(data.Dataset):
             self.only_foreground = deep_get(image_transform_args, 'only_foreground')
 
         self.background_mask = self.get_background_mask(self.images, self.labels)
+        
+        if label_names is None:
+            label_names = {i: str(i) for i in range(n_classes)}
+        else:
+            assert len(label_names) == n_classes, 'len(label_names) != n_classes'
+        
+        self.label_names = label_names
 
 
     def load_original_images(self):
@@ -387,3 +397,6 @@ class DatasetInMemory(data.Dataset):
             index = self.idx_to_slice_idx(index)
 
         return images, labels, labels_deformed, index, background_mask
+
+    def get_label_name(self, label):
+        return self.label_names[label]

@@ -46,12 +46,18 @@ def preprocess_cmd_args() -> argparse.Namespace:
 
     # Model parameters
     # ----------------:
+    # Normalization module
+    parser.add_argument('--kernel_size', type=int, help='Kernel size for the convolutional layers of the normalization module. Default: 3')
+    
+    # Segmentation module
     parser.add_argument('--channel_size', type=int, nargs='+', help='Number of feature maps for each block. Default: [16, 32, 64]')
     parser.add_argument('--channels_bottleneck', type=int, help='Number of channels in bottleneck layer of model. Default: 128')
     parser.add_argument('--skips', type=lambda s: [val.strip().lower() == 'true' for val in s.split()], 
                         help='Whether to use skip connections on each block, specified as a space-separated list of booleans (True or False)'
                         'Default: True True True')
     parser.add_argument('--n_dimensions', type=int, help='Number of dimensions of the model, i.e: 1D, 2D, or 3D. Default: 3')  
+    parser.add_argument('--with_bg_supression', type=lambda s: s.strip().lower() == 'true', 
+                        help='Whether to use background suppression. Default: True')
     
     # Training loop
     # -------------:
@@ -248,12 +254,17 @@ if __name__ == '__main__':
         
     # Start training
     # :=========================================================================:
-    validate_every = train_config['segmentation']['validate_every']
+    epochs                  = train_config['segmentation']['epochs']
+    validate_every          = train_config['segmentation']['validate_every']
+    with_bg_supression      = train_config['segmentation']['with_bg_supression']
+    with_bg_supression      = train_config['segmentation']['with_bg_supression']
+    
     trainer.train(
-        train_dataloader        = train_dataloader,
-        val_dataloader          = val_dataloader,
-        epochs                  = train_config['segmentation']['epochs'],
-        validate_every          = validate_every
+        train_dataloader = train_dataloader,
+        val_dataloader = val_dataloader,
+        epochs = epochs,
+        validate_every = validate_every,
+        with_bg_supression = with_bg_supression
     )
     
     write_to_csv(

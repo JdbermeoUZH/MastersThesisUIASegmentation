@@ -1,5 +1,5 @@
-start_new_exp: True
-wandb_log: False
+start_new_exp: False
+wandb_log: True
 dataset: hcp_t2   # brain: hcp_t1, hcp_t2, abide_caltech, abide_stanford; wmh: nuhs, umc, vu
 split:   test       # val, test
 start: null       # Index of the test dataset to start at
