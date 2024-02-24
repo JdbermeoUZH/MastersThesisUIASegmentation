@@ -63,7 +63,6 @@ def preprocess_cmd_args() -> argparse.Namespace:
     parser.add_argument('--use_ddpm_after_dice', type=float, help='Use DDPM after dice is below x. Default: None')
     
     # Seg model params
-    parser.add_argument('--seg_dir', type=str, help='Path to directory where segmentation checkpoints are saved')
     parser.add_argument('--seg_with_bg_supp', type=lambda s: s.strip().lower() == 'true', help='Whether to use background suppression for segmentation. Default: True')
     
     # DDPM params
