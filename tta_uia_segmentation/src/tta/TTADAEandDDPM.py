@@ -31,7 +31,6 @@ class TTADAEandDDPM(TTADAE):
         use_x_norm_for_ddpm_loss: bool = True,
         use_y_pred_for_ddpm_loss: bool = False,
         use_x_cond_gt: bool = False,    # Of course use only for debugging
-        
         **kwargs
         ) -> None:
         
@@ -73,8 +72,6 @@ class TTADAEandDDPM(TTADAE):
         n_classes: int, 
         index: int,
         rescale_factor_dae: tuple[int],
-        alpha: float,
-        beta: float,
         bg_suppression_opts: dict,
         bg_suppression_opts_tta: dict,
         num_steps: int,
@@ -159,7 +156,7 @@ class TTADAEandDDPM(TTADAE):
                 # Only update the pseudo label if it has not been calculated yet or
                 #  if the beta is less than 1.0
 
-                if step == 0 or beta <= 1.0:
+                if step == 0 or self.beta <= 1.0:
                     label_dataloader = self.generate_pseudo_labels(
                         dae_dataloader=dae_dataloader,
                         label_batch_size=label_batch_size,
@@ -167,9 +164,7 @@ class TTADAEandDDPM(TTADAE):
                         rescale_factor=rescale_factor_dae,
                         device=device,
                         num_workers=num_workers,
-                        dataset_repetition=dataset_repetition,
-                        alpha=alpha,
-                        beta=beta
+                        dataset_repetition=dataset_repetition
                     )
 
             tta_loss = 0

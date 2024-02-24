@@ -240,6 +240,8 @@ if __name__ == '__main__':
     # Define the TTADAE object that does the test time adapatation
     # :=========================================================================:
     learning_rate               = tta_config[tta_mode]['learning_rate']
+    alpha                       = tta_config[tta_mode]['alpha']
+    beta                        = tta_config[tta_mode]['beta']
 
     dae_tta = TTADAE(
         norm                    = norm,
@@ -248,14 +250,14 @@ if __name__ == '__main__':
         atlas                   = atlas,
         loss_func               = DiceLoss(),
         learning_rate           = learning_rate,
+        alpha                   = alpha,
+        beta                    = beta,
         wandb_log               = wandb_log,
     )
     
     # Do TTA with a DAE
     # :=========================================================================:
     bg_suppression_opts_tta     = tta_config[tta_mode]['bg_suppression_opts']
-    alpha                       = tta_config[tta_mode]['alpha']
-    beta                        = tta_config[tta_mode]['beta']
     rescale_factor              = train_params_dae['dae']['rescale_factor']
     num_steps                   = tta_config[tta_mode]['num_steps']
     batch_size                  = tta_config[tta_mode]['batch_size']
@@ -303,8 +305,6 @@ if __name__ == '__main__':
             n_classes =n_classes,
             index = i,
             rescale_factor = rescale_factor,
-            alpha = alpha,
-            beta = beta,
             bg_suppression_opts = bg_suppression_opts,
             bg_suppression_opts_tta = bg_suppression_opts_tta,
             num_steps = num_steps,

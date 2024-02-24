@@ -19,6 +19,34 @@ from tta_uia_segmentation.src.dataset import DatasetInMemory
 
 
 class TTADAE:
+    """
+    Class to perform Test-Time Adaptation (TTA) using a DAE model to generate pseudo labels.
+    
+    Arguments:
+    norm: torch.nn.Module
+        Normalization model.
+    seg: torch.nn.Module
+        Segmentation model.
+    dae: torch.nn.Module
+        DAE model.
+    atlas: Any
+        Atlas of the source domain segmentation labels
+    loss_func: torch.nn.Module
+        Loss function to be used during adaptation. Default: DiceLoss()
+    learning_rate: float
+        Learning rate for the optimizer. Default: 1e-3
+    alpha: float
+        Threshold for the proportion between the dice score of the DAE output and the atlas. Default: 1.0
+        Both alpha and beta need to be satisfied to use the DAE output as pseudo label.
+    beta: float
+        Threshold for the dice score of the atlas. Default: 0.25. 
+        Both alpha and beta need to be satisfied to use the DAE output as pseudo label.
+    use_atlas_only_for_intit: bool
+        Whether to use the atlas as pseudo label only until the first time the DAE output is used. Default: False
+        Meaning, it is used as a switch and will only change from Atlas to DAE PL once.
+    wandb_log: bool
+        Whether to log the results to wandb. Default: False
+    """
     
     def __init__(
         self,
@@ -28,14 +56,23 @@ class TTADAE:
         atlas: Any,
         loss_func: torch.nn.Module = DiceLoss(),
         learning_rate: float = 1e-3,
+        alpha: float = 1.0,
+        beta: float = 0.25,
+        use_atlas_only_for_intit: bool = False,
         wandb_log: bool = False,
         ) -> None:
-        
+    
         self.norm = norm
         self.seg = seg
         self.dae = dae
         self.atlas = atlas
         
+        # Thresholds for pseudo label selection
+        self.alpha = alpha
+        self.beta = beta
+        self.use_atlas_only_for_intit = use_atlas_only_for_intit
+        
+        # Loss function and optimizer
         self.loss_func = loss_func
         self.learning_rate = learning_rate
         
@@ -72,8 +109,6 @@ class TTADAE:
         n_classes: int, 
         index: int,
         rescale_factor: tuple[int],
-        alpha: float,
-        beta: float,
         bg_suppression_opts: dict,
         bg_suppression_opts_tta: dict,
         num_steps: int,
@@ -148,8 +183,6 @@ class TTADAE:
                     device=device,
                     num_workers=num_workers,
                     dataset_repetition=dataset_repetition,
-                    alpha=alpha,
-                    beta=beta
                 )
 
             tta_loss = 0
@@ -343,9 +376,7 @@ class TTADAE:
         rescale_factor: tuple[int],
         device: Union[str, torch.device],
         num_workers: int,
-        dataset_repetition: int,
-        alpha: float = 1.0,
-        beta: float = 0.25
+        dataset_repetition: int
     ) -> DataLoader:  
         
         masks = []
@@ -374,7 +405,7 @@ class TTADAE:
 
         print(f'DEBUG: dice_denoised: {dice_denoised}, dice_atlas: {dice_atlas}')  # TODO: Delete me
         
-        if dice_denoised / dice_atlas >= alpha and dice_atlas >= beta:
+        if dice_denoised / dice_atlas >= self.alpha and dice_atlas >= self.beta:
             print('Using DAE output as pseudo label')
             target_labels = dae_output
             dice = dice_denoised
@@ -382,6 +413,12 @@ class TTADAE:
             print('Using Atlas as pseudo label')
             target_labels = self.atlas
             dice = dice_atlas
+            
+            if self.use_atlas_only_for_intit:
+                # Set alpha and beta to 0 to always use DAE output as pseudo label from now on
+                print('----------------Only DAE PL from now on----------------')
+                self.alpha = 0
+                self.beta = 0
 
         target_labels = target_labels.squeeze(0)
         target_labels = target_labels.permute(1,0,2,3)

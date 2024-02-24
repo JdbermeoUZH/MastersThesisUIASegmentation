@@ -71,6 +71,7 @@ def preprocess_cmd_args() -> argparse.Namespace:
     parser.add_argument('--alpha', type=float, help='Proportion of how much better the dice of the DAE pseudolabel and predicted segmentation'
                                                     'should be than the dice of the Atlas pseudolabel. Default: 1')
     parser.add_argument('--beta', type=float, help='Minimum dice of the Atlas pseudolabel and the predicted segmentation. Default: 0.25')
+    parser.add_argument('--use_atlas_only_for_intit', type=lambda s: s.strip().lower() == 'true', help='Whether to use the atlas only for initialization. Default: False')
     
     # Probably not used arguments
     parser.add_argument('--seed', type=int, help='Seed for random number generators. Default: 0')   
@@ -284,6 +285,9 @@ if __name__ == '__main__':
     # Define the TTADAE object that does the test time adapatation
     # :=========================================================================:    
     learning_rate               = tta_config[tta_mode]['learning_rate']
+    alpha                       = tta_config[tta_mode]['alpha']
+    beta                        = tta_config[tta_mode]['beta']
+    use_atlas_only_for_intit    = tta_config[tta_mode]['use_atlas_only_for_intit']
     dae_loss_alpha              = tta_config[tta_mode]['dae_loss_alpha']
     ddpm_loss_beta              = tta_config[tta_mode]['dddpm_loss_beta']
     frac_vol_diffusion_tta      = tta_config[tta_mode]['frac_vol_diffusion_tta']
@@ -294,6 +298,7 @@ if __name__ == '__main__':
     use_x_norm_for_ddpm_loss    = tta_config[tta_mode]['use_x_norm_for_ddpm_loss']
     use_y_pred_for_ddpm_loss    = tta_config[tta_mode]['use_y_pred_for_ddpm_loss']
     use_x_cond_gt               = tta_config[tta_mode]['use_x_cond_gt']
+
     
     tta = TTADAEandDDPM(
         norm                    = norm,
@@ -304,6 +309,9 @@ if __name__ == '__main__':
         loss_func               = DiceLoss(),
         learning_rate           = learning_rate,
         dae_loss_alpha          = dae_loss_alpha,
+        alpha                   = alpha,
+        beta                    = beta,
+        use_atlas_only_for_intit=use_atlas_only_for_intit,
         ddpm_loss_beta          = ddpm_loss_beta,
         frac_vol_diffusion_tta  = frac_vol_diffusion_tta,
         min_t_diffusion_tta     = min_t_diffusion_tta,
@@ -319,8 +327,6 @@ if __name__ == '__main__':
     # Do TTA with a DAE
     # :=========================================================================:
     bg_suppression_opts_tta     = tta_config[tta_mode]['bg_suppression_opts']
-    alpha                       = tta_config[tta_mode]['alpha']
-    beta                        = tta_config[tta_mode]['beta']
     rescale_factor              = train_params_dae['dae']['rescale_factor']
     num_steps                   = tta_config[tta_mode]['num_steps']
     batch_size                  = tta_config[tta_mode]['batch_size']
@@ -387,8 +393,6 @@ if __name__ == '__main__':
             n_classes =n_classes,
             index = i,
             rescale_factor_dae = rescale_factor,
-            alpha = alpha,
-            beta = beta,
             bg_suppression_opts = bg_suppression_opts,
             bg_suppression_opts_tta = bg_suppression_opts_tta,
             num_steps = num_steps,

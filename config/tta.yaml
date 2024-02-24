@@ -67,7 +67,7 @@ dae_and_diffusion:
   wandb_project: mt-tta-dae_and_diffusion_tta-baselines # mt-tta-brain-hcp_t2
   logdir: /scratch_net/biwidl319/jbermeo/logs/brain/sota/dae_and_ddpm/2_21/ddpm(1.0)_and_atlas(0.5)_lr_1em3_no_grad_acc_frac_0.25_bs_16_y_dae_or_atlas_beta_0.25
   dae_dir: /scratch_net/biwidl319/jbermeo/data/models/brain/dae/hcp_t1
-  seg_dir: /scratch_net/biwidl319/jbermeo/data/models/brain/segmentation/hcp_t1/bg_supp
+  seg_dir: /scratch_net/biwidl319/jbermeo/data/models/brain/segmentation/hcp_t1/bg_supp_norm_w_1x1_conv # bg_supp
   ddpm_dir: /scratch_net/biwidl319/jbermeo/logs/brain/ddpm/not_one_hot_64_base_filters_with_aug_except_noise
   cpt_fn: 'model-9.pt' # or 23, 28, or 31
 
@@ -91,6 +91,7 @@ dae_and_diffusion:
   calculate_dice_every: 25  # 25 for brain, 135 for wmh (nuhs, umc, vu)
   alpha: 1.0
   beta: 0.5 # 0.25
+  use_atlas_only_for_intit: True
   learning_rate: 0.001
   accumulate_over_volume: False
   save_checkpoints: True
