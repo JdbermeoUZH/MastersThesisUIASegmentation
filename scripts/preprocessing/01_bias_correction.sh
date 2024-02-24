@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --output=../logs/%j_preprocessing_bias_correction_.out
+#SBATCH --output=../logs/%j_resampling_.out
 #SBATCH --cpus-per-task=4
 #SBATCH --ntasks=2
 #SBATCH --gres=gpu:1

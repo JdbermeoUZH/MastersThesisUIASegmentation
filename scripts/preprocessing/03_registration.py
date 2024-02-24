@@ -4,6 +4,10 @@ import tqdm
 import logging
 import argparse
 import multiprocessing as mp
+<<<<<<< HEAD:scripts/preprocessing/03_registration.py
+=======
+from typing import Optional, Union
+>>>>>>> started adding code for the DAE:tta_uia_segmentation/src/preprocessing/03_registration.py
 from datetime import datetime
 
 import numpy as np
@@ -168,6 +172,92 @@ def rigid_registration_multiprocess(
         
 
 
+def rigid_registration_sequential(
+    scans_dict: dict[str, dict[str, str]],
+    fixed_image_path: str,
+    use_geometrical_center_mode: bool = True,
+    mmi_n_bins: int = mmi_n_bins_default,
+    learning_rate: float = learning_rate_default,
+    number_of_iterations: int = number_of_iterations_default,
+    save_output: bool = False, 
+    output_dir: Optional[str] = None
+):
+     # For now let's do it sequentially. Later we can parallelize it
+    os.makedirs(args.path_to_save_processed_data, exist_ok=True)
+        
+    for img_id, img_dict in tqdm.tqdm(scans_dict.items()):
+        log.info(f"Registering scan {img_id}")
+        
+        registered_tof_scan, registered_seg_mask = rigid_registration(
+            fixed_image_path=args.fixed_image_path,
+            moving_image_path=img_dict['tof'],
+            image_segmentation_mask_path=img_dict['seg'] if 'seg' in img_dict.keys() else None,
+            use_geometrical_center_mode=not args.not_use_geometrical_center_mode,
+            mmi_n_bins=args.mmi_n_bins,
+            learning_rate=args.learning_rate,
+            number_of_iterations=args.number_of_iterations
+        )
+        
+        # Save the registered TOF scan and registered segmentation mask
+        img_output_dir = os.path.join(args.path_to_save_processed_data, img_id)
+        os.makedirs(img_output_dir, exist_ok=True)
+        
+        sitk.WriteImage(registered_tof_scan, os.path.join(img_output_dir, f'{img_id}_tof.nii.gz'))
+        
+        if 'seg' in img_dict.keys():
+            sitk.WriteImage(registered_seg_mask, os.path.join(img_output_dir, f'{img_id}_seg.nii.gz'))
+        
+        log.info(f"Scan {img_id} registered") 
+        
+        
+def rigid_registration_multiprocess(
+    scans_dict: dict[str, dict[str, str]],
+    fixed_image_path: str,
+    lock: mp.Lock,
+    every_n: int = 4,
+    start_i: int = 0,
+    use_geometrical_center_mode: bool = True,
+    mmi_n_bins: int = mmi_n_bins_default,
+    learning_rate: float = learning_rate_default,
+    number_of_iterations: int = number_of_iterations_default,
+    save_output: bool = False, 
+    output_dir: Optional[str] = None
+):
+    
+    with lock:
+        os.makedirs(output_dir, exist_ok=True)
+    
+    img_ids = list(scans_dict.keys())
+    
+    for idx in range(start_i, len(img_ids), every_n):
+        img_id = img_ids[idx]
+        img_dict = scans_dict[img_id]
+        
+        log.info(f"Registering scan {img_id}")
+        
+        registered_tof_scan, registered_seg_mask = rigid_registration(
+            fixed_image_path=args.fixed_image_path,
+            moving_image_path=img_dict['tof'],
+            image_segmentation_mask_path=img_dict['seg'] if 'seg' in img_dict.keys() else None,
+            use_geometrical_center_mode=not args.not_use_geometrical_center_mode,
+            mmi_n_bins=args.mmi_n_bins,
+            learning_rate=args.learning_rate,
+            number_of_iterations=args.number_of_iterations
+        )
+        
+        # Save the registered TOF scan and registered segmentation mask
+        with lock:
+            img_output_dir = os.path.join(args.path_to_save_processed_data, img_id)
+            os.makedirs(img_output_dir, exist_ok=True)
+        
+        sitk.WriteImage(registered_tof_scan, os.path.join(img_output_dir, f'{img_id}_tof.nii.gz'))
+        
+        if 'seg' in img_dict.keys():
+            sitk.WriteImage(registered_seg_mask, os.path.join(img_output_dir, f'{img_id}_seg.nii.gz'))
+        
+        log.info(f"Scan {img_id} registered") 
+        
+
 if __name__ == '__main__':
     args = preprocess_cmd_args()
     
@@ -226,14 +316,25 @@ if __name__ == '__main__':
                         args.mmi_n_bins,
                         args.learning_rate,
                         args.number_of_iterations,
+<<<<<<< HEAD:scripts/preprocessing/03_registration.py
+=======
+                        True,
+>>>>>>> started adding code for the DAE:tta_uia_segmentation/src/preprocessing/03_registration.py
                         args.path_to_save_processed_data
                     )
                 )
             )
+<<<<<<< HEAD:scripts/preprocessing/03_registration.py
         
         for k in range(len(ps)):    ps[k].start()
         for k in range(len(ps)):    ps[k].join()
         
+=======
+        
+        for k in range(len(ps)):    ps[k].start()
+        for k in range(len(ps)):    ps[k].join()
+        
+>>>>>>> started adding code for the DAE:tta_uia_segmentation/src/preprocessing/03_registration.py
     else:
         rigid_registration_sequential(
             scans_dict=scans_dict,
@@ -242,6 +343,10 @@ if __name__ == '__main__':
             mmi_n_bins=args.mmi_n_bins,
             learning_rate=args.learning_rate,
             number_of_iterations=args.number_of_iterations,
+<<<<<<< HEAD:scripts/preprocessing/03_registration.py
+=======
+            save_output=True,
+>>>>>>> started adding code for the DAE:tta_uia_segmentation/src/preprocessing/03_registration.py
             output_dir=args.path_to_save_processed_data
         )
         
