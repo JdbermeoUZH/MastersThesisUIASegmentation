@@ -60,7 +60,11 @@ def preprocess_cmd_args() -> argparse.Namespace:
     parser.add_argument('--dae_loss_alpha', type=float, help='Weight for DAE loss. Default: 1.0')
     parser.add_argument('--frac_vol_diffusion_tta', type=float, help='Fraction of volume to diffuse. Default: 0.5')
     
-    # DPM params
+    # Seg model params
+    parser.add_argument('--seg_dir', type=str, help='Path to directory where segmentation checkpoints are saved')
+    parser.add_argument('--seg_with_bg_supp', type=lambda s: s.strip().lower() == 'true', help='Whether to use background suppression for segmentation. Default: True')
+    
+    # DDPM params
     parser.add_argument('--min_t_diffusion_tta', type=int, help='Minimum value for diffusion time. Default: 0')
     parser.add_argument('--max_t_diffusion_tta', type=int, help='Maximum value for diffusion time. Default: 1000')       
     parser.add_argument('--use_y_pred_for_ddpm_loss', type=lambda s: s.strip().lower() == 'true', help='Whether to use predicted segmentation as conditional for DDPM. Default: True')
@@ -288,6 +292,7 @@ if __name__ == '__main__':
     alpha                       = tta_config[tta_mode]['alpha']
     beta                        = tta_config[tta_mode]['beta']
     use_atlas_only_for_intit    = tta_config[tta_mode]['use_atlas_only_for_intit']
+    seg_with_bg_supp            = tta_config[tta_mode]['seg_with_bg_supp']
     dae_loss_alpha              = tta_config[tta_mode]['dae_loss_alpha']
     ddpm_loss_beta              = tta_config[tta_mode]['dddpm_loss_beta']
     frac_vol_diffusion_tta      = tta_config[tta_mode]['frac_vol_diffusion_tta']
@@ -312,6 +317,7 @@ if __name__ == '__main__':
         alpha                   = alpha,
         beta                    = beta,
         use_atlas_only_for_intit=use_atlas_only_for_intit,
+        seg_with_bg_supp        = seg_with_bg_supp,
         ddpm_loss_beta          = ddpm_loss_beta,
         frac_vol_diffusion_tta  = frac_vol_diffusion_tta,
         min_t_diffusion_tta     = min_t_diffusion_tta,

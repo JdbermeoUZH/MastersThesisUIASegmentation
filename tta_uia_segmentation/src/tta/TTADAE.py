@@ -59,6 +59,7 @@ class TTADAE:
         alpha: float = 1.0,
         beta: float = 0.25,
         use_atlas_only_for_intit: bool = False,
+        seg_with_bg_supp: bool = True,
         wandb_log: bool = False,
         ) -> None:
     
@@ -66,6 +67,9 @@ class TTADAE:
         self.seg = seg
         self.dae = dae
         self.atlas = atlas
+        
+        # Whether the segmentation model uses background suppression of input images
+        self.seg_with_bg_supp = seg_with_bg_supp
         
         # Thresholds for pseudo label selection
         self.alpha = alpha
@@ -205,10 +209,11 @@ class TTADAE:
 
                 x = x.to(device).float()
                 y = y.to(device)
-                bg_mask = bg_mask.to(device)
                 x_norm = self.norm(x)
                 
-                x_norm = background_suppression(x_norm, bg_mask, bg_suppression_opts_tta)
+                if self.seg_with_bg_supp:
+                    bg_mask = bg_mask.to(device)
+                    x_norm = background_suppression(x_norm, bg_mask, bg_suppression_opts_tta)
 
                 mask, _ = self.seg(x_norm)
 
@@ -325,9 +330,10 @@ class TTADAE:
         
         for x, _, bg_mask in volume_dataloader:
             x_norm_part = self.norm(x.to(device))
-            bg_mask = bg_mask.to(device)
-
-            x_norm_part = background_suppression(x_norm_part, bg_mask, bg_suppression_opts)
+            
+            if self.seg_with_bg_supp:
+                bg_mask = bg_mask.to(device)
+                x_norm_part = background_suppression(x_norm_part, bg_mask, bg_suppression_opts)
 
             x_norm.append(x_norm_part.cpu())
 
@@ -383,11 +389,12 @@ class TTADAE:
         for x, _, _, _, bg_mask in dae_dataloader:
             x = x.to(device).float()
 
-            bg_mask = bg_mask.to(device)
             x_norm = self.norm(x)
 
-            x_norm = background_suppression(
-                x_norm, bg_mask, bg_suppression_opts_tta)
+            if self.seg_with_bg_supp:
+                bg_mask = bg_mask.to(device)
+                x_norm = background_suppression(
+                    x_norm, bg_mask, bg_suppression_opts_tta)
 
             mask, _ = self.seg(x_norm)
             masks.append(mask)
@@ -409,17 +416,18 @@ class TTADAE:
             print('Using DAE output as pseudo label')
             target_labels = dae_output
             dice = dice_denoised
+        
+            if self.use_atlas_only_for_intit:
+                    # Set alpha and beta to 0 to always use DAE output as pseudo label from now on
+                    print('----------------Only DAE PL from now on----------------')
+                    self.alpha = 0
+                    self.beta = 0
+
         else:
             print('Using Atlas as pseudo label')
             target_labels = self.atlas
             dice = dice_atlas
             
-            if self.use_atlas_only_for_intit:
-                # Set alpha and beta to 0 to always use DAE output as pseudo label from now on
-                print('----------------Only DAE PL from now on----------------')
-                self.alpha = 0
-                self.beta = 0
-
         target_labels = target_labels.squeeze(0)
         target_labels = target_labels.permute(1,0,2,3)
 

@@ -208,9 +208,7 @@ class TTADAEandDDPM(TTADAE):
                 
                 y_pl = y_pl.to(device)
                 y_gt = y_gt.to(device)
-                
-                bg_mask = bg_mask.to(device)
-                
+                               
                 n_samples += x.shape[0]
                 
                 # Calculate gradients from the noise estimation loss
@@ -225,8 +223,12 @@ class TTADAEandDDPM(TTADAE):
                         # Only for debugging
                         x_cond = y_gt
                     elif self.use_y_pred_for_ddpm_loss:
-                        x_norm_bg_supp = background_suppression(x_norm, bg_mask, bg_suppression_opts_tta)
-                        x_cond, _ = self.seg(x_norm_bg_supp)
+                        if self.seg_with_bg_supp:
+                            bg_mask = bg_mask.to(device)
+                            x_norm_bg_supp = background_suppression(x_norm, bg_mask, bg_suppression_opts_tta)
+                            x_cond, _ = self.seg(x_norm_bg_supp)
+                        else:
+                            x_cond, _ = self.seg(x_norm)
                     else:
                         # Uses the pseudo label for the DDPM loss
                         x_cond = y_pl
@@ -251,7 +253,10 @@ class TTADAEandDDPM(TTADAE):
                 # Calculate gradients from the segmentation task on the pseudo label    
                 if self.dae_loss_alpha > 0:
                     x_norm = self.norm(x)
-                    x_norm = background_suppression(x_norm, bg_mask, bg_suppression_opts_tta)
+                    
+                    if self.seg_with_bg_supp:
+                        bg_mask = bg_mask.to(device)
+                        x_norm = background_suppression(x_norm, bg_mask, bg_suppression_opts_tta)
 
                     mask, _ = self.seg(x_norm)
                     
