@@ -395,7 +395,7 @@ if __name__ == '__main__':
 
         volume_dataset = Subset(test_dataset, indices)
 
-        tta.load_state_dict_norm(norm_state_dict)
+        tta.reset_initial_state(norm_state_dict)
 
         norm, norm_dict, metrics_best, dice_scores_wrt_gt = tta.tta(
             volume_dataset = volume_dataset,

@@ -66,6 +66,9 @@ def preprocess_cmd_args() -> argparse.Namespace:
     parser.add_argument('--resolution_proc', type=float, nargs='+', help='Resolution of images in dataset. Default: [0.3, 0.3, 0.6]')
     parser.add_argument('--rescale_factor', type=float, help='Rescale factor for images in dataset. Default: None')
     
+    # Seg model params
+    parser.add_argument('--seg_with_bg_supp', type=lambda s: s.strip().lower() == 'true', help='Whether to use background suppression for segmentation. Default: True')
+    
     # Augmentations
     parser.add_argument('--aug_da_ratio', type=float, help='Ratio of images to apply DA to. Default: 0.25')
     parser.add_argument('--aug_sigma', type=float, help='augmentation. Default: 20') #TODO: specify what this is
@@ -137,9 +140,9 @@ if __name__ == '__main__':
     train_params_dae        = params_dae['training']
     
     params_seg              = load_config(os.path.join(seg_dir, 'params.yaml'))
-    model_params_norm       = params_dae['model']['normalization_2D']
-    model_params_seg        = params_dae['model']['segmentation_2D']
-    train_params_seg        = params_dae['training']
+    model_params_norm       = params_seg['model']['normalization_2D']
+    model_params_seg        = params_seg['model']['segmentation_2D']
+    train_params_seg        = params_seg['training']
     
     params                  = { 
                                'datset': dataset_config,
@@ -297,7 +300,7 @@ if __name__ == '__main__':
 
         volume_dataset = Subset(test_dataset, indices)
 
-        dae_tta.load_state_dict_norm(norm_state_dict)
+        dae_tta.reset_initial_state(norm_state_dict)
 
         norm, norm_dict, metrics_best, dice_scores_wrt_gt = dae_tta.tta(
             volume_dataset = volume_dataset,

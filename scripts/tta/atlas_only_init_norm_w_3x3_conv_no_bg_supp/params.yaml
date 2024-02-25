@@ -1,0 +1,781 @@
+datset:
+    ADAM:
+        label_names_dict: /scratch_net/biwidl319/jbermeo/data/raw/ADAM/label_names_dict.json
+        original:
+            h5_filepath: /scratch_net/biwidl319/jbermeo/data/raw/ADAM
+        preprocessed:
+            h5_filepath: /scratch_net/biwidl319/jbermeo/data/preprocessed/UIA_segmentation/ADAM.h5
+        raw:
+            every_scan_has_seg: true
+            fp_pattern_seg_mask:
+            - '*'
+            - '*_aneurysms.nii.gz'
+            fp_pattern_tof:
+            - '*'
+            - '*_TOF.nii.gz'
+            level_of_dir_with_id: -2
+            path_to_seg_dir: /scratch_net/biwidl319/jbermeo/data/raw/ADAM
+            path_to_tof_dir: /scratch_net/biwidl319/jbermeo/data/raw/ADAM
+    Lausanne:
+        label_names_dict: /scratch_net/biwidl319/jbermeo/data/raw/Lausanne/label_names_dict.json
+        original:
+            h5_filepath: /scratch_net/biwidl319/jbermeo/data/raw/Lausanne
+        preprocessed:
+            h5_filepath: /scratch_net/biwidl319/jbermeo/data/preprocessed/UIA_segmentation/Lausanne.h5
+        raw:
+            every_scan_has_seg: false
+            fp_pattern_seg_mask:
+            - '*'
+            - '*'
+            - '*'
+            - '*Lesion_*_mask.nii.gz'
+            fp_pattern_tof:
+            - '*'
+            - '*'
+            - '*'
+            - '*_angio.nii.gz'
+            level_of_dir_with_id: -4
+            path_to_seg_dir: /scratch_net/biwidl319/jbermeo/data/raw/Lausanne/skull_stripped_and_aneurysm_mask
+            path_to_tof_dir: /scratch_net/biwidl319/jbermeo/data/raw/Lausanne/original_images
+    USZ:
+        label_names_dict: /scratch_net/biwidl319/jbermeo/data/raw/USZ/label_names_dict.json
+        original:
+            h5_filepath: /scratch_net/biwidl319/jbermeo/data/raw/USZ
+        preprocessed:
+            h5_filepath: /scratch_net/biwidl319/jbermeo/data/preprocessed/UIA_segmentation/USZ.h5
+        raw:
+            every_scan_has_seg: true
+            fp_pattern_seg_mask:
+            - '*'
+            - '*_seg.nii.gz'
+            fp_pattern_tof:
+            - '*'
+            - '*_tof.nii.gz'
+            level_of_dir_with_id: -2
+            path_to_seg_dir: /scratch_net/biwidl319/jbermeo/data/raw/USZ
+            path_to_tof_dir: /scratch_net/biwidl319/jbermeo/data/raw/USZ
+    abide_caltech:
+        dim:
+        - 256
+        - 256
+        - 256
+        n_classes: 15
+        paths_normalized_with_nn:
+            test: /scratch_net/biwidl319/jbermeo/logs/brain/preprocessing/abide_caltech/data_T1_2d_size_256_256_depth_256_res_0.7_0.7_0.7_from_16_to_36.hdf5
+            train: /scratch_net/biwidl319/jbermeo/logs/brain/preprocessing/abide_caltech/data_T1_2d_size_256_256_depth_256_res_0.7_0.7_0.7_from_0_to_10.hdf_normalized_with_nn.h5
+            val: /scratch_net/biwidl319/jbermeo/logs/brain/preprocessing/abide_caltech/data_T1_2d_size_256_256_depth_256_res_0.7_0.7_0.7_from_10_to_15.hdf5
+        paths_original:
+            test: /scratch_net/biwidl319/jbermeo/data/abide/caltech/data_T1_original_depth_256_from_16_to_36.hdf5
+            train: /scratch_net/biwidl319/jbermeo/data/abide/caltech/data_T1_original_depth_256_from_0_to_10.hdf5
+            val: /scratch_net/biwidl319/jbermeo/data/abide/caltech/data_T1_original_depth_256_from_10_to_15.hdf5
+        paths_processed:
+            test: /scratch_net/biwidl319/jbermeo/data/abide/caltech/data_T1_2d_size_256_256_depth_256_res_0.7_0.7_0.7_from_16_to_36.hdf5
+            train: /scratch_net/biwidl319/jbermeo/data/abide/caltech/data_T1_2d_size_256_256_depth_256_res_0.7_0.7_0.7_from_0_to_10.hdf5
+            val: /scratch_net/biwidl319/jbermeo/data/abide/caltech/data_T1_2d_size_256_256_depth_256_res_0.7_0.7_0.7_from_10_to_15.hdf5
+        resolution_proc:
+        - 0.7
+        - 0.7
+        - 0.7
+    abide_stanford:
+        dim:
+        - 132
+        - 256
+        - 256
+        n_classes: 15
+        paths_original:
+            test: ~/datasets/abide/stanford/data_T1_original_depth_132_from_16_to_36.hdf5
+            train: ~/datasets/abide/stanford/data_T1_original_depth_132_from_0_to_10.hdf5
+            val: ~/datasets/abide/stanford/data_T1_original_depth_132_from_10_to_15.hdf5
+        paths_processed:
+            test: ~/datasets/abide/stanford/data_T1_2d_size_256_256_depth_132_res_0.7_0.7_from_16_to_36.hdf5
+            train: ~/datasets/abide/stanford/data_T1_2d_size_256_256_depth_132_res_0.7_0.7_from_0_to_10.hdf5
+            val: ~/datasets/abide/stanford/data_T1_2d_size_256_256_depth_132_res_0.7_0.7_from_10_to_15.hdf5
+        resolution_proc:
+        - 0.7
+        - 0.7
+        - 0.7
+    hcp_t1:
+        dim:
+        - 256
+        - 256
+        - 256
+        n_classes: 15
+        paths_normalized_with_nn:
+            test: /scratch_net/biwidl319/jbermeo/logs/brain/preprocessing/hcp_t1/data_T1_2d_size_256_256_depth_256_res_0.7_0.7_from_50_to_70.hdf_normalized_with_nn.h5
+            train: /scratch_net/biwidl319/jbermeo/logs/brain/preprocessing/hcp_t1/data_T1_2d_size_256_256_depth_256_res_0.7_0.7_from_0_to_20.hdf_normalized_with_nn.h5
+            val: /scratch_net/biwidl319/jbermeo/logs/brain/preprocessing/hcp_t1/data_T1_2d_size_256_256_depth_256_res_0.7_0.7_from_20_to_25.hdf_normalized_with_nn.h5
+        paths_original:
+            test: /scratch_net/biwidl319/jbermeo/data/hcp/data_T1_original_depth_256_from_50_to_70.hdf5
+            train: /scratch_net/biwidl319/jbermeo/data/hcp/data_T1_original_depth_256_from_0_to_20.hdf5
+            val: /scratch_net/biwidl319/jbermeo/data/hcp/data_T1_original_depth_256_from_20_to_25.hdf5
+        paths_processed:
+            test: /scratch_net/biwidl319/jbermeo/data/hcp/data_T1_2d_size_256_256_depth_256_res_0.7_0.7_from_50_to_70.hdf5
+            train: /scratch_net/biwidl319/jbermeo/data/hcp/data_T1_2d_size_256_256_depth_256_res_0.7_0.7_from_0_to_20.hdf5
+            val: /scratch_net/biwidl319/jbermeo/data/hcp/data_T1_2d_size_256_256_depth_256_res_0.7_0.7_from_20_to_25.hdf5
+        resolution_proc:
+        - 0.7
+        - 0.7
+        - 0.7
+    hcp_t2:
+        dim:
+        - 256
+        - 256
+        - 256
+        n_classes: 15
+        paths_normalized_with_nn:
+            test: /scratch_net/biwidl319/jbermeo/logs/brain/preprocessing/hcp_t2/data_T1_2d_size_256_256_depth_256_res_0.7_0.7_from_50_to_70.hdf_normalized_with_nn.h5
+            train: /scratch_net/biwidl319/jbermeo/logs/brain/preprocessing/hcp_t2/data_T1_2d_size_256_256_depth_256_res_0.7_0.7_from_0_to_20.hdf_normalized_with_nn.h5
+            val: /scratch_net/biwidl319/jbermeo/logs/brain/preprocessing/hcp_t2/data_T1_2d_size_256_256_depth_256_res_0.7_0.7_from_20_to_25.hdf_normalized_with_nn.h5
+        paths_original:
+            test: /scratch_net/biwidl319/jbermeo/data/hcp/data_T2_original_depth_256_from_50_to_70.hdf5
+            train: /scratch_net/biwidl319/jbermeo/data/hcp/data_T2_original_depth_256_from_0_to_20.hdf5
+            val: /scratch_net/biwidl319/jbermeo/data/hcp/data_T2_original_depth_256_from_50_to_70.hdf5
+        paths_processed:
+            test: /scratch_net/biwidl319/jbermeo/data/hcp/data_T2_2d_size_256_256_depth_256_res_0.7_0.7_from_50_to_70.hdf5
+            train: /scratch_net/biwidl319/jbermeo/data/hcp/data_T2_2d_size_256_256_depth_256_res_0.7_0.7_from_0_to_20.hdf5
+            val: /scratch_net/biwidl319/jbermeo/data/hcp/data_T2_2d_size_256_256_depth_256_res_0.7_0.7_from_20_to_25.hdf5
+        resolution_proc:
+        - 0.7
+        - 0.7
+        - 0.7
+    nuhs:
+        dim:
+        - 48
+        - 256
+        - 256
+        n_classes: 2
+        paths_original:
+            test: ~/datasets/wmh_miccai/nuhs/data_nuhs_original_depth_-1_from_10_to_15.hdf5
+            train: ~/datasets/wmh_miccai/nuhs/data_nuhs_original_depth_-1_from_0_to_10.hdf5
+            val: ~/datasets/wmh_miccai/nuhs/data_nuhs_original_depth_-1_from_15_to_20.hdf5
+        paths_processed:
+            test: ~/datasets/wmh_miccai/nuhs/data_nuhs_2d_size_256_256_depth_48_res_1_1_3_from_10_to_15.hdf5
+            train: ~/datasets/wmh_miccai/nuhs/data_nuhs_2d_size_256_256_depth_48_res_1_1_3_from_0_to_10.hdf5
+            val: ~/datasets/wmh_miccai/nuhs/data_nuhs_2d_size_256_256_depth_48_res_1_1_3_from_15_to_20.hdf5
+        resolution_proc:
+        - 1
+        - 1
+        - 3
+    umc:
+        dim:
+        - 48
+        - 256
+        - 256
+        n_classes: 2
+        paths_original:
+            test: ~/datasets/wmh_miccai/umc/data_umc_original_depth_-1_from_10_to_15.hdf5
+            train: ~/datasets/wmh_miccai/umc/data_umc_original_depth_-1_from_0_to_10.hdf5
+            val: ~/datasets/wmh_miccai/umc/data_umc_original_depth_-1_from_15_to_20.hdf5
+        paths_processed:
+            test: ~/datasets/wmh_miccai/umc/data_umc_2d_size_256_256_depth_48_res_1_1_3_from_10_to_15.hdf5
+            train: ~/datasets/wmh_miccai/umc/data_umc_2d_size_256_256_depth_48_res_1_1_3_from_0_to_10.hdf5
+            val: ~/datasets/wmh_miccai/umc/data_umc_2d_size_256_256_depth_48_res_1_1_3_from_15_to_20.hdf5
+        resolution_proc:
+        - 1
+        - 1
+        - 3
+    vu:
+        dim:
+        - 48
+        - 256
+        - 256
+        n_classes: 2
+        paths_original:
+            test: ~/datasets/wmh_miccai/vu/data_vu_original_depth_-1_from_10_to_15.hdf5
+            train: ~/datasets/wmh_miccai/vu/data_vu_original_depth_-1_from_0_to_10.hdf5
+            val: ~/datasets/wmh_miccai/vu/data_vu_original_depth_-1_from_15_to_20.hdf5
+        paths_processed:
+            test: ~/datasets/wmh_miccai/vu/data_vu_2d_size_256_256_depth_48_res_1_1_3_from_10_to_15.hdf5
+            train: ~/datasets/wmh_miccai/vu/data_vu_2d_size_256_256_depth_48_res_1_1_3_from_0_to_10.hdf5
+            val: ~/datasets/wmh_miccai/vu/data_vu_2d_size_256_256_depth_48_res_1_1_3_from_15_to_20.hdf5
+        resolution_proc:
+        - 1
+        - 1
+        - 3
+model:
+    dae:
+        channel_size:
+        - 16
+        - 32
+        - 64
+        channels_bottleneck: 128
+        n_classes: 15
+        n_dimensions: 3
+        skips:
+        - false
+        - true
+        - true
+    ddpm:
+        channels: 1
+        dim: 64
+        dim_mults:
+        - 1
+        - 2
+        - 4
+        - 8
+    norm:
+        activation: rbf
+        batch_norm: true
+        channel_size: 16
+        image_channels: 1
+        kernel_size: 3
+        n_dimensions: 2
+        n_layers: 3
+        residual: true
+    seg:
+        channel_size:
+        - 16
+        - 32
+        - 64
+        channels_bottleneck: 128
+        image_channels: 1
+        n_dimensions: 2
+        skips:
+        - true
+        - true
+        - true
+training:
+    dae:
+        checkpoint_best: checkpoint_best.pth
+        checkpoint_last: checkpoint_last.pth
+        dae:
+            augmentation:
+                alpha: 1000
+                brightness_max: 0.0
+                brightness_min: 0.0
+                da_ratio: 0.25
+                gamma_max: 1.0
+                gamma_min: 1.0
+                noise_mean: 0.0
+                noise_std: 0.0
+                rot_max: 10
+                rot_min: -10
+                scale_max: 1.1
+                scale_min: 0.9
+                sigma: 20
+                trans_max: 10
+                trans_min: -10
+            batch_size: 1
+            dataset: hcp_t1
+            deformation:
+                is_num_masks_fixed: false
+                is_size_masks_fixed: false
+                mask_radius: 10
+                mask_squares: 200
+                mask_type: squares_jigsaw
+            epochs: 2500
+            image_size:
+            - 256
+            - 256
+            - 256
+            learning_rate: 0.001
+            logdir: logs/brain/sota/dae/hcp_t1
+            num_workers: 3
+            rescale_factor:
+            - 0.25
+            - 1
+            - 1
+            validate_every: 50
+            validation_set_multiplier: 50
+            wandb_project: ma-domain-generalization-dae
+        device: cuda
+        gnn:
+            augmentation:
+                alpha: 1000
+                brightness_max: 0.1
+                brightness_min: 0.0
+                da_ratio: 0.25
+                gamma_max: 2.0
+                gamma_min: 0.5
+                noise_mean: 0.0
+                noise_std: 0.1
+                rot_max: 10
+                rot_min: -10
+                scale_max: 1.1
+                scale_min: 0.9
+                sigma: 20
+                trans_max: 10
+                trans_min: -10
+            batch_size: 32
+            bg_suppression_opts:
+                bg_value: -0.5
+                bg_value_max: 1
+                bg_value_min: -0.5
+                hole_filling: true
+                mask_source: thresholding
+                thresholding: otsu
+                type: fixed_value
+            bg_suppression_opts_test:
+                bg_value: -0.5
+                bg_value_max: 1
+                bg_value_min: -0.5
+                hole_filling: true
+                mask_source: thresholding
+                thresholding: otsu
+                type: fixed_value
+            cluster_target_domain: false
+            dataset:
+                source_dataset: abide_caltech
+                source_masks: pred
+                target_dataset: abide_caltech
+                target_image_transformation: none
+            domain_contrast: false
+            embedding_model_type: vig
+            epochs: 600
+            image_size:
+            - 1
+            - 256
+            - 256
+            image_transform_args:
+                random_net:
+                    hidden_channels: 64
+                    kernel_size: 1
+                    only_foreground: true
+            learning_rate: 0.0005
+            logdir: logs/brain/gnn/abide_caltech/11_vision_gnn_unet_bg_supp_gnn_bg_supp
+            negative_examples: absolute_position
+            num_workers: 3
+            segmentation_dir: logs/brain/segmentation/abide_caltech_bg_supp
+            similarity_weighting: none
+            slice_position_range: 0.25
+            target_augmentation:
+                alpha: 1000
+                brightness_max: 0.1
+                brightness_min: 0.0
+                da_ratio: 0.25
+                gamma_max: 2.0
+                gamma_min: 0.5
+                noise_mean: 0.0
+                noise_std: 0.1
+                rot_max: 10
+                rot_min: -10
+                scale_max: 1.1
+                scale_min: 0.9
+                sigma: 20
+                trans_max: 10
+                trans_min: -10
+            temperature: 0.1
+            wandb_project: ma-domain-generalization-gnn
+        projection_head:
+            augmentation:
+                alpha: 1000
+                brightness_max: 0.1
+                brightness_min: 0.0
+                da_ratio: 0.25
+                gamma_max: 2.0
+                gamma_min: 0.5
+                noise_mean: 0.0
+                noise_std: 0.1
+                rot_max: 10
+                rot_min: -10
+                scale_max: 1.1
+                scale_min: 0.9
+                sigma: 20
+                trans_max: 10
+                trans_min: -10
+            batch_size: 64
+            bg_suppression_opts:
+                bg_value: -0.5
+                bg_value_max: 1
+                bg_value_min: -0.5
+                hole_filling: true
+                mask_source: thresholding
+                thresholding: otsu
+                type: fixed_value
+            cluster_target_domain: false
+            dataset: hcp_t2
+            domain_contrast: true
+            epochs: 100
+            learning_rate: 0.0001
+            logdir: logs/brain/gnn/7_vision_gnn_target_domain_ttt_contrast_contrast
+            negative_examples: absolute_position
+            num_workers: 3
+            similarity_weighting: none
+            slice_position_range: 0.25
+            temperature: 0.1
+            wandb_project: ma-domain-generalization-head
+        resume: true
+        segmentation:
+            augmentation:
+                alpha: 1000
+                brightness_max: 0.1
+                brightness_min: 0.0
+                da_ratio: 0.25
+                gamma_max: 2.0
+                gamma_min: 0.5
+                noise_mean: 0.0
+                noise_std: 0.1
+                rot_max: 10
+                rot_min: -10
+                scale_max: 1.1
+                scale_min: 0.9
+                sigma: 20
+                trans_max: 10
+                trans_min: -10
+            batch_size: 16
+            bg_suppression_opts:
+                bg_value: -0.5
+                bg_value_max: 1
+                bg_value_min: -0.5
+                hole_filling: true
+                mask_source: thresholding
+                thresholding: otsu
+                type: fixed_value
+            dataset: abide_caltech
+            epochs: 300
+            image_size:
+            - 1
+            - 256
+            - 256
+            learning_rate: 0.001
+            logdir: logs/brain/segmentation/abide_caltech_bg_supp
+            num_workers: 3
+            wandb_project: ma-domain-generalization
+        wandb_log: true
+    ddpm:
+        augmentation:
+            alpha: 1000
+            brightness_max: 0.1
+            brightness_min: 0.0
+            da_ratio: 0.25
+            gamma_max: 2.0
+            gamma_min: 0.5
+            noise_mean: 0.0
+            noise_std: 0.0
+            rot_max: 10
+            rot_min: -10
+            scale_max: 1.1
+            scale_min: 0.9
+            sigma: 20
+            trans_max: 10
+            trans_min: -10
+        batch_size: 2
+        bg_suppression_opts: null
+        dataset: hcp_t1
+        deformation: null
+        gradient_accumulate_every: 8
+        image_size:
+        - 1
+        - 256
+        - 256
+        learning_rate: 8e-5
+        logdir: /scratch_net/biwidl319/jbermeo/logs/brain/ddpm/not_one_hot_64_base_filters_with_aug_except_noise
+        norm_dir: /scratch_net/biwidl319/jbermeo/data/models/brain/segmentation/hcp_t1/bg_supp
+        normalize: min_max
+        num_samples: 25
+        num_workers: 8
+        one_hot_encode: false
+        rescale_factor:
+        - 1
+        - 1
+        - 1
+        sampling_timesteps: 100
+        save_and_sample_every: 2500
+        timesteps: 1000
+        train_num_steps: 50000
+        wandb_project: mt-ddpm
+    seg:
+        checkpoint_best: checkpoint_best.pth
+        checkpoint_last: checkpoint_last.pth
+        dae:
+            augmentation:
+                alpha: 1000
+                brightness_max: 0.0
+                brightness_min: 0.0
+                da_ratio: 0.25
+                gamma_max: 1.0
+                gamma_min: 1.0
+                noise_mean: 0.0
+                noise_std: 0.0
+                rot_max: 10
+                rot_min: -10
+                scale_max: 1.1
+                scale_min: 0.9
+                sigma: 20
+                trans_max: 10
+                trans_min: -10
+            batch_size: 1
+            dataset: hcp_t1
+            deformation:
+                is_num_masks_fixed: false
+                is_size_masks_fixed: false
+                mask_radius: 10
+                mask_squares: 200
+                mask_type: squares_jigsaw
+            epochs: 2500
+            image_size:
+            - 256
+            - 256
+            - 256
+            learning_rate: 0.001
+            logdir: /scratch_net/biwidl319/jbermeo/logs/brain/dae/hcp_t1
+            num_workers: 3
+            rescale_factor:
+            - 0.25
+            - 1
+            - 1
+            validate_every: 50
+            validation_set_multiplier: 50
+            wandb_project: mt-tta-dae-dae_training
+        ddpm:
+            augmentation:
+                alpha: 1000
+                brightness_max: 0.1
+                brightness_min: 0.0
+                da_ratio: 0.25
+                gamma_max: 2.0
+                gamma_min: 0.5
+                noise_mean: 0.0
+                noise_std: 0.0
+                rot_max: 10
+                rot_min: -10
+                scale_max: 1.1
+                scale_min: 0.9
+                sigma: 20
+                trans_max: 10
+                trans_min: -10
+            batch_size: 2
+            bg_suppression_opts: null
+            dataset: hcp_t1
+            deformation: null
+            gradient_accumulate_every: 8
+            image_size:
+            - 1
+            - 256
+            - 256
+            learning_rate: 8e-5
+            logdir: /scratch_net/biwidl319/jbermeo/logs/brain/ddpm/original_imgs/not_one_hot_64_base_filters_with_aug_except_noise
+            norm_dir: /scratch_net/biwidl319/jbermeo/data/models/brain/segmentation/hcp_t1/bg_supp
+            norm_with_nn_on_fly: false
+            normalize: min_max
+            num_samples: 25
+            num_workers: 5
+            one_hot_encode: false
+            rescale_factor:
+            - 1
+            - 1
+            - 1
+            sampling_timesteps: 100
+            save_and_sample_every: 2500
+            timesteps: 1000
+            train_num_steps: 50000
+            use_original_imgs: true
+            wandb_project: mt-ddpm
+        device: cuda
+        n_classes: 15
+        resume: false
+        seed: 0
+        segmentation:
+            augmentation:
+                alpha: 1000
+                brightness_max: 0.1
+                brightness_min: 0.0
+                da_ratio: 0.25
+                gamma_max: 2.0
+                gamma_min: 0.5
+                noise_mean: 0.0
+                noise_std: 0.1
+                rot_max: 10
+                rot_min: -10
+                scale_max: 1.1
+                scale_min: 0.9
+                sigma: 20
+                trans_max: 10
+                trans_min: -10
+            batch_size: 16
+            bg_suppression_opts:
+                bg_value: -0.5
+                bg_value_max: 1
+                bg_value_min: -0.5
+                hole_filling: true
+                mask_source: thresholding
+                thresholding: otsu
+                type: none
+            dataset: hcp_t1
+            epochs: 150
+            image_size:
+            - 1
+            - 256
+            - 256
+            learning_rate: 0.001
+            logdir: /scratch_net/biwidl319/jbermeo/data/models/brain/segmentation/hcp_t1/no_bg_supp_norm_w_3x3_conv
+            num_workers: 3
+            validate_every: 3
+            wandb_project: mt-segmentation_models
+            with_bg_supression: false
+        wandb_log: true
+tta:
+    bg_suppression_opts:
+        bg_value: -0.5
+        bg_value_max: 1
+        bg_value_min: -0.5
+        hole_filling: true
+        mask_source: thresholding
+        thresholding: otsu
+        type: fixed_value
+    dae:
+        accumulate_over_volume: false
+        alpha: 1.0
+        augmentation:
+            alpha: 0
+            brightness_max: 0.1
+            brightness_min: 0.0
+            da_ratio: 0.25
+            gamma_max: 2.0
+            gamma_min: 0.5
+            noise_mean: 0.0
+            noise_std: 0.1
+            rot_max: 0
+            rot_min: 0
+            scale_max: 1.0
+            scale_min: 1.0
+            sigma: 20
+            trans_max: 0
+            trans_min: 0
+        batch_size: 32
+        beta: 0.25
+        bg_suppression_opts:
+            bg_value: -0.5
+            bg_value_max: 1
+            bg_value_min: -0.5
+            hole_filling: true
+            mask_source: thresholding
+            thresholding: otsu
+            type: fixed_value
+        calculate_dice_every: 25
+        const_aug_per_volume: false
+        dae_dir: /scratch_net/biwidl319/jbermeo/data/models/brain/dae/hcp_t1
+        dataset_repetition: 1
+        learning_rate: 0.001
+        logdir: /scratch_net/biwidl319/jbermeo/logs/brain/sota/baselines/2_19/dae_only_orig/test_split_lr_1em3_no_grad_acc
+        num_steps: 2000
+        save_checkpoints: true
+        seg_dir: /scratch_net/biwidl319/jbermeo/data/models/brain/segmentation/hcp_t1/bg_supp
+        update_dae_output_every: 25
+        wandb_project: null
+    dae_and_diffusion:
+        accumulate_over_volume: false
+        alpha: 1.0
+        augmentation:
+            alpha: 0
+            brightness_max: 0.1
+            brightness_min: 0.0
+            da_ratio: 0.25
+            gamma_max: 2.0
+            gamma_min: 0.5
+            noise_mean: 0.0
+            noise_std: 0.0
+            rot_max: 0
+            rot_min: 0
+            scale_max: 1.0
+            scale_min: 1.0
+            sigma: 20
+            trans_max: 0
+            trans_min: 0
+        batch_size: 16
+        beta: 0.25
+        bg_suppression_opts:
+            bg_value: -0.5
+            bg_value_max: 1
+            bg_value_min: -0.5
+            hole_filling: true
+            mask_source: thresholding
+            thresholding: otsu
+            type: none
+        calculate_dice_every: 25
+        const_aug_per_volume: false
+        cpt_fn: model-9.pt
+        dae_dir: /scratch_net/biwidl319/jbermeo/data/models/brain/dae/hcp_t1
+        dae_loss_alpha: 0.5
+        dataset_repetition: 1
+        dddpm_loss_beta: 1.0
+        ddpm_dir: /scratch_net/biwidl319/jbermeo/logs/brain/ddpm/not_one_hot_64_base_filters_with_aug_except_noise
+        frac_vol_diffusion_tta: 0.25
+        learning_rate: 0.001
+        logdir: atlas_only_init_norm_w_3x3_conv_no_bg_supp
+        max_t_diffusion_tta: 1000
+        min_max_int_norm_imgs:
+        - -0.5313728
+        - 0.67584044
+        min_t_diffusion_tta: 0
+        minibatch_size_ddpm: 2
+        num_steps: 2000
+        sampling_timesteps: 100
+        save_checkpoints: true
+        seg_dir: /scratch_net/biwidl319/jbermeo/data/models/brain/segmentation/hcp_t1/no_bg_supp_norm_w_3x3_conv
+        seg_with_bg_supp: false
+        update_dae_output_every: 25
+        use_atlas_only_for_intit: true
+        use_ddpm_after_dice: null
+        use_ddpm_after_step: null
+        use_x_cond_gt: false
+        use_x_norm_for_ddpm_loss: true
+        use_y_pred_for_ddpm_loss: false
+        wandb_project: mt-tta-dae_and_diffusion_tta-baselines
+    dataset: hcp_t2
+    device: cuda
+    diffusion_tta:
+        accumulate_over_volume: false
+        augmentation:
+            alpha: 0
+            brightness_max: 0.1
+            brightness_min: 0.0
+            da_ratio: 0.25
+            gamma_max: 2.0
+            gamma_min: 0.5
+            noise_mean: 0.0
+            noise_std: 0.0
+            rot_max: 0
+            rot_min: 0
+            scale_max: 1.0
+            scale_min: 1.0
+            sigma: 20
+            trans_max: 0
+            trans_min: 0
+        batch_size: 4
+        batch_size_ddpm: 1
+        bg_suppression_opts:
+            bg_value: -0.5
+            bg_value_max: 1
+            bg_value_min: -0.5
+            hole_filling: true
+            mask_source: thresholding
+            thresholding: otsu
+            type: fixed_value
+        calculate_dice_every: 25
+        const_aug_per_volume: false
+        cpt_fn: model-9.pt
+        ddpm_dir: /scratch_net/biwidl319/jbermeo/logs/brain/ddpm/original_imgs/not_one_hot_64_base_filters_with_aug_except_noise
+        fit_ddpm_params: true
+        fit_norm_params: true
+        fit_seg_params: true
+        frac_vol_diffusion_tta: 0.25
+        learning_rate: 1.0e-05
+        learning_rate_ddpm: null
+        learning_rate_norm: null
+        learning_rate_seg: null
+        logdir: /scratch_net/biwidl319/jbermeo/logs/brain/sota/diffusion_tta/tests/original_algo
+        max_t_diffusion_tta: 1000
+        min_max_int_norm_imgs:
+        - 0
+        - 1
+        min_t_diffusion_tta: 0
+        minibatch_size_ddpm: 2
+        num_steps: 1
+        original_algo: true
+        sampling_timesteps: 100
+        save_checkpoints: true
+        seg_dir: /scratch_net/biwidl319/jbermeo/data/models/brain/segmentation/hcp_t1/bg_supp
+        wandb_project: mt-tta-diffusion_tta-tests
+    image_size:
+    - 1
+    - 256
+    - 256
+    num_workers: 0
+    seed: 0
+    split: val
+    start: 0
+    start_new_exp: false
+    stop: 3
+    tta_mode: dae_and_diffusion
+    wandb_log: true

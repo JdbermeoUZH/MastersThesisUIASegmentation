@@ -76,6 +76,8 @@ class TTADAE:
         self.beta = beta
         self.use_atlas_only_for_intit = use_atlas_only_for_intit
         
+        self.use_only_dae_pl = self.alpha == 0 and self.beta == 0
+        
         # Loss function and optimizer
         self.loss_func = loss_func
         self.learning_rate = learning_rate
@@ -412,16 +414,16 @@ class TTADAE:
 
         print(f'DEBUG: dice_denoised: {dice_denoised}, dice_atlas: {dice_atlas}')  # TODO: Delete me
         
-        if dice_denoised / dice_atlas >= self.alpha and dice_atlas >= self.beta:
+        if (dice_denoised / dice_atlas >= self.alpha and dice_atlas >= self.beta) \
+            or self.use_only_dae_pl:
             print('Using DAE output as pseudo label')
             target_labels = dae_output
             dice = dice_denoised
         
-            if self.use_atlas_only_for_intit:
-                    # Set alpha and beta to 0 to always use DAE output as pseudo label from now on
-                    print('----------------Only DAE PL from now on----------------')
-                    self.alpha = 0
-                    self.beta = 0
+            if self.use_atlas_only_for_intit and not self.use_only_dae_pl:    
+                # Set alpha and beta to 0 to always use DAE output as pseudo label from now on
+                print('----------------Only DAE PL from now on----------------')
+                self.set_use_only_dae_pl(True)
 
         else:
             print('Using Atlas as pseudo label')
@@ -443,12 +445,30 @@ class TTADAE:
             drop_last=True, 
             )
         
-        return dice_denoised, dice_atlas, pl_dataloader
-        
-    def load_state_dict_norm(self, state_dict: dict) -> None:
-        self.norm.load_state_dict(state_dict)
+        return dice_denoised.item(), dice_atlas.item(), pl_dataloader
         
     def _define_custom_wandb_metrics(self):
         wandb.define_metric("tta_step")
         wandb.define_metric('dice_score_fg/*', step_metric='tta_step')
         wandb.define_metric('tta_loss/*', step_metric='tta_step')
+
+    def set_use_only_dae_pl(self, use_only_dae_pl: bool) -> None:
+        self.use_only_dae_pl = use_only_dae_pl
+        
+    def reset_initial_state(self, state_dict: dict) -> None:
+        self.norm.load_state_dict(state_dict)
+        self.norm_dict['best_score'] = copy.deepcopy(self.norm.state_dict())
+        self.metrics_best['best_score'] = 0
+        self.tta_losses = []
+        self.test_scores = []
+        
+        self.use_only_dae_pl = self.alpha == 0 and self.beta == 0
+        
+        self.seg.eval()
+        self.seg.requires_grad_(False)
+        
+        self.dae.eval()
+        self.dae.requires_grad_(False)
+        
+    def load_state_dict_norm(self, state_dict: dict) -> None:
+        self.norm.load_state_dict(state_dict)

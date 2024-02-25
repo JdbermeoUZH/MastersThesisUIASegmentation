@@ -174,7 +174,7 @@ class TTADAEandDDPM(TTADAE):
                 #  if the beta is less than 1.0
 
                 if step == 0 or self.beta <= 1.0:
-                    dice_atlas, dice_dae, label_dataloader = self.generate_pseudo_labels(
+                    dice_dae, dice_atlas, label_dataloader = self.generate_pseudo_labels(
                         dae_dataloader=dae_dataloader,
                         label_batch_size=label_batch_size,
                         bg_suppression_opts_tta=bg_suppression_opts_tta,
@@ -227,9 +227,7 @@ class TTADAEandDDPM(TTADAE):
                     self.optimizer.zero_grad()
 
                 x = x.to(device).float()
-                
                 y_pl = y_pl.to(device)
-                y_gt = y_gt.to(device)
                                
                 n_samples += x.shape[0]
                 
@@ -241,8 +239,15 @@ class TTADAEandDDPM(TTADAE):
                     
                     img = x_norm if self.use_x_norm_for_ddpm_loss else x
                     
+                    # Check if the max and min values of the input images have changed
+                    #  especially impotant to do it before the fwd/bwd pass of the DDPM when 
+                    #  updating first with dae or atlas for some steps           
+                    running_max = max(running_max, img.max().item())
+                    running_min = min(running_min, img.min().item())
+                    
                     if self.use_x_cond_gt:
                         # Only for debugging
+                        y_gt = y_gt.to(device)
                         x_cond = y_gt
                     elif self.use_y_pred_for_ddpm_loss:
                         if self.seg_with_bg_supp:
@@ -263,10 +268,6 @@ class TTADAEandDDPM(TTADAE):
                         max_int_norm_imgs=running_max,
                         min_int_norm_imgs=running_min
                     )
-                                    
-                    # Check if the max and min values of the input images have changed           
-                    running_max = max(running_max, img.max().item())
-                    running_min = min(running_min, img.min().item())
                     
                     # Keep track of the max and min in the current step
                     step_max = max(step_max, img.max().item())
@@ -409,3 +410,8 @@ class TTADAEandDDPM(TTADAE):
         wandb.define_metric(f'dae_loss/*', step_metric=f'tta_step')
         wandb.define_metric(f'total_loss/*', step_metric=f'tta_step')   
         wandb.define_metric(f'dice_score_fg/*', step_metric=f'tta_step')    
+
+    def reset_initial_state(self, state_dict: dict) -> None:
+        super().reset_initial_state(state_dict)
+        self.use_ddpm_loss = self.use_ddpm_after_dice is None and \
+            self.use_ddpm_after_step is None
