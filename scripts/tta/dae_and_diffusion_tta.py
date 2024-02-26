@@ -292,6 +292,7 @@ if __name__ == '__main__':
     learning_rate               = tta_config[tta_mode]['learning_rate']
     alpha                       = tta_config[tta_mode]['alpha']
     beta                        = tta_config[tta_mode]['beta']
+    minibatch_size_ddpm         = tta_config[tta_mode]['minibatch_size_ddpm']
     use_atlas_only_for_intit    = tta_config[tta_mode]['use_atlas_only_for_intit']
     seg_with_bg_supp            = tta_config[tta_mode]['seg_with_bg_supp']
     dae_loss_alpha              = tta_config[tta_mode]['dae_loss_alpha']
@@ -308,6 +309,7 @@ if __name__ == '__main__':
     use_ddpm_after_dice         = tta_config[tta_mode]['use_ddpm_after_dice']
     warmup_steps_for_ddpm_loss  = tta_config[tta_mode]['warmup_steps_for_ddpm_loss']
     
+    
     tta = TTADAEandDDPM(
         norm                    = norm,
         seg                     = seg,
@@ -322,6 +324,7 @@ if __name__ == '__main__':
         use_atlas_only_for_intit=use_atlas_only_for_intit,
         seg_with_bg_supp        = seg_with_bg_supp,
         ddpm_loss_beta          = ddpm_loss_beta,
+        minibatch_size_ddpm     = minibatch_size_ddpm,
         frac_vol_diffusion_tta  = frac_vol_diffusion_tta,
         min_t_diffusion_tta     = min_t_diffusion_tta,
         max_t_diffusion_tta     = max_t_diffusion_tta,
@@ -349,7 +352,6 @@ if __name__ == '__main__':
     const_aug_per_volume        = tta_config[tta_mode]['const_aug_per_volume']
     accumulate_over_volume      = tta_config[tta_mode]['accumulate_over_volume']
     calculate_dice_every        = tta_config[tta_mode]['calculate_dice_every']
-    minibatch_size_ddpm         = tta_config[tta_mode]['minibatch_size_ddpm']
 
     if wandb_log:
         wandb.watch([norm], log='all', log_freq=1)
@@ -409,7 +411,6 @@ if __name__ == '__main__':
             bg_suppression_opts_tta = bg_suppression_opts_tta,
             num_steps = num_steps,
             batch_size = batch_size,
-            minibatch_size_ddpm=minibatch_size_ddpm,
             num_workers=num_workers,
             calculate_dice_every = calculate_dice_every,
             update_dae_output_every = update_dae_output_every,

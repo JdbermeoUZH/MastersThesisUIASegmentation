@@ -23,6 +23,7 @@ class TTADAEandDDPM(TTADAE):
         ddpm: ConditionalGaussianDiffusion,
         dae_loss_alpha: float = 0.5,
         ddpm_loss_beta: float = 0.5,
+        minibatch_size_ddpm: int = 2,
         frac_vol_diffusion_tta: float = 0.25,
         min_t_diffusion_tta: int = 250,
         max_t_diffusion_tta: int = 1000,
@@ -34,6 +35,7 @@ class TTADAEandDDPM(TTADAE):
         use_ddpm_after_step: Optional[int] = None,
         use_ddpm_after_dice: Optional[float] = None,
         warmup_steps_for_ddpm_loss: Optional[int] = None,
+        use_ddpm_sample_guidance: bool = False,
         **kwargs
         ) -> None:
         
@@ -43,6 +45,7 @@ class TTADAEandDDPM(TTADAE):
         self.dae_loss_alpha = dae_loss_alpha
         self.ddpm_loss_beta = ddpm_loss_beta
         
+        self.minibatch_size_ddpm = minibatch_size_ddpm
         self.frac_vol_diffusion_tta = frac_vol_diffusion_tta
         
         self.min_t_diffusion_tta = min_t_diffusion_tta
@@ -78,6 +81,12 @@ class TTADAEandDDPM(TTADAE):
         
         # If a flag is not set, use the DDPM at every step
         self.use_ddpm_loss = use_ddpm_after_dice is None and use_ddpm_after_step is None
+        
+        # DDPM sample guidance parameters
+        self.use_ddpm_sample_guidance = use_ddpm_sample_guidance
+        self.atlas_sampled_vol = self._sample_atlas_vol() \
+            if use_ddpm_sample_guidance else None
+            
     
     def tta(
         self,
@@ -90,7 +99,6 @@ class TTADAEandDDPM(TTADAE):
         bg_suppression_opts_tta: dict,
         num_steps: int,
         batch_size: int,
-        minibatch_size_ddpm: int,
         num_workers: int,
         calculate_dice_every: int,
         update_dae_output_every: int,
@@ -224,7 +232,7 @@ class TTADAEandDDPM(TTADAE):
                 (1 if accumulate_over_volume else len(volume_dataloader))  
 
             warmup_factor = warmup_steps_for_ddpm_loss.pop() \
-                if len(warmup_steps_for_ddpm_loss) > 0 else 1
+                if len(warmup_steps_for_ddpm_loss) > 0 and self.use_ddpm_loss else 1
             
             assert 1 >= warmup_factor >= 0, 'Warmup factor must be between 0 and 1'
                         
@@ -279,7 +287,6 @@ class TTADAEandDDPM(TTADAE):
                     ddpm_loss = self.calculate_ddpm_gradients(
                         img,
                         x_cond,
-                        minibatch_size=minibatch_size_ddpm,
                         ddpm_reweight_factor=ddpm_reweigh_factor,
                         max_int_norm_imgs=running_max,
                         min_int_norm_imgs=running_min
@@ -369,7 +376,6 @@ class TTADAEandDDPM(TTADAE):
         self,
         img,
         seg,
-        minibatch_size: int = 2,
         ddpm_reweight_factor: float = 1,
         min_int_norm_imgs: float = 0,
         max_int_norm_imgs: float = 1
@@ -403,11 +409,13 @@ class TTADAEandDDPM(TTADAE):
         
         # The DDPM is memory intensive, accumulate gradients over minibatches
         ddpm_loss_value = 0
+        minibatch_size = self.minibatch_size_ddpm
         num_minibatches = np.ceil(img.shape[0] / minibatch_size)
         ddpm_reweight_factor = ddpm_reweight_factor * (1 / num_minibatches)  
+        
         for i in range(0, img.shape[0], minibatch_size):
-            img_batch = img[i: i+minibatch_size]
-            seg_batch = seg[i: i+minibatch_size]
+            img_batch = img[i: i + minibatch_size]
+            seg_batch = seg[i: i + minibatch_size]
             ddpm_loss = ddpm_reweight_factor * self.ddpm_loss_beta * self.ddpm(img_batch, seg_batch)
             
             # Do backward retaining the graph except for the last step
@@ -431,3 +439,30 @@ class TTADAEandDDPM(TTADAE):
         super().reset_initial_state(state_dict)
         self.use_ddpm_loss = self.use_ddpm_after_dice is None and \
             self.use_ddpm_after_step is None
+            
+    def _sample_atlas_vol(self, num_vol_samples: int = 1) -> torch.Tensor:
+        # Normalize Atlas between 0 and 1
+        n_classes = self.atlas_vol.shape[0]
+        atlas = du.onehot_to_class(self.atlas_vol)
+        atlas = atlas.float() / (n_classes - 1)
+        
+        norm_atlas_dataloader = DataLoader(
+            TensorDataset(atlas),
+            batch_size=self.minibatch_size,
+            shuffle=True,
+            num_workers=self.num_workers,
+            drop_last=True,
+        )
+        
+        atlas_sampled_vols = []
+        for _ in range(num_vol_samples):
+            vol_i = []
+            for x_cond in norm_atlas_dataloader:
+                x_cond = x_cond.to(self.device)
+                vol_i.append(
+                    self.ddpm.ddim_sample(x_cond, return_all_timesteps=False)
+                )
+            
+            atlas_sampled_vols.append(torch.vstack(vol_i))
+            
+        return torch.concat(atlas_sampled_vols, dim=0)
