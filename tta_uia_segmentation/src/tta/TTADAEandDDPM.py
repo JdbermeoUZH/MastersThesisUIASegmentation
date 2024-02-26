@@ -33,6 +33,7 @@ class TTADAEandDDPM(TTADAE):
         use_x_cond_gt: bool = False,    # Of course use only for debugging
         use_ddpm_after_step: Optional[int] = None,
         use_ddpm_after_dice: Optional[float] = None,
+        warmup_steps_for_ddpm_loss: Optional[int] = None,
         **kwargs
         ) -> None:
         
@@ -73,6 +74,7 @@ class TTADAEandDDPM(TTADAE):
 
         self.use_ddpm_after_step = use_ddpm_after_step
         self.use_ddpm_after_dice = use_ddpm_after_dice
+        self.warmup_steps_for_ddpm_loss = warmup_steps_for_ddpm_loss
         
         # If a flag is not set, use the DDPM at every step
         self.use_ddpm_loss = use_ddpm_after_dice is None and use_ddpm_after_step is None
@@ -139,6 +141,13 @@ class TTADAEandDDPM(TTADAE):
         running_min = self.min_int_norm_imgs
         m = running_min_max_momentum
         
+        # Initialize warmup factor for the DDPM loss term
+        if self.warmup_steps_for_ddpm_loss is not None:
+            warmup_steps_for_ddpm_loss = list(np.linspace(1, 1/self.warmup_steps_for_ddpm_loss,
+                                                    self.warmup_steps_for_ddpm_loss))
+        else:
+            warmup_steps_for_ddpm_loss = []     
+               
         for step in tqdm(range(num_steps)):
             
             self.norm.eval()
@@ -214,6 +223,13 @@ class TTADAEandDDPM(TTADAE):
             ddpm_reweigh_factor = (1 / len(b_i_for_diffusion_loss)) * \
                 (1 if accumulate_over_volume else len(volume_dataloader))  
 
+            warmup_factor = warmup_steps_for_ddpm_loss.pop() \
+                if len(warmup_steps_for_ddpm_loss) > 0 else 1
+            
+            assert 1 >= warmup_factor >= 0, 'Warmup factor must be between 0 and 1'
+                        
+            ddpm_reweigh_factor = warmup_factor * ddpm_reweigh_factor
+            
             # Adapting to the target distribution
             # :===========================================:
             

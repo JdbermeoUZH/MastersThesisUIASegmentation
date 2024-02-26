@@ -56,12 +56,12 @@ def preprocess_cmd_args() -> argparse.Namespace:
     parser.add_argument('--num_workers', type=int, help='Number of workers for dataloader. Default: 0')
     parser.add_argument('--accumulate_over_volume', type=lambda s: s.strip().lower() == 'true', help='Whether to accumulate gradients over volume. Default: False')
     
-    parser.add_argument('--dddpm_loss_beta', type=float, help='Weight for DDPM loss. Default: 1.0')
+    parser.add_argument('--ddpm_loss_beta', type=float, help='Weight for DDPM loss. Default: 1.0')
     parser.add_argument('--dae_loss_alpha', type=float, help='Weight for DAE loss. Default: 1.0')
     parser.add_argument('--frac_vol_diffusion_tta', type=float, help='Fraction of volume to diffuse. Default: 0.5')
     parser.add_argument('--use_ddpm_after_step', type=int, help='Use DDPM after x steps. Default: None')
     parser.add_argument('--use_ddpm_after_dice', type=float, help='Use DDPM after dice is below x. Default: None')
-    
+    parser.add_argument('--warmup_steps_for_ddpm_loss', type=int, help='Warmup steps for DDPM loss. Default: 0')
     # Seg model params
     parser.add_argument('--seg_with_bg_supp', type=lambda s: s.strip().lower() == 'true', help='Whether to use background suppression for segmentation. Default: True')
     
@@ -295,7 +295,7 @@ if __name__ == '__main__':
     use_atlas_only_for_intit    = tta_config[tta_mode]['use_atlas_only_for_intit']
     seg_with_bg_supp            = tta_config[tta_mode]['seg_with_bg_supp']
     dae_loss_alpha              = tta_config[tta_mode]['dae_loss_alpha']
-    ddpm_loss_beta              = tta_config[tta_mode]['dddpm_loss_beta']
+    ddpm_loss_beta              = tta_config[tta_mode]['ddpm_loss_beta']
     frac_vol_diffusion_tta      = tta_config[tta_mode]['frac_vol_diffusion_tta']
     min_t_diffusion_tta         = tta_config[tta_mode]['min_t_diffusion_tta']
     max_t_diffusion_tta         = tta_config[tta_mode]['max_t_diffusion_tta']
@@ -306,6 +306,7 @@ if __name__ == '__main__':
     use_x_cond_gt               = tta_config[tta_mode]['use_x_cond_gt']
     use_ddpm_after_step         = tta_config[tta_mode]['use_ddpm_after_step']
     use_ddpm_after_dice         = tta_config[tta_mode]['use_ddpm_after_dice']
+    warmup_steps_for_ddpm_loss  = tta_config[tta_mode]['warmup_steps_for_ddpm_loss']
     
     tta = TTADAEandDDPM(
         norm                    = norm,
@@ -331,7 +332,8 @@ if __name__ == '__main__':
         use_y_pred_for_ddpm_loss=use_y_pred_for_ddpm_loss,
         use_x_cond_gt           = use_x_cond_gt,
         use_ddpm_after_step     = use_ddpm_after_step,
-        use_ddpm_after_dice     = use_ddpm_after_dice
+        use_ddpm_after_dice     = use_ddpm_after_dice,
+        warmup_steps_for_ddpm_loss=warmup_steps_for_ddpm_loss,
     )
     
     # Do TTA with a DAE
