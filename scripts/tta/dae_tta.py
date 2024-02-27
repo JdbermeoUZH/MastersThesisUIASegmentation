@@ -245,23 +245,28 @@ if __name__ == '__main__':
     learning_rate               = tta_config[tta_mode]['learning_rate']
     alpha                       = tta_config[tta_mode]['alpha']
     beta                        = tta_config[tta_mode]['beta']
-
+    rescale_factor              = train_params_dae['dae']['rescale_factor']
+    bg_suppression_opts_tta     = tta_config[tta_mode]['bg_suppression_opts']
+    
     dae_tta = TTADAE(
         norm                    = norm,
         seg                     = seg,
         dae                     = dae,
         atlas                   = atlas,
+        n_clases                = n_classes,
+        rescale_factor          = rescale_factor,
+        bg_suppression_opts     = bg_suppression_opts, 
+        bg_suppression_opts_tta = bg_suppression_opts_tta,
         loss_func               = DiceLoss(),
         learning_rate           = learning_rate,
         alpha                   = alpha,
         beta                    = beta,
         wandb_log               = wandb_log,
+        device                  = device,     
     )
     
     # Do TTA with a DAE
     # :=========================================================================:
-    bg_suppression_opts_tta     = tta_config[tta_mode]['bg_suppression_opts']
-    rescale_factor              = train_params_dae['dae']['rescale_factor']
     num_steps                   = tta_config[tta_mode]['num_steps']
     batch_size                  = tta_config[tta_mode]['batch_size']
     num_workers                 = tta_config['num_workers']
@@ -305,11 +310,7 @@ if __name__ == '__main__':
         norm, norm_dict, metrics_best, dice_scores_wrt_gt = dae_tta.tta(
             volume_dataset = volume_dataset,
             dataset_name = dataset,
-            n_classes =n_classes,
             index = i,
-            rescale_factor = rescale_factor,
-            bg_suppression_opts = bg_suppression_opts,
-            bg_suppression_opts_tta = bg_suppression_opts_tta,
             num_steps = num_steps,
             batch_size = batch_size,
             num_workers=num_workers,

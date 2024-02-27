@@ -1,6 +1,6 @@
 import os
 import copy
-from typing import Union, Optional, Any
+from typing import Union, Optional, Any, Literal
 
 import wandb
 import torch
@@ -54,6 +54,10 @@ class TTADAE:
         seg: torch.nn.Module,
         dae: torch.nn.Module, 
         atlas: Any,
+        n_classes: int, 
+        rescale_factor: tuple[int],
+        bg_suppression_opts: dict,
+        bg_suppression_opts_tta: dict,
         loss_func: torch.nn.Module = DiceLoss(),
         learning_rate: float = 1e-3,
         alpha: float = 1.0,
@@ -61,6 +65,7 @@ class TTADAE:
         use_atlas_only_for_intit: bool = False,
         seg_with_bg_supp: bool = True,
         wandb_log: bool = False,
+        device: str = 'cuda',
         ) -> None:
     
         self.norm = norm
@@ -68,8 +73,15 @@ class TTADAE:
         self.dae = dae
         self.atlas = atlas
         
+        self.n_classes = n_classes
+        
         # Whether the segmentation model uses background suppression of input images
         self.seg_with_bg_supp = seg_with_bg_supp
+        self.bg_suppression_opts = bg_suppression_opts
+        self.bg_suppression_opts_tta = bg_suppression_opts_tta
+        
+        # Rescale factor for pseudo labels
+        self.rescale_factor = rescale_factor
         
         # Thresholds for pseudo label selection
         self.alpha = alpha
@@ -101,6 +113,12 @@ class TTADAE:
         self.dae.eval()
         self.dae.requires_grad_(False)
         
+        # DAE PL states
+        self.using_dae_pl = False
+        self.using_atlas_pl = False
+        
+        self.device = device
+        
         # wandb logging
         self.wandb_log = wandb_log
         
@@ -112,11 +130,7 @@ class TTADAE:
         self,
         volume_dataset: DatasetInMemory,
         dataset_name: str,
-        n_classes: int, 
         index: int,
-        rescale_factor: tuple[int],
-        bg_suppression_opts: dict,
-        bg_suppression_opts_tta: dict,
         num_steps: int,
         batch_size: int,
         num_workers: int,
@@ -135,9 +149,9 @@ class TTADAE:
             
         self.seg.requires_grad_(False)
 
-        if rescale_factor is not None:
-            assert (batch_size * rescale_factor[0]) % 1 == 0
-            label_batch_size = int(batch_size * rescale_factor[0])
+        if self.rescale_factor is not None:
+            assert (batch_size * self.rescale_factor[0]) % 1 == 0
+            label_batch_size = int(batch_size * self.rescale_factor[0])
         else:
             label_batch_size = batch_size
 
@@ -170,11 +184,9 @@ class TTADAE:
                     logdir=logdir,
                     device=device,
                     batch_size=batch_size,
-                    n_classes=n_classes,
                     num_workers=num_workers,
                     index=index,
                     iteration=step,
-                    bg_suppression_opts=bg_suppression_opts,
                 )
                 self.test_scores.append(dices_fg.mean().item())
 
@@ -184,8 +196,6 @@ class TTADAE:
                 _, _, label_dataloader = self.generate_pseudo_labels(
                     dae_dataloader=dae_dataloader,
                     label_batch_size=label_batch_size,
-                    bg_suppression_opts_tta=bg_suppression_opts_tta,
-                    rescale_factor=rescale_factor,
                     device=device,
                     num_workers=num_workers,
                     dataset_repetition=dataset_repetition,
@@ -211,18 +221,11 @@ class TTADAE:
 
                 x = x.to(device).float()
                 y = y.to(device)
-                x_norm = self.norm(x)
                 
-                if self.seg_with_bg_supp:
-                    bg_mask = bg_mask.to(device)
-                    x_norm = background_suppression(x_norm, bg_mask, bg_suppression_opts_tta)
+                _, mask, _ = self.forward_pass_seg(x, bg_mask, device)
 
-                mask, _ = self.seg(x_norm)
-
-                if rescale_factor is not None:
-                    mask = mask.permute(1, 0, 2, 3).unsqueeze(0)
-                    mask = F.interpolate(mask, scale_factor=rescale_factor, mode='trilinear')
-                    mask = mask.squeeze(0).permute(1, 0, 2, 3)
+                if self.rescale_factor is not None:
+                    mask = self.rescale_volume(mask)
 
                 loss = self.loss_func(mask, y)
 
@@ -273,21 +276,57 @@ class TTADAE:
 
         return self.norm, self.norm_dict, self.metrics_best, dice_scores
 
+    def forward_pass_seg(
+        self, 
+        x: torch.Tensor,
+        bg_mask: Optional[torch.Tensor] = None,
+        bg_suppression_opts: Optional[dict] = None,
+        device: Optional[Union[str, torch.device]] = None
+        ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        x_norm = self.norm(x)
+        
+        if self.seg_with_bg_supp:
+            bg_mask = bg_mask.to(device)
+            x_norm_bg_supp = background_suppression(x_norm, bg_mask, bg_suppression_opts)
+
+        mask, logits = self.seg(x_norm_bg_supp)
+        
+        return x_norm, mask, logits
+    
+    def rescale_volume(
+        self,
+        x: torch.Tensor,
+        how: Literal['up', 'down'] = 'down',
+        return_dchw: bool = True
+    ) -> torch.Tensor:
+        # By define the recale factor as the proportion between
+        #  the Atlas or DAE volumes and the processed volumes 
+        rescale_factor = list((1 / np.array(self.rescale_factor))) \
+            if how == 'up' else self.rescale_factor
+            
+        x = x.permute(1, 0, 2, 3).unsqueeze(0)
+        x = F.interpolate(x, scale_factor=rescale_factor, mode='trilinear')
+        
+        if return_dchw:
+            x = x.squeeze(0).permute(1, 0, 2, 3)
+        
+        return x
+    
     @torch.inference_mode()
     def test_volume(
         self,
         volume_dataset: DataLoader,
         dataset_name: str,
         index: int,
-        n_classes: int,
         batch_size: int,
         num_workers: int,
         appendix='',
-        bg_suppression_opts=None,
+        bg_suppression_opts: Optional[dict] = None,
         iteration=-1,
         device: Optional[Union[str, torch.device]] = None,
         logdir: Optional[str] = None,
     ):
+        bg_suppression_opts = bg_suppression_opts or self.bg_suppression_opts
 
         # Get original images
         x_original, y_original, bg = volume_dataset.dataset.get_original_images(index)
@@ -331,15 +370,12 @@ class TTADAE:
         y_pred = []
         
         for x, _, bg_mask in volume_dataloader:
-            x_norm_part = self.norm(x.to(device))
+            x_norm_part, y_pred_part, _ = self.forward_pass_seg(
+                x.to(device), bg_mask.to(device), 
+                self.bg_suppression_opts, device
+                )
             
-            if self.seg_with_bg_supp:
-                bg_mask = bg_mask.to(device)
-                x_norm_part = background_suppression(x_norm_part, bg_mask, bg_suppression_opts)
-
             x_norm.append(x_norm_part.cpu())
-
-            y_pred_part, _ = self.seg(x_norm_part)
             y_pred.append(y_pred_part.cpu())
 
         x_norm = torch.vstack(x_norm)
@@ -357,7 +393,7 @@ class TTADAE:
             x_norm,
             y_original,
             y_pred,
-            n_classes=n_classes,
+            n_classes=self.n_classes,
             output_dir=os.path.join(logdir, 'segmentations'),
             image_name=f'{dataset_name}_test_{index:03}_{iteration:03}{appendix}.png'
         )
@@ -380,8 +416,6 @@ class TTADAE:
         self,
         dae_dataloader: DataLoader,
         label_batch_size: int,
-        bg_suppression_opts_tta: dict,
-        rescale_factor: tuple[int],
         device: Union[str, torch.device],
         num_workers: int,
         dataset_repetition: int
@@ -390,22 +424,15 @@ class TTADAE:
         masks = []
         for x, _, _, _, bg_mask in dae_dataloader:
             x = x.to(device).float()
-
-            x_norm = self.norm(x)
-
-            if self.seg_with_bg_supp:
-                bg_mask = bg_mask.to(device)
-                x_norm = background_suppression(
-                    x_norm, bg_mask, bg_suppression_opts_tta)
-
-            mask, _ = self.seg(x_norm)
+            _, mask, _ = self.forward_pass_seg(
+                x, bg_mask, self.bg_suppression_opts_tta, device)
             masks.append(mask)
 
         masks = torch.cat(masks)
         masks = masks.permute(1,0,2,3).unsqueeze(0)
 
-        if rescale_factor is not None:
-            masks = F.interpolate(masks, scale_factor=rescale_factor, mode='trilinear')
+        if self.rescale_factor is not None:
+            masks = F.interpolate(masks, scale_factor=self.rescale_factor, mode='trilinear')
 
         dae_output, _ = self.dae(masks)
 
@@ -419,7 +446,9 @@ class TTADAE:
             print('Using DAE output as pseudo label')
             target_labels = dae_output
             dice = dice_denoised
-        
+            self.using_dae_pl = True
+            self.using_atlas_pl = False
+            
             if self.use_atlas_only_for_intit and not self.use_only_dae_pl:    
                 # Set alpha and beta to 0 to always use DAE output as pseudo label from now on
                 print('----------------Only DAE PL from now on----------------')
@@ -429,6 +458,8 @@ class TTADAE:
             print('Using Atlas as pseudo label')
             target_labels = self.atlas
             dice = dice_atlas
+            self.using_atlas_pl = True
+            self.using_dae_pl = False
             
         target_labels = target_labels.squeeze(0)
         target_labels = target_labels.permute(1,0,2,3)

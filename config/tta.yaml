@@ -65,7 +65,7 @@ dae:
 
 dae_and_diffusion:
   wandb_project: mt-tta-dae_and_diffusion_tta-baselines # mt-tta-brain-hcp_t2
-  logdir: /scratch_net/biwidl319/jbermeo/logs/brain/sota/tests/warmup
+  logdir: /scratch_net/biwidl319/jbermeo/logs/brain/sota/tests/ddpm_sample_guidance
   dae_dir: /scratch_net/biwidl319/jbermeo/data/models/brain/dae/hcp_t1
   seg_dir: /scratch_net/biwidl319/jbermeo/data/models/brain/segmentation/hcp_t1/bg_supp #bg_supp_norm_w_1x1_conv 
   ddpm_dir: /scratch_net/biwidl319/jbermeo/logs/brain/ddpm/not_one_hot_64_base_filters_with_aug_except_noise
@@ -75,8 +75,9 @@ dae_and_diffusion:
 
   ddpm_loss_beta: 1.0
   dae_loss_alpha: 0.5
+  ddpm_sample_guidance_eta: 0.5
 
-  use_ddpm_after_step: 1 # 500
+  use_ddpm_after_step: null # 500
   use_ddpm_after_dice: null # 0.5
   warmup_steps_for_ddpm_loss: 100
   minibatch_size_ddpm: 2

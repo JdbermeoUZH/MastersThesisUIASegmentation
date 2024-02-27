@@ -1,10 +1,12 @@
 import os
-from typing import Optional
+from typing import Optional, Union
 from tqdm import tqdm
 
 import wandb
 import torch
 import numpy as np
+#from pytorch_msssim import SSIM
+from kornia.losses import SSIM3DLoss
 from torch.nn import functional as F
 from torch.utils.data import ConcatDataset, DataLoader, TensorDataset
 
@@ -16,6 +18,10 @@ from tta_uia_segmentation.src.utils.utils import get_seed
 from tta_uia_segmentation.src.dataset import DatasetInMemory, utils as du
 
 
+#ssim = SSIM(data_range=1.0, channel=1, spatial_dims=3)
+#ssim_loss = lambda x, y: 0.5 * (1 - ssim(x, y))
+ssim_loss  = SSIM3DLoss(window_size=11, reduction='mean', max_val=1.0)
+
 class TTADAEandDDPM(TTADAE):
     
     def __init__(
@@ -23,6 +29,8 @@ class TTADAEandDDPM(TTADAE):
         ddpm: ConditionalGaussianDiffusion,
         dae_loss_alpha: float = 0.5,
         ddpm_loss_beta: float = 0.5,
+        ddpm_sample_guidance_eta: Optional[float] = None,
+        guidance_loss: Optional[callable] = ssim_loss,
         minibatch_size_ddpm: int = 2,
         frac_vol_diffusion_tta: float = 0.25,
         min_t_diffusion_tta: int = 250,
@@ -35,7 +43,6 @@ class TTADAEandDDPM(TTADAE):
         use_ddpm_after_step: Optional[int] = None,
         use_ddpm_after_dice: Optional[float] = None,
         warmup_steps_for_ddpm_loss: Optional[int] = None,
-        use_ddpm_sample_guidance: bool = False,
         **kwargs
         ) -> None:
         
@@ -44,6 +51,7 @@ class TTADAEandDDPM(TTADAE):
         
         self.dae_loss_alpha = dae_loss_alpha
         self.ddpm_loss_beta = ddpm_loss_beta
+        self.ddpm_sample_guidance_eta = ddpm_sample_guidance_eta
         
         self.minibatch_size_ddpm = minibatch_size_ddpm
         self.frac_vol_diffusion_tta = frac_vol_diffusion_tta
@@ -83,20 +91,17 @@ class TTADAEandDDPM(TTADAE):
         self.use_ddpm_loss = use_ddpm_after_dice is None and use_ddpm_after_step is None
         
         # DDPM sample guidance parameters
-        self.use_ddpm_sample_guidance = use_ddpm_sample_guidance
-        self.atlas_sampled_vol = self._sample_atlas_vol() \
-            if use_ddpm_sample_guidance else None
-            
+        self.use_ddpm_sample_guidance = self.ddpm_sample_guidance_eta is not None and \
+            self.ddpm_sample_guidance_eta > 0
+        self.guidance_loss = guidance_loss
+        self.atlas_sampled_vol = self._sample_vol((self.atlas > 0.5).float()) \
+            if self.use_ddpm_sample_guidance else None
     
     def tta(
         self,
         volume_dataset: DatasetInMemory,
         dataset_name: str,
-        n_classes: int, 
         index: int,
-        rescale_factor_dae: tuple[int],
-        bg_suppression_opts: dict,
-        bg_suppression_opts_tta: dict,
         num_steps: int,
         batch_size: int,
         num_workers: int,
@@ -122,10 +127,10 @@ class TTADAEandDDPM(TTADAE):
         self.test_scores = []
             
         self.seg.requires_grad_(False)
-
-        if rescale_factor_dae is not None:
-            assert (batch_size * rescale_factor_dae[0]) % 1 == 0
-            label_batch_size = int(batch_size * rescale_factor_dae[0])
+    
+        if self.rescale_factor is not None:
+            assert (batch_size * self.rescale_factor[0]) % 1 == 0
+            label_batch_size = int(batch_size * self.rescale_factor[0])
         else:
             label_batch_size = batch_size
 
@@ -144,6 +149,15 @@ class TTADAEandDDPM(TTADAE):
             num_workers=num_workers,
             drop_last=True,
         )
+        
+        if self.use_ddpm_sample_guidance:
+            atlas_sampled_vol_dl = DataLoader(
+                TensorDataset(self.atlas_sampled_vol),
+                batch_size=batch_size,
+                shuffle=False,
+                num_workers=num_workers,
+                drop_last=False,
+            )
         
         running_max = self.max_int_norm_imgs
         running_min = self.min_int_norm_imgs
@@ -177,11 +191,9 @@ class TTADAEandDDPM(TTADAE):
                     logdir=logdir,
                     device=device,
                     batch_size=batch_size,
-                    n_classes=n_classes,
                     num_workers=num_workers,
                     index=index,
                     iteration=step,
-                    bg_suppression_opts=bg_suppression_opts,
                 )
                 self.test_scores.append(dices_fg.mean().item())
 
@@ -194,11 +206,19 @@ class TTADAEandDDPM(TTADAE):
                     dice_dae, dice_atlas, label_dataloader = self.generate_pseudo_labels(
                         dae_dataloader=dae_dataloader,
                         label_batch_size=label_batch_size,
-                        bg_suppression_opts_tta=bg_suppression_opts_tta,
-                        rescale_factor=rescale_factor_dae,
                         device=device,
                         num_workers=num_workers,
                         dataset_repetition=dataset_repetition
+                    )
+                    
+                if self.use_ddpm_sample_guidance and self.using_dae_pl:
+                    dae_sampled_vol = self._sample_vol(label_dataloader)
+                    dae_sampled_vol_dl = DataLoader(
+                        TensorDataset(dae_sampled_vol),
+                        batch_size=batch_size,
+                        shuffle=False,
+                        num_workers=num_workers,
+                        drop_last=False,
                     )
                     
             if self.use_ddpm_after_dice is not None and not self.use_ddpm_loss:
@@ -209,6 +229,8 @@ class TTADAEandDDPM(TTADAE):
             tta_loss = 0
             step_dae_loss = 0
             step_ddpm_loss = 0
+            step_ddpm_guidance_loss = 0
+            
             n_samples = 0
             n_samples_diffusion = 0
 
@@ -221,6 +243,8 @@ class TTADAEandDDPM(TTADAE):
             if const_aug_per_volume:
                 volume_dataset.dataset.set_seed(get_seed())
                 
+            # Define parameters related to the DDPM loss
+            # :============================================================:
             # Sample batches of images on which to use the noise estimation task
             num_batches_sample = int(self.frac_vol_diffusion_tta * len(volume_dataloader))
             b_i_for_diffusion_loss = np.random.choice(
@@ -238,14 +262,22 @@ class TTADAEandDDPM(TTADAE):
                         
             ddpm_reweigh_factor = warmup_factor * ddpm_reweigh_factor
             
+            # Define parameters related to the DDPM sample guidance
+            # :============================================================:
+            if self.use_ddpm_sample_guidance:
+                sampled_vol_dl = dae_sampled_vol_dl if self.using_dae_pl else atlas_sampled_vol_dl
+            else:
+                sampled_vol_dl = [[None]] * len(volume_dataloader)
+            
             # Adapting to the target distribution
             # :===========================================:
             
             # To avoid memory issues, we compute x_norm twice to separate the gradient
             #  computation for the DAE and DDPM losses. 
-            for b_i, ((x, y_gt,_,_, bg_mask), (y_pl,)) in enumerate(zip(volume_dataloader, label_dataloader)):
+            for b_i, ((x, y_gt,_,_, bg_mask), (y_pl,), (x_sampled,)) in enumerate(zip(volume_dataloader, label_dataloader, sampled_vol_dl)):
                 dae_loss = torch.tensor(0).float().to(device)
                 ddpm_loss = torch.tensor(0).float().to(device)
+                ddpm_guidance_loss = torch.tensor(0).float().to(device)
                             
                 if not accumulate_over_volume:
                     self.optimizer.zero_grad()
@@ -255,7 +287,25 @@ class TTADAEandDDPM(TTADAE):
                                
                 n_samples += x.shape[0]
                 
-                # Calculate gradients from the noise estimation loss
+                # DAE loss: Calculate gradients from the segmentation task on the pseudo label  
+                # :===============================================================:  
+                if self.dae_loss_alpha > 0:
+                    x_norm = self.norm(x)
+                    
+                    _, mask, _ = self.forward_pass_seg(x, bg_mask, device)
+                    
+                    if self.rescale_factor is not None:
+                        mask = self.rescale_volume(mask)
+
+                    dae_loss = self.dae_loss_alpha * self.loss_func(mask, y_pl)
+                    
+                    if accumulate_over_volume:
+                        dae_loss = dae_loss / len(volume_dataloader)
+        
+                    dae_loss.backward()
+                    
+                 # DDPM loss: Calculate gradients from the noise estimation loss
+                # :============================================================:
                 if b_i in b_i_for_diffusion_loss and self.ddpm_loss_beta > 0 and self.use_ddpm_loss:
                     n_samples_diffusion += x.shape[0] 
                     
@@ -276,7 +326,7 @@ class TTADAEandDDPM(TTADAE):
                     elif self.use_y_pred_for_ddpm_loss:
                         if self.seg_with_bg_supp:
                             bg_mask = bg_mask.to(device)
-                            x_norm_bg_supp = background_suppression(x_norm, bg_mask, bg_suppression_opts_tta)
+                            x_norm_bg_supp = background_suppression(x_norm, bg_mask, self.bg_suppression_opts_tta)
                             x_cond, _ = self.seg(x_norm_bg_supp)
                         else:
                             x_cond, _ = self.seg(x_norm)
@@ -296,28 +346,23 @@ class TTADAEandDDPM(TTADAE):
                     step_max = max(step_max, img.max().item())
                     step_min = min(step_min, img.min().item())
                     
-                # Calculate gradients from the segmentation task on the pseudo label    
-                if self.dae_loss_alpha > 0:
+                # DDPM sample guidance
+                # :===============================================================: 
+                if self.use_ddpm_sample_guidance:
                     x_norm = self.norm(x)
+                    x_sampled.to(device)    
                     
-                    if self.seg_with_bg_supp:
-                        bg_mask = bg_mask.to(device)
-                        x_norm = background_suppression(x_norm, bg_mask, bg_suppression_opts_tta)
-
-                    mask, _ = self.seg(x_norm)
+                    x_norm = x_norm.repeat(self.x_sampled.shape[0] , 1, 1, 1, 1)
                     
-                    if rescale_factor_dae is not None:
-                        mask = mask.permute(1, 0, 2, 3).unsqueeze(0)
-                        mask = F.interpolate(mask, scale_factor=rescale_factor_dae, mode='trilinear')
-                        mask = mask.squeeze(0).permute(1, 0, 2, 3)
-
-                    dae_loss = self.dae_loss_alpha * self.loss_func(mask, y_pl)
-                    
+                    # Calculate guidance loss wrt to Atlas or DAE sampled volumes                                
+                    guidance_loss = self.ddpm_sample_guidance_eta * \
+                            self.guidance_loss(x_norm, x_sampled)
+                            
                     if accumulate_over_volume:
-                        dae_loss = dae_loss / len(volume_dataloader)
-        
-                    dae_loss.backward()
-            
+                        guidance_loss = guidance_loss / len(volume_dataloader)    
+                        
+                    guidance_loss.backward()
+                
                 if not accumulate_over_volume:
                     self.optimizer.step()              
 
@@ -333,16 +378,18 @@ class TTADAEandDDPM(TTADAE):
             if accumulate_over_volume:
                 self.optimizer.step()
 
-            step_ddpm_loss = (step_ddpm_loss / n_samples_diffusion) if n_samples_diffusion > 0 else 0
             step_dae_loss = (step_dae_loss / n_samples) if n_samples > 0 else 0
-            tta_loss = step_ddpm_loss + step_dae_loss
+            step_ddpm_loss = (step_ddpm_loss / n_samples_diffusion) if n_samples_diffusion > 0 else 0
+            step_ddpm_guidance_loss = (step_ddpm_guidance_loss / n_samples) if n_samples > 0 else 0
+            tta_loss = step_dae_loss + step_ddpm_loss + step_ddpm_guidance_loss
             
             self.tta_losses.append(tta_loss)
 
             if self.wandb_log:
                 wandb.log({
-                    f'ddpm_loss/img_{index}': step_ddpm_loss, 
                     f'dae_loss/img_{index}': step_dae_loss, 
+                    f'ddpm_loss/img_{index}': step_ddpm_loss,
+                    f'ddpm_guidance_loss/img_{index}': step_ddpm_guidance_loss,
                     f'total_loss/img_{index}': tta_loss, 
                     'tta_step': step
                     }
@@ -430,8 +477,9 @@ class TTADAEandDDPM(TTADAE):
     
     def _define_custom_wandb_metrics(self, ):
         wandb.define_metric(f'tta_step')
-        wandb.define_metric(f'ddpm_loss/*', step_metric=f'tta_step')
         wandb.define_metric(f'dae_loss/*', step_metric=f'tta_step')
+        wandb.define_metric(f'ddpm_loss/*', step_metric=f'tta_step')
+        wandb.define_metric(f'ddpm_guidance_loss/*', step_metric=f'tta_step')
         wandb.define_metric(f'total_loss/*', step_metric=f'tta_step')   
         wandb.define_metric(f'dice_score_fg/*', step_metric=f'tta_step')    
 
@@ -440,29 +488,41 @@ class TTADAEandDDPM(TTADAE):
         self.use_ddpm_loss = self.use_ddpm_after_dice is None and \
             self.use_ddpm_after_step is None
             
-    def _sample_atlas_vol(self, num_vol_samples: int = 1) -> torch.Tensor:
-        # Normalize Atlas between 0 and 1
-        n_classes = self.atlas_vol.shape[0]
-        atlas = du.onehot_to_class(self.atlas_vol)
-        atlas = atlas.float() / (n_classes - 1)
+    def _sample_vol(self, x_cond_vol: Union[torch.Tensor, DataLoader], num_sampled_vols: int = 1, 
+                    convert_onehot_to_cat: bool = True) -> torch.Tensor:
+        if convert_onehot_to_cat:
+            x_cond_vol = du.onehot_to_class(x_cond_vol)
+            x_cond_vol = x_cond_vol.float() / (self.n_classes - 1)
         
-        norm_atlas_dataloader = DataLoader(
-            TensorDataset(atlas),
-            batch_size=self.minibatch_size,
-            shuffle=True,
-            num_workers=self.num_workers,
-            drop_last=True,
-        )
+        if isinstance(x_cond_vol, torch.Tensor):
+            vol_dataloader = DataLoader(
+                TensorDataset(x_cond_vol.squeeze()),
+                batch_size=self.minibatch_size_ddpm,
+                shuffle=False,
+                drop_last=False,
+            )
+        if isinstance(x_cond_vol, DataLoader):
+            vol_dataloader = x_cond_vol
+        else:
+            raise ValueError('x_cond_vol must be either a torch.Tensor or a DataLoader')
         
-        atlas_sampled_vols = []
-        for _ in range(num_vol_samples):
+        sampled_vols = []
+        for _ in range(num_sampled_vols):
             vol_i = []
-            for x_cond in norm_atlas_dataloader:
+            for (x_cond, )in vol_dataloader:
                 x_cond = x_cond.to(self.device)
+                x_cond = x_cond.unsqueeze(1)
                 vol_i.append(
                     self.ddpm.ddim_sample(x_cond, return_all_timesteps=False)
                 )
+                
+            # Concatenate and upsample the generated volumes, add batch and channel dimensions
+            vol_i = torch.vstack(vol_i)
             
-            atlas_sampled_vols.append(torch.vstack(vol_i))
+            # Upsample the volume to the same size as the input image
+            vol_i = self.rescale_volume(vol_i, how='up', return_dchw=False)
             
-        return torch.concat(atlas_sampled_vols, dim=0)
+            # Add upsampled volume to the list
+            sampled_vols.append(vol_i) # add batch dimensions
+            
+        return torch.concat(sampled_vols, dim=0).cpu()

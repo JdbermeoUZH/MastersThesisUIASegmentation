@@ -58,6 +58,7 @@ def preprocess_cmd_args() -> argparse.Namespace:
     
     parser.add_argument('--ddpm_loss_beta', type=float, help='Weight for DDPM loss. Default: 1.0')
     parser.add_argument('--dae_loss_alpha', type=float, help='Weight for DAE loss. Default: 1.0')
+    parser.add_argument('--ddpm_sample_guidance_eta', type=float, help='Eta for DDPM sampling guidance. Default: None')
     parser.add_argument('--frac_vol_diffusion_tta', type=float, help='Fraction of volume to diffuse. Default: 0.5')
     parser.add_argument('--use_ddpm_after_step', type=int, help='Use DDPM after x steps. Default: None')
     parser.add_argument('--use_ddpm_after_dice', type=float, help='Use DDPM after dice is below x. Default: None')
@@ -292,11 +293,15 @@ if __name__ == '__main__':
     learning_rate               = tta_config[tta_mode]['learning_rate']
     alpha                       = tta_config[tta_mode]['alpha']
     beta                        = tta_config[tta_mode]['beta']
+    rescale_factor              = train_params_dae['dae']['rescale_factor']
+    bg_suppression_opts_tta     = tta_config[tta_mode]['bg_suppression_opts']
+    
     minibatch_size_ddpm         = tta_config[tta_mode]['minibatch_size_ddpm']
     use_atlas_only_for_intit    = tta_config[tta_mode]['use_atlas_only_for_intit']
     seg_with_bg_supp            = tta_config[tta_mode]['seg_with_bg_supp']
     dae_loss_alpha              = tta_config[tta_mode]['dae_loss_alpha']
     ddpm_loss_beta              = tta_config[tta_mode]['ddpm_loss_beta']
+    ddpm_sample_guidance_eta    = tta_config[tta_mode]['ddpm_sample_guidance_eta']
     frac_vol_diffusion_tta      = tta_config[tta_mode]['frac_vol_diffusion_tta']
     min_t_diffusion_tta         = tta_config[tta_mode]['min_t_diffusion_tta']
     max_t_diffusion_tta         = tta_config[tta_mode]['max_t_diffusion_tta']
@@ -315,6 +320,7 @@ if __name__ == '__main__':
         seg                     = seg,
         dae                     = dae,
         atlas                   = atlas,
+        n_classes               = n_classes,
         ddpm                    = ddpm,          
         loss_func               = DiceLoss(),
         learning_rate           = learning_rate,
@@ -323,11 +329,15 @@ if __name__ == '__main__':
         beta                    = beta,
         use_atlas_only_for_intit=use_atlas_only_for_intit,
         seg_with_bg_supp        = seg_with_bg_supp,
+        rescale_factor          = rescale_factor,
+        bg_suppression_opts     = bg_suppression_opts,
+        bg_suppression_opts_tta = bg_suppression_opts_tta,    
         ddpm_loss_beta          = ddpm_loss_beta,
         minibatch_size_ddpm     = minibatch_size_ddpm,
         frac_vol_diffusion_tta  = frac_vol_diffusion_tta,
         min_t_diffusion_tta     = min_t_diffusion_tta,
         max_t_diffusion_tta     = max_t_diffusion_tta,
+        ddpm_sample_guidance_eta=ddpm_sample_guidance_eta,
         sampling_timesteps      = sampling_timesteps,
         wandb_log               = wandb_log,
         min_max_int_norm_imgs   = min_max_int_norm_imgs,
@@ -337,12 +347,11 @@ if __name__ == '__main__':
         use_ddpm_after_step     = use_ddpm_after_step,
         use_ddpm_after_dice     = use_ddpm_after_dice,
         warmup_steps_for_ddpm_loss=warmup_steps_for_ddpm_loss,
+        device                  = device,
     )
     
     # Do TTA with a DAE
     # :=========================================================================:
-    bg_suppression_opts_tta     = tta_config[tta_mode]['bg_suppression_opts']
-    rescale_factor              = train_params_dae['dae']['rescale_factor']
     num_steps                   = tta_config[tta_mode]['num_steps']
     batch_size                  = tta_config[tta_mode]['batch_size']
     num_workers                 = tta_config['num_workers']
@@ -404,11 +413,7 @@ if __name__ == '__main__':
         norm, norm_dict, metrics_best, dice_scores_wrt_gt = tta.tta(
             volume_dataset = volume_dataset,
             dataset_name = dataset,
-            n_classes =n_classes,
             index = i,
-            rescale_factor_dae = rescale_factor,
-            bg_suppression_opts = bg_suppression_opts,
-            bg_suppression_opts_tta = bg_suppression_opts_tta,
             num_steps = num_steps,
             batch_size = batch_size,
             num_workers=num_workers,
