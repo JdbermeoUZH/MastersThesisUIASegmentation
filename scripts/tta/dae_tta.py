@@ -329,10 +329,8 @@ if __name__ == '__main__':
             dataset_name = dataset,
             index = i,
             iteration=num_steps,
-            n_classes = n_classes,
             batch_size = batch_size,
             num_workers = num_workers,
-            bg_suppression_opts = bg_suppression_opts,
             device = device,
             logdir = logdir,
         )

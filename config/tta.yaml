@@ -87,7 +87,7 @@ dae_and_diffusion:
   sampling_timesteps: 100
   min_max_int_norm_imgs: [-0.5313728, 0.67584044]
   use_x_norm_for_ddpm_loss: True
-  use_y_pred_for_ddpm_loss: False
+  use_y_pred_for_ddpm_loss: True
   use_x_cond_gt: False    # Only true for debugging
 
   batch_size: 16

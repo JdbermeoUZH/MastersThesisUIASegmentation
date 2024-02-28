@@ -292,7 +292,8 @@ class TTADAEandDDPM(TTADAE):
                 if self.dae_loss_alpha > 0:
                     x_norm = self.norm(x)
                     
-                    _, mask, _ = self.forward_pass_seg(x, bg_mask, device)
+                    _, mask, _ = self.forward_pass_seg(
+                        x, bg_mask, self.bg_suppression_opts_tta, device)
                     
                     if self.rescale_factor is not None:
                         mask = self.rescale_volume(mask)
@@ -326,7 +327,8 @@ class TTADAEandDDPM(TTADAE):
                     elif self.use_y_pred_for_ddpm_loss:
                         if self.seg_with_bg_supp:
                             bg_mask = bg_mask.to(device)
-                            x_norm_bg_supp = background_suppression(x_norm, bg_mask, self.bg_suppression_opts_tta)
+                            x_norm_bg_supp = background_suppression(
+                                x_norm, bg_mask, self.bg_suppression_opts_tta)
                             x_cond, _ = self.seg(x_norm_bg_supp)
                         else:
                             x_cond, _ = self.seg(x_norm)
@@ -352,23 +354,28 @@ class TTADAEandDDPM(TTADAE):
                     x_norm = self.norm(x)
                     x_sampled.to(device)    
                     
-                    x_norm = x_norm.repeat(self.x_sampled.shape[0] , 1, 1, 1, 1)
+                    x_norm = x_norm.repeat(x_sampled.shape[0] , 1, 1, 1, 1)
+                    
+                    # Images are NDCHW, make them NCDHW to compare as volumes
+                    x_norm = x_norm.permute(0, 2, 1, 3, 4)
+                    x_sampled = x_sampled.permute(0, 2, 1, 3, 4)
                     
                     # Calculate guidance loss wrt to Atlas or DAE sampled volumes                                
-                    guidance_loss = self.ddpm_sample_guidance_eta * \
+                    ddpm_guidance_loss = self.ddpm_sample_guidance_eta * \
                             self.guidance_loss(x_norm, x_sampled)
                             
                     if accumulate_over_volume:
-                        guidance_loss = guidance_loss / len(volume_dataloader)    
+                        ddpm_guidance_loss = ddpm_guidance_loss / len(volume_dataloader)    
                         
-                    guidance_loss.backward()
-                
+                    ddpm_guidance_loss.backward()
+                                    
                 if not accumulate_over_volume:
                     self.optimizer.step()              
 
                 with torch.no_grad():
+                    step_dae_loss += (dae_loss.detach() * x.shape[0]).item()                
                     step_ddpm_loss += (ddpm_loss.detach() * x.shape[0]).item()
-                    step_dae_loss += (dae_loss.detach() * x.shape[0]).item()
+                    step_ddpm_guidance_loss += (ddpm_guidance_loss.detach() * x.shape[0]).item()
                                               
             # Update the max and min values with those of the current step
             #  Only affects running max and min if it is to decrease their range
@@ -494,17 +501,15 @@ class TTADAEandDDPM(TTADAE):
             x_cond_vol = du.onehot_to_class(x_cond_vol)
             x_cond_vol = x_cond_vol.float() / (self.n_classes - 1)
         
-        if isinstance(x_cond_vol, torch.Tensor):
+        if isinstance(x_cond_vol, DataLoader):
+            vol_dataloader = x_cond_vol
+        else:
             vol_dataloader = DataLoader(
                 TensorDataset(x_cond_vol.squeeze()),
                 batch_size=self.minibatch_size_ddpm,
                 shuffle=False,
                 drop_last=False,
             )
-        if isinstance(x_cond_vol, DataLoader):
-            vol_dataloader = x_cond_vol
-        else:
-            raise ValueError('x_cond_vol must be either a torch.Tensor or a DataLoader')
         
         sampled_vols = []
         for _ in range(num_sampled_vols):
@@ -520,7 +525,8 @@ class TTADAEandDDPM(TTADAE):
             vol_i = torch.vstack(vol_i)
             
             # Upsample the volume to the same size as the input image
-            vol_i = self.rescale_volume(vol_i, how='up', return_dchw=False)
+            vol_i = self.rescale_volume(vol_i, how='up', return_dchw=True)
+            vol_i = vol_i.unsqueeze(0)
             
             # Add upsampled volume to the list
             sampled_vols.append(vol_i) # add batch dimensions

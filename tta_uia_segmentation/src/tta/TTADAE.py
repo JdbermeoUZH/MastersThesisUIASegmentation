@@ -222,7 +222,8 @@ class TTADAE:
                 x = x.to(device).float()
                 y = y.to(device)
                 
-                _, mask, _ = self.forward_pass_seg(x, bg_mask, device)
+                _, mask, _ = self.forward_pass_seg(
+                    x, bg_mask, self.bg_suppression_opts_tta, device)
 
                 if self.rescale_factor is not None:
                     mask = self.rescale_volume(mask)
