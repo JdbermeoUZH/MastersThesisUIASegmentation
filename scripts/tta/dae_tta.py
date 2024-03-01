@@ -40,7 +40,9 @@ def preprocess_cmd_args() -> argparse.Namespace:
     parser.add_argument('--logdir', type=str, help='Path to directory where logs and checkpoints are saved. Default: logs')  
     parser.add_argument('--dae_dir', type=str, help='Path to directory where DAE checkpoints are saved')
     parser.add_argument('--seg_dir', type=str, help='Path to directory where segmentation checkpoints are saved')
+    parser.add_argument('--wandb_project', type=str, help='Name of wandb project to log to. Default: "tta"')
     parser.add_argument('--wandb_log', type=lambda s: s.strip().lower() == 'true', help='Log tta to wandb. Default: False.')
+    parser.add_argument('--start_new_exp', type=lambda s: s.strip().lower() == 'true', help='Start a new wandb experiment. Default: False')
 
     # TTA loop
     # -------------:
@@ -49,6 +51,7 @@ def preprocess_cmd_args() -> argparse.Namespace:
     parser.add_argument('--beta', type=float, help='Minimum dice of the Atlas pseudolabel and the predicted segmentation. Default: 0.25')
     parser.add_argument('--num_steps', type=int, help='Number of steps to take in TTA loop. Default: 100')
     parser.add_argument('--learning_rate', type=float, help='Learning rate for optimizer. Default: 1e-4')
+    parser.add_argument('--accumulate_over_volume', type=lambda s: s.strip().lower() == 'true', help='Whether to accumulate over volume. Default: True')
     parser.add_argument('--batch_size', type=int, help='Batch size for tta. Default: 4')
     parser.add_argument('--num_workers', type=int, help='Number of workers for dataloader. Default: 0')
     parser.add_argument('--calculate_dice_every', type=int, help='Calculate dice every n steps. Default: 25')
@@ -154,8 +157,9 @@ if __name__ == '__main__':
     seed                    = tta_config['seed']
     device                  = tta_config['device']
     wandb_log               = tta_config['wandb_log']
+    start_new_exp           = tta_config['start_new_exp']
     logdir                  = tta_config[tta_mode]['logdir']
-    wandb_project           = tta_config[tta_mode]['wandb_project']
+    wandb_project           = tta_config[tta_mode]['wandb_project']  
     
     os.makedirs(logdir, exist_ok=True)
     dump_config(os.path.join(logdir, 'params.yaml'), params)
@@ -164,7 +168,7 @@ if __name__ == '__main__':
     # Setup wandb logging
     # :=========================================================================:
     if wandb_log:
-        wandb_dir = setup_wandb(params, logdir, wandb_project)
+        wandb_dir = setup_wandb(params, logdir, wandb_project, start_new_exp)
     
     # Define the dataset that is to be used for training
     # :=========================================================================:
@@ -246,6 +250,7 @@ if __name__ == '__main__':
     alpha                       = tta_config[tta_mode]['alpha']
     beta                        = tta_config[tta_mode]['beta']
     rescale_factor              = train_params_dae['dae']['rescale_factor']
+    seg_with_bg_supp            = tta_config[tta_mode]['seg_with_bg_supp']
     bg_suppression_opts_tta     = tta_config[tta_mode]['bg_suppression_opts']
     
     dae_tta = TTADAE(
@@ -253,8 +258,9 @@ if __name__ == '__main__':
         seg                     = seg,
         dae                     = dae,
         atlas                   = atlas,
-        n_clases                = n_classes,
+        n_classes                = n_classes,
         rescale_factor          = rescale_factor,
+        seg_with_bg_supp        = seg_with_bg_supp,
         bg_suppression_opts     = bg_suppression_opts, 
         bg_suppression_opts_tta = bg_suppression_opts_tta,
         loss_func               = DiceLoss(),

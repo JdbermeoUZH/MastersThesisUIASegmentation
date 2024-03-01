@@ -289,8 +289,9 @@ class TTADAE:
         if self.seg_with_bg_supp:
             bg_mask = bg_mask.to(device)
             x_norm_bg_supp = background_suppression(x_norm, bg_mask, bg_suppression_opts)
-
-        mask, logits = self.seg(x_norm_bg_supp)
+            mask, logits = self.seg(x_norm_bg_supp)
+        else:
+            mask, logits = self.seg(x_norm)
         
         return x_norm, mask, logits
     

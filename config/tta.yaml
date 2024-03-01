@@ -20,13 +20,13 @@ bg_suppression_opts:
   hole_filling: True
 
 dae:
-  wandb_project: mt-tta-dae_and_diffusion_tta-baselines # mt-tta-brain-hcp_t2
+  wandb_project: mt-tta-dae_debugging # mt-tta-brain-hcp_t2
   logdir: /scratch_net/biwidl319/jbermeo/logs/brain/sota/baselines/2_19/dae_only_orig/test_split_lr_1em3_no_grad_acc
   dae_dir: /scratch_net/biwidl319/jbermeo/data/models/brain/dae/hcp_t1
   seg_dir: /scratch_net/biwidl319/jbermeo/data/models/brain/segmentation/hcp_t1/bg_supp
   batch_size: 16
   dataset_repetition: 1
-  num_steps: 1250  # 500 for brain, 2700 for wmh
+  num_steps: 1000  # 500 for brain, 2700 for wmh
   update_dae_output_every: 25
   calculate_dice_every: 25  # 25 for brain, 135 for wmh (nuhs, umc, vu)
   alpha: 1.0
@@ -36,6 +36,8 @@ dae:
   const_aug_per_volume: False
   accumulate_over_volume: False
 
+  seg_with_bg_supp: False
+  
   bg_suppression_opts:
     type: fixed_value  # possible values: none, fixed_value, random_value
     bg_value: -0.5

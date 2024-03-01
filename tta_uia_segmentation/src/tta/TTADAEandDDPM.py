@@ -152,7 +152,7 @@ class TTADAEandDDPM(TTADAE):
         
         if self.use_ddpm_sample_guidance:
             atlas_sampled_vol_dl = DataLoader(
-                TensorDataset(self.atlas_sampled_vol),
+                TensorDataset(self.atlas_sampled_vol.permute(1, 0, 2, 3, 4)), # NDCHW -> DNCHW over depth in 2D 
                 batch_size=batch_size,
                 shuffle=False,
                 num_workers=num_workers,
@@ -214,7 +214,7 @@ class TTADAEandDDPM(TTADAE):
                 if self.use_ddpm_sample_guidance and self.using_dae_pl:
                     dae_sampled_vol = self._sample_vol(label_dataloader)
                     dae_sampled_vol_dl = DataLoader(
-                        TensorDataset(dae_sampled_vol),
+                        TensorDataset(dae_sampled_vol.permute(1, 0, 2, 3, 4)), # NDCHW -> DNCHW over depth in 2D
                         batch_size=batch_size,
                         shuffle=False,
                         num_workers=num_workers,
@@ -352,13 +352,12 @@ class TTADAEandDDPM(TTADAE):
                 # :===============================================================: 
                 if self.use_ddpm_sample_guidance:
                     x_norm = self.norm(x)
-                    x_sampled.to(device)    
+                    x_sampled = x_sampled.to(device)    
                     
-                    x_norm = x_norm.repeat(x_sampled.shape[0] , 1, 1, 1, 1)
+                    x_norm = x_norm.unsqueeze(1).repeat(1, x_sampled.shape[1], 1, 1, 1) # BCHW -> BNCHW to match x_sampled 
                     
-                    # Images are NDCHW, make them NCDHW to compare as volumes
-                    x_norm = x_norm.permute(0, 2, 1, 3, 4)
-                    x_sampled = x_sampled.permute(0, 2, 1, 3, 4)
+                    x_norm = x_norm.permute(1, 2, 0, 3, 4)       # BNCHW -> NCBHW to compare as volumes, B = Depth
+                    x_sampled = x_sampled.permute(1, 2, 0, 3, 4) # BNCHW -> NCBHW to compare as volumes, B = Depth
                     
                     # Calculate guidance loss wrt to Atlas or DAE sampled volumes                                
                     ddpm_guidance_loss = self.ddpm_sample_guidance_eta * \
@@ -497,15 +496,14 @@ class TTADAEandDDPM(TTADAE):
             
     def _sample_vol(self, x_cond_vol: Union[torch.Tensor, DataLoader], num_sampled_vols: int = 1, 
                     convert_onehot_to_cat: bool = True) -> torch.Tensor:
-        if convert_onehot_to_cat:
-            x_cond_vol = du.onehot_to_class(x_cond_vol)
-            x_cond_vol = x_cond_vol.float() / (self.n_classes - 1)
-        
+               
         if isinstance(x_cond_vol, DataLoader):
             vol_dataloader = x_cond_vol
+            log_shape = True
+            
         else:
             vol_dataloader = DataLoader(
-                TensorDataset(x_cond_vol.squeeze()),
+                TensorDataset(x_cond_vol.squeeze().permute(1, 0, 2, 3)),  # NDCHW -> DCHW over depth in 2D
                 batch_size=self.minibatch_size_ddpm,
                 shuffle=False,
                 drop_last=False,
@@ -515,8 +513,17 @@ class TTADAEandDDPM(TTADAE):
         for _ in range(num_sampled_vols):
             vol_i = []
             for (x_cond, )in vol_dataloader:
+                if log_shape:
+                    print('DEBUG, DELETE ME: x_cond.shape', x_cond.shape)
+                if convert_onehot_to_cat:
+                    x_cond = du.onehot_to_class(x_cond)
+                    x_cond = x_cond.float() / (self.n_classes - 1)
+                    if log_shape:
+                        print('DEBUG, DELETE ME: x_cond.shape', x_cond.shape)
+                    
                 x_cond = x_cond.to(self.device)
-                x_cond = x_cond.unsqueeze(1)
+                if log_shape:
+                    print('DEBUG, DELETE ME: x_cond.shape', x_cond.shape)
                 vol_i.append(
                     self.ddpm.ddim_sample(x_cond, return_all_timesteps=False)
                 )

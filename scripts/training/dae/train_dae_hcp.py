@@ -6,15 +6,15 @@ import wandb
 import numpy as np
 from torch.utils.data import DataLoader, ConcatDataset
 
-sys.path.append(os.path.normpath(os.path.join(os.path.dirname(__file__), '..', '..', '..', 'tta_uia_segmentation', 'src')))
+sys.path.append(os.path.normpath(os.path.join(os.path.dirname(__file__), '..', '..', '..')))
 
-from dataset.dataset_in_memory import get_datasets
-from models import UNet
-from train.DAETrainer import DAETrainer
-from utils.loss import DiceLoss
-from utils.io import load_config, rewrite_config_arguments, dump_config, print_config, save_checkpoint, write_to_csv, deep_get
-from utils.utils import seed_everything, define_device
-from utils.logging import setup_wandb
+from tta_uia_segmentation.src.dataset.dataset_in_memory import get_datasets
+from tta_uia_segmentation.src.models import UNet
+from tta_uia_segmentation.src.train.DAETrainer import DAETrainer
+from tta_uia_segmentation.src.utils.loss import DiceLoss
+from tta_uia_segmentation.src.utils.io import load_config, rewrite_config_arguments, dump_config, print_config, save_checkpoint, write_to_csv, deep_get
+from tta_uia_segmentation.src.utils.utils import seed_everything, define_device
+from tta_uia_segmentation.src.utils.logging import setup_wandb
 
 
 def preprocess_cmd_args() -> argparse.Namespace:
