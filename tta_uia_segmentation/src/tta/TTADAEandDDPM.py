@@ -125,6 +125,9 @@ class TTADAEandDDPM(TTADAE):
         
         self.tta_losses = []
         self.test_scores = []
+        
+        label_dataloader = None
+        dae_sampled_vol = None
             
         self.seg.requires_grad_(False)
     
@@ -139,7 +142,7 @@ class TTADAEandDDPM(TTADAE):
             batch_size=batch_size,
             shuffle=False,
             num_workers=num_workers,
-            drop_last=False,
+            drop_last=False
         )
 
         volume_dataloader = DataLoader(
@@ -184,10 +187,32 @@ class TTADAEandDDPM(TTADAE):
     
             # Test performance during adaptation.
             if step % calculate_dice_every == 0 and calculate_dice_every != -1:
+                
+                if self.dae_loss_alpha > 0:
+                    if not self.using_dae_pl:
+                        y_dae_or_atlas = self.atlas 
+                    else:
+                        y_dae_or_atlas = []
+                        for (y_dae_mb,) in label_dataloader:
+                            y_dae_or_atlas.append(y_dae_mb)
+                        y_dae_or_atlas = torch.vstack(y_dae_or_atlas)
+                        y_dae_or_atlas = y_dae_or_atlas.permute(1, 0, 2, 3).unsqueeze(0) # make NCDHW
+                else:
+                    y_dae_or_atlas = None
+                    
+                if self.use_ddpm_sample_guidance:
+                    x_guidance = dae_sampled_vol if self.using_dae_pl else self.atlas_sampled_vol
+                    x_guidance = x_guidance[0:1]
+                    x_guidance = x_guidance.permute(0, 2, 1, 3, 4) # NDCHW -> NCDHW
+                    
+                else:
+                    x_guidance = None
 
                 _, dices_fg = self.test_volume(
                     volume_dataset=volume_dataset,
                     dataset_name=dataset_name,
+                    y_dae_or_atlas=y_dae_or_atlas.detach().cpu(),
+                    x_guidance=x_guidance.detach().cpu(),
                     logdir=logdir,
                     device=device,
                     batch_size=batch_size,
@@ -499,7 +524,6 @@ class TTADAEandDDPM(TTADAE):
                
         if isinstance(x_cond_vol, DataLoader):
             vol_dataloader = x_cond_vol
-            log_shape = True
             
         else:
             vol_dataloader = DataLoader(
@@ -513,17 +537,12 @@ class TTADAEandDDPM(TTADAE):
         for _ in range(num_sampled_vols):
             vol_i = []
             for (x_cond, )in vol_dataloader:
-                if log_shape:
-                    print('DEBUG, DELETE ME: x_cond.shape', x_cond.shape)
                 if convert_onehot_to_cat:
                     x_cond = du.onehot_to_class(x_cond)
                     x_cond = x_cond.float() / (self.n_classes - 1)
-                    if log_shape:
-                        print('DEBUG, DELETE ME: x_cond.shape', x_cond.shape)
-                    
+
                 x_cond = x_cond.to(self.device)
-                if log_shape:
-                    print('DEBUG, DELETE ME: x_cond.shape', x_cond.shape)
+
                 vol_i.append(
                     self.ddpm.ddim_sample(x_cond, return_all_timesteps=False)
                 )
@@ -538,4 +557,4 @@ class TTADAEandDDPM(TTADAE):
             # Add upsampled volume to the list
             sampled_vols.append(vol_i) # add batch dimensions
             
-        return torch.concat(sampled_vols, dim=0).cpu()
+        return torch.concat(sampled_vols, dim=0).cpu() # NDCHW

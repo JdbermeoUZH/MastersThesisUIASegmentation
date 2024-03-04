@@ -317,12 +317,14 @@ class TTADAE:
     @torch.inference_mode()
     def test_volume(
         self,
-        volume_dataset: DataLoader,
+        volume_dataset: DatasetInMemory,
         dataset_name: str,
         index: int,
         batch_size: int,
         num_workers: int,
         appendix='',
+        y_dae_or_atlas: Optional[torch.Tensor] = None,
+        x_guidance: Optional[torch.Tensor] = None,
         bg_suppression_opts: Optional[dict] = None,
         iteration=-1,
         device: Optional[Union[str, torch.device]] = None,
@@ -390,11 +392,19 @@ class TTADAE:
         x_norm = F.interpolate(x_norm, size=(D, H, W), mode='trilinear')
         y_pred = F.interpolate(y_pred, size=(D, H, W), mode='trilinear')
 
+        if y_dae_or_atlas is not None:
+            y_dae_or_atlas = F.interpolate(y_dae_or_atlas, size=(D, H, W), mode='trilinear')
+            
+        if x_guidance is not None:
+            x_guidance = F.interpolate(x_guidance, size=(D, H, W), mode='trilinear')
+            
         export_images(
             x_original,
             x_norm,
             y_original,
             y_pred,
+            x_guidance=x_guidance,
+            y_dae=y_dae_or_atlas,
             n_classes=self.n_classes,
             output_dir=os.path.join(logdir, 'segmentations'),
             image_name=f'{dataset_name}_test_{index:03}_{iteration:03}{appendix}.png'
