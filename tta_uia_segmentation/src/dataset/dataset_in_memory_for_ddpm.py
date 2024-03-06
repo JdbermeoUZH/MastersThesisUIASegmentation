@@ -210,7 +210,7 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
     ) -> list[int]:
         
         low_z_lim = max(0, z_idx - int(min_dist_z_frac * self.dim_proc[0]))
-        high_z_lim = min(self.dim_proc[0], z_idx + int(min_dist_z_frac * self.dim_proc[0]))
+        high_z_lim = min(self.dim_proc[0] - 1, z_idx + int(min_dist_z_frac * self.dim_proc[0]))
         
         # Sample positions in the range [high_z_lim, high_z_lim + low_z_lim] 
         idxs_sample = random.sample(range(high_z_lim, self.dim_proc[0] + low_z_lim), n)
@@ -245,7 +245,7 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
         min_dice_score_threshold: float = 0.7,
     ) -> list[int]:
         low_z_lim = max(0, z_idx - int(max_dist_z_frac * self.dim_proc[0]))
-        high_z_lim = min(self.dim_proc[0], z_idx + int(max_dist_z_frac * self.dim_proc[0]))
+        high_z_lim = min(self.dim_proc[0] - 1, z_idx + int(max_dist_z_frac * self.dim_proc[0]))
         
         # Sample positions in the range [low_z_lim, high_z_lim] 
         idxs_sample = random.sample(range(low_z_lim, high_z_lim), n)
@@ -278,7 +278,7 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
     ) -> list[int]:
         # Define the range of z indexes to sample from
         low_z_lim = max(0, z_idx - int(max_dist_z_frac * self.dim_proc[0]))
-        high_z_lim = min(self.dim_proc[0], z_idx + int(max_dist_z_frac * self.dim_proc[0]))
+        high_z_lim = min(self.dim_proc[0] - 1, z_idx + int(max_dist_z_frac * self.dim_proc[0]))
         
         # Sample other volumes
         #  Get the number of slices to sample from the other volumes

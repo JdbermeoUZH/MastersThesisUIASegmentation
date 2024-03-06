@@ -3,6 +3,7 @@ import sys
 import yaml
 import argparse
 from tqdm import tqdm
+from pprint import pprint
 from collections import defaultdict
 
 import torch
@@ -66,10 +67,13 @@ def get_cmd_args():
 if __name__ == '__main__':
     args = get_cmd_args()
     
+    # Print the arguments
+    pprint(args.__dict__)
+    
     # Create output dir
     out_dir = os.path.join(args.out_dir, args.exp_name, 
-                           '4_ddpm_loss_multiple_t_and_imgs',
                            args.dataset, args.split,
+                           '4_ddpm_loss_multiple_t_and_imgs',
                            args.mismatch_mode
                            )
     os.makedirs(out_dir, exist_ok=True)
@@ -125,7 +129,7 @@ if __name__ == '__main__':
         img_size = dataset.image_size[-1]   # DHW
         vol_idx = random.randint(0, dataset.num_vols - 1)
         slice_idx = random.randint(int(args.frac_sample_range[0] * img_size),
-                                   int(args.frac_sample_range[1] * img_size))
+                                   min(int(args.frac_sample_range[1] * img_size), img_size - 1))
         img, _ = dataset[dataset.vol_and_z_idx_to_idx(vol_idx, slice_idx)]    
         img = img.to(device)
         
