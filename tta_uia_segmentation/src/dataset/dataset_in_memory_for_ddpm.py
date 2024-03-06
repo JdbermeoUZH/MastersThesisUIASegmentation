@@ -198,7 +198,7 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
         
         else:
             raise ValueError('Mode not implemented')
-        
+         
         return Subset(self, idxs)
     
     def _get_same_patient_very_different_labels(
@@ -215,15 +215,16 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
         # Sample positions in the range [high_z_lim, high_z_lim + low_z_lim] 
         idxs_sample = random.sample(range(high_z_lim, self.dim_proc[0] + low_z_lim), n)
         idxs_sample = [idx % self.dim_proc[0] for idx in idxs_sample]
-        
+               
         # Exclude all indexes that have a dice score that is too high
         idxs_sample_filtered = []
 
         _, seg_orig = self[self.vol_and_z_idx_to_idx(vol_idx, z_idx)]
-        seg_orig = seg_orig.int()
+        seg_orig = (seg_orig * (self.n_classes - 1)).int()
         for z_idx in idxs_sample:
             img_idx = self.vol_and_z_idx_to_idx(vol_idx, z_idx)
             _, seg_i = self[img_idx]
+            seg_i = (seg_i * (self.n_classes - 1)).int()
             
             if dice(seg_i, seg_orig, ignore_index=0).item() > max_dice_score_threshold:
                 continue
@@ -241,7 +242,7 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
         vol_idx: int, z_idx: int,
         n: int,
         max_dist_z_frac: float = 0.2,
-        min_dice_score_threshold: float = 0.8,
+        min_dice_score_threshold: float = 0.7,
     ) -> list[int]:
         low_z_lim = max(0, z_idx - int(max_dist_z_frac * self.dim_proc[0]))
         high_z_lim = min(self.dim_proc[0], z_idx + int(max_dist_z_frac * self.dim_proc[0]))
@@ -253,11 +254,14 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
         idxs_sample_filtered = []
 
         _, seg_orig = self[self.vol_and_z_idx_to_idx(vol_idx, z_idx)]
+        seg_orig = (seg_orig * (self.n_classes - 1)).int()
         for z_idx in idxs_sample:
             img_idx = self.vol_and_z_idx_to_idx(vol_idx, z_idx)
             _, seg_i = self[img_idx]
+            seg_i = (seg_i * (self.n_classes - 1)).int()
             
             if dice(seg_i, seg_orig) < min_dice_score_threshold:
+                print('Dice score too low to use sample: ', dice(seg_i, seg_orig, ignore_index=0))
                 continue
             
             idxs_sample_filtered.append(img_idx)
@@ -269,8 +273,8 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
         self,
         vol_idx: int, z_idx: int,
         n: int,
-        max_dist_z_frac: float = 0.1,
-        min_dice_score_threshold: float = 0.8,
+        max_dist_z_frac: float = 0.2,
+        min_dice_score_threshold: float = 0.55,
     ) -> list[int]:
         # Define the range of z indexes to sample from
         low_z_lim = max(0, z_idx - int(max_dist_z_frac * self.dim_proc[0]))
@@ -281,18 +285,24 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
         n_slices_per_volume = distribute_n_in_m_slots(n, self.num_vols - 1)
         vol_idxs_to_sample = list(range(self.num_vols))
         vol_idxs_to_sample.remove(vol_idx)
-        
+                
         n_slices_per_volume = {vol_idx: n_slices for vol_idx, n_slices in zip(vol_idxs_to_sample, n_slices_per_volume)}
         
         _, seg_orig = self[self.vol_and_z_idx_to_idx(vol_idx, z_idx)]
+        seg_orig = (seg_orig * (self.n_classes - 1)).int()
         idxs_sample_filtered = []
         for vol_idx, n_slices in n_slices_per_volume.items():
+            if n_slices == 0:
+                continue
+            
             sampled = 0 
             for z_idx in range(low_z_lim, high_z_lim + 1):
                 img_idx = self.vol_and_z_idx_to_idx(vol_idx, z_idx)
                 _, seg_i = self[img_idx]
+                seg_i = (seg_i * (self.n_classes - 1)).int()
                 
                 if dice(seg_i, seg_orig, ignore_index=0) < min_dice_score_threshold:
+                    #print('Dice score too low to use sample: ', dice(seg_i, seg_orig, ignore_index=0))
                     continue
                 
                 idxs_sample_filtered.append(img_idx)

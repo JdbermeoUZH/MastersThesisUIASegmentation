@@ -26,6 +26,33 @@ def multilabel_scatter(x, y, c=[], label=[], **kwargs):
         plt.scatter(x[color_mask], y[color_mask], c=c[color_mask], label=lab, **kwargs)
 
 
+def plot_img_seg(img, seg, n_classes=14, img_title='Image', seg_title='Segmentation', figsize=(10, 5)):
+    if seg.max() < 1.0:
+        seg = seg * n_classes
+    
+    plt.figure(figsize=figsize)
+    ax = plt.subplot(1, 2, 1)
+    plt.imshow(img, cmap='gray', interpolation='none', vmin=img.min(), vmax=img.max())
+    plt.xticks([])
+    plt.yticks([])
+    plt.title(img_title)
+
+    divider = make_axes_locatable(ax)
+    cax = divider.append_axes("right", size="5%", pad=0)
+    plt.colorbar(cax=cax)
+    
+    ax = plt.subplot(1, 2, 2)
+    plt.imshow(seg, vmin=0, vmax=n_classes, cmap='tab20', interpolation='none')
+    plt.xticks([])
+    plt.yticks([])
+    plt.title(seg_title)
+    divider = make_axes_locatable(ax)
+    cax = divider.append_axes("right", size="5%", pad=0)
+    plt.colorbar(cax=cax)
+    
+    plt.show()
+
+
 def export_images(x_original, x_norm, y_original, y_pred, y_dae=None, x_guidance=None, 
                   n_classes=-1, n_slices=8, output_dir=None, image_name=None):
     if output_dir is None or image_name is None:
