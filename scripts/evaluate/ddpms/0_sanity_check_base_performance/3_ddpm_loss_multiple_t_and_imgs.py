@@ -143,6 +143,10 @@ if __name__ == '__main__':
             n=args.n_mismatches
         )
         
+        if len(mismatch_ds) == 0:
+            print('Warning: No mismatching images found')
+            continue
+        
         mismatch_dl = DataLoader(
             mismatch_ds, 
             batch_size=args.batch_size if args.mismatch_mode != 'none' else 1,

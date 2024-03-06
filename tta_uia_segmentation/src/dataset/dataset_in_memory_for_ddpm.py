@@ -206,7 +206,7 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
         vol_idx: int, z_idx: int,
         n: int,
         min_dist_z_frac: float = 0.2, 
-        max_dice_score_threshold: float = 0.8,
+        max_dice_score_threshold: float = 0.3,
     ) -> list[int]:
         
         low_z_lim = max(0, z_idx - int(min_dist_z_frac * self.dim_proc[0]))
