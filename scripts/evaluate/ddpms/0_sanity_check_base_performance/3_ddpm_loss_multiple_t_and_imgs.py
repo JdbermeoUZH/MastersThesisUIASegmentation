@@ -16,7 +16,7 @@ from torch.utils.data import DataLoader
 sys.path.append(os.path.normpath(os.path.join(
     os.path.dirname(__file__), '..', '..', '..', '..')))
 
-from tta_uia_segmentation.src.dataset.dataset_h5_for_ddpm import get_datasets
+from dataset.dataset_in_memory_for_ddpm import get_datasets
 
 from utils import load_ddpm_from_configs_and_cpt
 

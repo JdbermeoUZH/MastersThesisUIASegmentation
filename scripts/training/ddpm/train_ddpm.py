@@ -12,7 +12,7 @@ sys.path.append(os.path.normpath(os.path.join(
     os.path.dirname(__file__), '..', '..', '..', 'tta_uia_segmentation', 'src')))
 
 from train import DDPMTrainer
-from dataset.dataset_h5_for_ddpm import get_datasets
+from dataset.dataset_in_memory_for_ddpm import get_datasets
 from utils.io import (load_config, dump_config, print_config,
                       save_checkpoint, write_to_csv, rewrite_config_arguments)
 from utils.utils import seed_everything, define_device
