@@ -170,7 +170,7 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
         
         valid_modes = [
             'same_patient_very_different_labels', 'same_patient_similar_labels', 
-            'different_patient_similar_labels'] 
+            'different_patient_similar_labels', 'none'] 
         
         assert mode in valid_modes, "Mode of sampling cuts not implemented"
 
@@ -193,9 +193,11 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
                 **kwargs
             )
             
+        elif mode == 'none':
+            idxs = [self.vol_and_z_idx_to_idx(vol_idx, z_idx)]
+        
         else:
             raise ValueError('Mode not implemented')
-        random.seed()
         
         return Subset(self, idxs)
     
@@ -218,6 +220,7 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
         idxs_sample_filtered = []
 
         _, seg_orig = self[self.vol_and_z_idx_to_idx(vol_idx, z_idx)]
+        seg_orig = seg_orig.int()
         for z_idx in idxs_sample:
             img_idx = self.vol_and_z_idx_to_idx(vol_idx, z_idx)
             _, seg_i = self[img_idx]
@@ -303,16 +306,17 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
             
         return idxs_sample_filtered
     
-    
     def vol_and_z_idx_to_idx(self, vol_idx: int, z_idx: int) -> int:
         if self.image_size[0] != 1:
             raise ValueError('Indexes of the dataset map to volumes, not images')
         
+        idx = vol_idx * self.dim_proc[0] + z_idx
+        
+        assert idx < self.images.shape[0], f'Index out of bounds, for vol_idx: {vol_idx}, z_idx: {z_idx}, dim_proc: {self.dim_proc}'
+        
         return vol_idx * self.dim_proc[0] + z_idx
 
             
-        
-        
 if __name__ == '__main__':
     import sys
     sys.path.append('/scratch_net/biwidl319/jbermeo/MastersThesisUIASegmentation/')

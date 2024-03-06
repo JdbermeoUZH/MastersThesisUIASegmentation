@@ -24,7 +24,7 @@ class ConditionalGaussianDiffusion(GaussianDiffusion):
     def p_losses_conditioned_on_img(self, x_start, t, x_cond, 
                                     noise=None, offset_noise_strength=None):
 
-        assert x_cond.shape == x_start.shape, 'x_cond and x_start must have the same shape'
+        assert x_cond.shape[-2:] == x_start.shape[-2:], 'x_cond and x_start must have the same Height and Width'
         
         noise = default(noise, lambda: torch.randn_like(x_start))
 

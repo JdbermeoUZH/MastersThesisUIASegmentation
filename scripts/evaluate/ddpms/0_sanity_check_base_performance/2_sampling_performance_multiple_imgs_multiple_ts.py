@@ -18,13 +18,14 @@ sys.path.append(os.path.normpath(os.path.join(
     os.path.dirname(__file__), '..', '..', '..', '..')))
 
 from tta_uia_segmentation.src.models import ConditionalGaussianDiffusion
+from tta_uia_segmentation.src.dataset.dataset_h5_for_ddpm import get_datasets
+
 from utils import (
     fig_to_np,
     metric_preferences,
     metrics_to_log_default,
     is_new_value_better,
     plot_denoising_progress,
-    load_dataset_from_configs,
     load_ddpm_from_configs_and_cpt
 )
 
@@ -40,7 +41,7 @@ metric_preferences = {
     'MSE_noise': 'min'
 }
 
-
+# :================================================================================================:
 # Default args
 out_dir                 = '/scratch_net/biwidl319/jbermeo/results/ddpm/sanity_checks/'
 exp_name                = 'default_exp_name/linear_denoising'
@@ -57,10 +58,11 @@ seed                    = 1234
 device                  = 'cpu' if not  torch.cuda.is_available() else 'cuda'
 l_sampling_only         = False
 split                   = 'train'
+# :================================================================================================:
 
 
 def get_cmd_args():
-    parser = argparse.ArgumentParser(description="Check quality of DDPM sampling on a single image")
+    parser = argparse.ArgumentParser(description="Check quality of DDPM sampling on multiple images and noising timesteps.")
 
     parse_booleans = lambda x: x.lower() in ['true', '1']
     
@@ -126,9 +128,8 @@ def evaluate_linear_denoising_multiple_imgs(
     # Generate noised verion of the image
     batch_size = img.shape[0]
     t_tch = torch.full((batch_size,), t).to(device)
-    noise = torch.randn_like(img).to(device)
-    noised_img = ddpm.q_sample(img, t_tch, noise)
-    v_gt = ddpm.predict_v(x_start=img, t=t_tch, noise=noise)
+    noise_gt = torch.randn_like(img).to(device)
+    noised_img = ddpm.q_sample(img, t_tch, noise_gt)
 
     # Initialize base case for metrics and denoising progress
     metrics_log_per_img = {batch_idx * batch_size + i: {} for i in range(batch_size)}
@@ -149,9 +150,14 @@ def evaluate_linear_denoising_multiple_imgs(
     for t_i in tqdm(reversed(range(0, t)), desc = 'sampling loop time step', total = t):
         img_denoised_at_ti_plus_1 = img_denoised_at_ti
         
+        # Calculate GT values at time t_i
+        t_i_tch = torch.full((batch_size,), t).to(device)
+        v_t_i_gt = ddpm.predict_v(x_start=img, t=t_i_tch, noise=noise_gt)
+        
         # Take denoising step
         img_denoised_at_ti, img_denoised_at_t0 = ddpm.p_sample(img_denoised_at_ti_plus_1, t_i, seg)
-        t_i_tch = torch.full((batch_size,), t).to(device)
+
+        # Get estimates for the starting noise and v
         noise_est = ddpm.predict_noise_from_start(x_t=img_denoised_at_ti_plus_1, t=t_i_tch, x0=img_denoised_at_t0)
         with torch.inference_mode():
             v_est = ddpm.model(img_denoised_at_ti_plus_1, t_i_tch, seg)
@@ -159,10 +165,10 @@ def evaluate_linear_denoising_multiple_imgs(
         # Measure metrics   
         for metric_name, metric_fun in metrics.items():
             if '_v' in metric_name:
-                metric_values_t0 = [metric_fun(v_est[i, ...], v_gt[i, ...]).item() for i in range(batch_size)]
+                metric_values_t0 = [metric_fun(v_est[i, ...], v_t_i_gt[i, ...]).item() for i in range(batch_size)]
                 metric_values_ti = [metric_values_t0[i] if t_i == 0 else None for i in range(batch_size)]
             elif '_noise' in metric_name:
-                metric_values_t0 = [metric_fun(noise_est[i, ...], noise[i, ...]).item() for i in range(batch_size)]
+                metric_values_t0 = [metric_fun(noise_est[i, ...], noise_gt[i, ...]).item() for i in range(batch_size)]
                 metric_values_ti = [metric_values_t0[i] if t_i == 0 else None for i in range(batch_size)]                
             else:
                 metric_values_ti = [metric_fun(img[i: i+1, ...], img_denoised_at_ti[i: i+1, ...]).item() 
@@ -199,22 +205,28 @@ if __name__ == '__main__':
     run_params = yaml.safe_load(open(args.params_fp, 'r'))
     dataset_params = run_params['dataset'][args.dataset]
     training_params = run_params['training']['ddpm']
-    paths_type          = 'paths_normalized_with_nn' if training_params['use_nn_normalized'] \
-                            else 'paths_processed'
-        
+    
     # Load the data
     # :===============================================================:
-    dataset = load_dataset_from_configs(
-        split           = args.split,
+    (dataset,) = get_datasets(
+        norm            = None,
+        paths           = dataset_params['paths_processed'],
+        paths_original  = dataset_params['paths_original'],
+        paths_normalized_h5 = dataset_params['paths_normalized_with_nn'],
+        splits          = [split],
+        image_size      = training_params['image_size'],
+        resolution_proc = dataset_params['resolution_proc'],
+        dim_proc        = dataset_params['dim'],
+        n_classes       = dataset_params['n_classes'],
         aug_params      = None,
-        bg_suppression_opts = None,
         deformation     = None,
-        dataset_cfg     = dataset_params,
-        training_cfg    = training_params,
+        load_original   = True,
+        bg_suppression_opts = None,
+        one_hot_encode  = False,
     )
     
     # Draw a sample of images from the dataset
-    dataset = dataset.sample_slices(sample_size=args.num_img_samples, range=args.frac_sample_range)   
+    dataset = dataset.sample_slices(sample_size=args.num_img_samples, range_=args.frac_sample_range)   
     dataloader = torch.utils.data.DataLoader(dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
     
     # Load the model

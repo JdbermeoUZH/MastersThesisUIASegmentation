@@ -27,10 +27,10 @@ from utils import (
 
 # Default args
 out_dir                 = '/scratch_net/biwidl319/jbermeo/results/ddpm/sanity_checks/'
-exp_name                = 'default_exp_name'
+exp_name                = 'default_exp_name/linear_denoising'
 params_fp               = '/scratch_net/biwidl319/jbermeo/logs/brain/ddpm_old_exps/on_non_nn_normalized_imgs/cddpm/not_one_hot_128_base_filters/params.yaml'
 cpt_fp                  = '/scratch_net/biwidl319/jbermeo/logs/brain/ddpm_old_exps/on_non_nn_normalized_imgs/cddpm/not_one_hot_128_base_filters/model-2-step_10000.pt'
-noise_timesteps         = [5, 10]#[50, 100, 250, 500, 750, 999]
+noise_timesteps         = [50, 100, 250, 500, 750, 999]
 ddim_steps              = 100
 dataset                 = 'hcp_t1'
 seed                    = 1234 
@@ -39,11 +39,10 @@ l_sampling_only         = False
 split                   = 'train'
 save_plot_every         = 50
 measure_metrics_every   = 5
-mismatch_mode           = 'same_patient_very_different_labels'  # 'same_patient_very_different_labels', 'same_patient_similar_labels', 'different_patient_similar_labels'
-n_mismatches            = 3
+
 
 def get_cmd_args():
-    parser = argparse.ArgumentParser(description="Check quality of DDPM sampling on a single image")
+    parser = argparse.ArgumentParser(description="Check quality of DDPM sampling on a single image for multiple noising steps")
 
     parse_booleans = lambda x: x.lower() in ['true', '1']
     
@@ -51,12 +50,8 @@ def get_cmd_args():
     parser.add_argument('--exp_name', type=str, default=exp_name, help='Experiment name')
     parser.add_argument('--params_fp', type=str, default=params_fp, help='Path to the params file')
     parser.add_argument('--cpt_fp', type=str, default=cpt_fp, help='Path to the checkpoint file')
-    
-    parser.add_argument('--mismatch_mode', type=str, default=mismatch_mode, help='Mode for label mismatch', choices=['same_patient_very_different_labels', 'same_patient_similar_labels', 'different_patient_similar_labels'])
-    parser.add_argument('--n_mismatches', type=int, default=n_mismatches, help='Number of mismatches to sample for the label mismatch mode')
     parser.add_argument('--noise_timesteps', type=int, nargs='+', default=noise_timesteps, help='Timesteps for noise sampling')
     parser.add_argument('--ddim_steps', type=int, default=ddim_steps, help='Number of steps for DDIM sampling')
-    
     parser.add_argument('--dataset', type=str, default=dataset, help='Dataset to use')
     parser.add_argument('--split', type=str, default=split, help='Split to use', choices=['train', 'val', 'test'])
     parser.add_argument('--seed', type=int, default=seed, help='Seed for reproducibility')
@@ -180,11 +175,7 @@ if __name__ == '__main__':
     args = get_cmd_args()
     
     # Create output dir
-    out_dir = os.path.join(args.out_dir, args.exp_name, 
-                           '4_linear_denoising_mismatching_seg',
-                           args.dataset, args.split,
-                           args.mismatch_mode
-                           )
+    out_dir = os.path.join(args.out_dir, args.exp_name)
     os.makedirs(out_dir, exist_ok=True)
         
     np.random.seed(args.seed)
@@ -239,57 +230,45 @@ if __name__ == '__main__':
         cpt_fp=args.cpt_fp, 
         device=device
         )
-    
-    # Get the mismatching images
-    # :===============================================================:
-    mismatch_ds = dataset.get_related_images(
-        vol_idx=vol_idx,
-        z_idx=slice_idx,
-        mode=args.mismatch_mode,
-        n=args.n_mismatches
-    )
-    
+        
     # Evaluate the linear denoising for each t
     # :===============================================================:
-    for img_i, (img_mismatch, seg_mismatch) in enumerate(iter(mismatch_ds)):    
-        out_dir = os.patjoin(out_dir, f'mismatch_{img_i}')
-        metrics_per_t = {}
+    metrics_per_t = {}
+    for t in args.noise_timesteps:
+        metrics_per_t[t] = evaluate_linear_denoising(
+            rand_img, rand_seg, t, ddpm, 
+            output_dir=out_dir, plot_every=args.save_plot_every,
+            measure_metrics_every=args.measure_metrics_every,
+            device=device
+        )
+    
+    for metric_name in metrics_to_log_default.keys():
+        choose_best_fun = np.min if metric_preferences[metric_name] == 'min' else np.max
+        find_best_pos_fun = np.argmin if metric_preferences[metric_name] == 'min' else np.argmax
         
-        for t in args.noise_timesteps:
-            metrics_per_t[t] = evaluate_linear_denoising(
-                rand_img, seg_mismatch, t, ddpm, 
-                output_dir=out_dir, plot_every=args.save_plot_every,
-                measure_metrics_every=args.measure_metrics_every,
-                device=device
-            )
+        last_ti_values = [metrics_df[f'{metric_name}_t_i'].iloc[-1] for metrics_df in metrics_per_t.values()]
+        last_t0_values = [metrics_df[f'{metric_name}_t_0'].iloc[-1] for metrics_df in metrics_per_t.values()]
         
-        for metric_name in metrics_to_log_default.keys():
-            choose_best_fun = np.min if metric_preferences[metric_name] == 'min' else np.max
-            find_best_pos_fun = np.argmin if metric_preferences[metric_name] == 'min' else np.argmax
+        best_ti_values = [choose_best_fun(metrics_df[f'{metric_name}_t_i']) for metrics_df in metrics_per_t.values()]
+        best_t0_values = [choose_best_fun(metrics_df[f'{metric_name}_t_0']) for metrics_df in metrics_per_t.values()]
+        
+        best_t_ti_est = [metrics_df.index[find_best_pos_fun(metrics_df[f'{metric_name}_t_i'])] for metrics_df in metrics_per_t.values()]
+        best_t_to_est = [metrics_df.index[find_best_pos_fun(metrics_df[f'{metric_name}_t_0'])] for metrics_df in metrics_per_t.values()]
+                
+        # Write the results to a file
+        with open(os.path.join(out_dir, f'{metric_name}_results.txt'), 'w') as f:
+            f.write(f'Last t_i values: {last_ti_values}\n')
+            f.write(f'Last t_i values mean: {np.mean(last_t0_values)} +- {np.std(last_t0_values)}\n\n')
             
-            last_ti_values = [metrics_df[f'{metric_name}_t_i'].iloc[-1] for metrics_df in metrics_per_t.values()]
-            last_t0_values = [metrics_df[f'{metric_name}_t_0'].iloc[-1] for metrics_df in metrics_per_t.values()]
+            f.write(f'Last t_0 values: {last_t0_values}\n')
+            f.write(f'Last t_0 values mean: {np.mean(last_t0_values)} +- {np.std(last_t0_values)}\n\n')
             
-            best_ti_values = [choose_best_fun(metrics_df[f'{metric_name}_t_i']) for metrics_df in metrics_per_t.values()]
-            best_t0_values = [choose_best_fun(metrics_df[f'{metric_name}_t_0']) for metrics_df in metrics_per_t.values()]
+            f.write(f'Best t_i values: {best_ti_values}\n')
+            f.write(f'Best t_0 values mean: {np.mean(best_t0_values)} +- {np.std(best_t0_values)}\n\n')
             
-            best_t_ti_est = [metrics_df.index[find_best_pos_fun(metrics_df[f'{metric_name}_t_i'])] for metrics_df in metrics_per_t.values()]
-            best_t_to_est = [metrics_df.index[find_best_pos_fun(metrics_df[f'{metric_name}_t_0'])] for metrics_df in metrics_per_t.values()]
-                    
-            # Write the results to a file
-            with open(os.path.join(out_dir, f'{metric_name}_results.txt'), 'w') as f:
-                f.write(f'Last t_i values: {last_ti_values}\n')
-                f.write(f'Last t_i values mean: {np.mean(last_t0_values)} +- {np.std(last_t0_values)}\n\n')
+            f.write(f'Best t_0 values: {best_t0_values}\n')
+            f.write(f'Best t_i values mean: {np.mean(best_ti_values)} +- {np.std(best_ti_values)}\n\n')
+            
+            f.write(f't of the best t_i estimates: {best_t_ti_est}\n')
+            f.write(f't of the best t_0 estimates: {best_t_to_est}\n')
                 
-                f.write(f'Last t_0 values: {last_t0_values}\n')
-                f.write(f'Last t_0 values mean: {np.mean(last_t0_values)} +- {np.std(last_t0_values)}\n\n')
-                
-                f.write(f'Best t_i values: {best_ti_values}\n')
-                f.write(f'Best t_0 values mean: {np.mean(best_t0_values)} +- {np.std(best_t0_values)}\n\n')
-                
-                f.write(f'Best t_0 values: {best_t0_values}\n')
-                f.write(f'Best t_i values mean: {np.mean(best_ti_values)} +- {np.std(best_ti_values)}\n\n')
-                
-                f.write(f't of the best t_i estimates: {best_t_ti_est}\n')
-                f.write(f't of the best t_0 estimates: {best_t_to_est}\n')
-                    
