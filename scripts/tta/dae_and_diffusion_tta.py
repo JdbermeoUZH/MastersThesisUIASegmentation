@@ -44,6 +44,7 @@ def preprocess_cmd_args() -> argparse.Namespace:
     parser.add_argument('--dae_dir', type=str, help='Path to directory where DAE checkpoints are saved')
     parser.add_argument('--seg_dir', type=str, help='Path to directory where segmentation checkpoints are saved')
     parser.add_argument('--wandb_log', type=lambda s: s.strip().lower() == 'true', help='Log tta to wandb. Default: False.')
+    parser.add_argument('--wandb_project', type=str, help='Name of wandb project to log to. Default: "tta"')
     parser.add_argument('--start_new_exp', type=lambda s: s.strip().lower() == 'true', help='Start a new wandb experiment. Default: False')
     parser.add_argument('--calculate_dice_every', type=int, help='Calculate dice every x steps. Default: 25')
 
@@ -209,7 +210,7 @@ if __name__ == '__main__':
     dataset                = tta_config['dataset']
     split                  = tta_config['split']
     n_classes              = dataset_config[dataset]['n_classes']
-    bg_suppression_opts    = tta_config[tta_mode]['bg_suppression_opts']
+    bg_suppression_opts    = tta_config['bg_suppression_opts']
     aug_params             = tta_config[tta_mode]['augmentation']
     
   

@@ -95,7 +95,7 @@ class TTADAE:
         self.learning_rate = learning_rate
         
         self.optimizer = torch.optim.Adam(
-            norm.parameters(),
+            self.norm.parameters(),
             lr=learning_rate
         )
         
@@ -187,6 +187,7 @@ class TTADAE:
                     num_workers=num_workers,
                     index=index,
                     iteration=step,
+                    bg_suppression_opts=self.bg_suppression_opts,
                 )
                 self.test_scores.append(dices_fg.mean().item())
 
@@ -287,6 +288,7 @@ class TTADAE:
         x_norm = self.norm(x)
         
         if self.seg_with_bg_supp:
+            print('Using background suppression')
             bg_mask = bg_mask.to(device)
             x_norm_bg_supp = background_suppression(x_norm, bg_mask, bg_suppression_opts)
             mask, logits = self.seg(x_norm_bg_supp)
@@ -504,14 +506,22 @@ class TTADAE:
         self.metrics_best['best_score'] = 0
         self.tta_losses = []
         self.test_scores = []
-        
-        self.use_only_dae_pl = self.alpha == 0 and self.beta == 0
-        
+                
         self.seg.eval()
         self.seg.requires_grad_(False)
         
         self.dae.eval()
         self.dae.requires_grad_(False)
+        
+        self.optimizer = torch.optim.Adam(
+            self.norm.parameters(),
+            lr=self.learning_rate
+        )
+        
+        # DAE PL states
+        self.use_only_dae_pl = self.alpha == 0 and self.beta == 0
+        self.using_dae_pl = False
+        self.using_atlas_pl = False
         
     def load_state_dict_norm(self, state_dict: dict) -> None:
         self.norm.load_state_dict(state_dict)

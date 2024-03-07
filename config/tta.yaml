@@ -11,7 +11,7 @@ image_size: [1, 256, 256]
 seed: 0
 
 bg_suppression_opts:
-  type: fixed_value  # possible values: none, fixed_value, random_value
+  type: none  # possible values: none, fixed_value, random_value
   bg_value: -0.5
   bg_value_min: -0.5
   bg_value_max: 1

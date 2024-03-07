@@ -178,7 +178,7 @@ if __name__ == '__main__':
     dataset                = tta_config['dataset']
     split                  = tta_config['split']
     n_classes              = dataset_config[dataset]['n_classes']
-    bg_suppression_opts    = tta_config[tta_mode]['bg_suppression_opts']
+    bg_suppression_opts    = tta_config['bg_suppression_opts']
     aug_params             = tta_config[tta_mode]['augmentation']
   
     test_dataset, = get_datasets(

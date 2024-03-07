@@ -68,7 +68,7 @@ class TTADAEandDDPM(TTADAE):
         self.sampling_timesteps = sampling_timesteps
         self.ddpm.set_sampling_timesteps(sampling_timesteps)
         
-        # Set segmentation, DAE, and DDPM models in eval mode
+        # Set DDPM model in eval mode
         self.ddpm.eval()
         self.ddpm.requires_grad_(False)
         
@@ -197,6 +197,7 @@ class TTADAEandDDPM(TTADAE):
                             y_dae_or_atlas.append(y_dae_mb)
                         y_dae_or_atlas = torch.vstack(y_dae_or_atlas)
                         y_dae_or_atlas = y_dae_or_atlas.permute(1, 0, 2, 3).unsqueeze(0) # make NCDHW
+                    y_dae_or_atlas = y_dae_or_atlas.detach().cpu()    
                 else:
                     y_dae_or_atlas = None
                     
@@ -204,21 +205,22 @@ class TTADAEandDDPM(TTADAE):
                     x_guidance = dae_sampled_vol if self.using_dae_pl else self.atlas_sampled_vol
                     x_guidance = x_guidance[0:1]
                     x_guidance = x_guidance.permute(0, 2, 1, 3, 4) # NDCHW -> NCDHW
-                    
+                    x_guidance = x_guidance.detach().cpu()  
                 else:
                     x_guidance = None
 
                 _, dices_fg = self.test_volume(
                     volume_dataset=volume_dataset,
                     dataset_name=dataset_name,
-                    y_dae_or_atlas=y_dae_or_atlas.detach().cpu(),
-                    x_guidance=x_guidance.detach().cpu(),
+                    y_dae_or_atlas=y_dae_or_atlas,
+                    x_guidance=x_guidance,
                     logdir=logdir,
                     device=device,
                     batch_size=batch_size,
                     num_workers=num_workers,
                     index=index,
                     iteration=step,
+                    bg_suppression_opts=self.bg_suppression_opts,
                 )
                 self.test_scores.append(dices_fg.mean().item())
 
@@ -246,27 +248,10 @@ class TTADAEandDDPM(TTADAE):
                         drop_last=False,
                     )
                     
-            if self.use_ddpm_after_dice is not None and not self.use_ddpm_loss:
-                self.use_ddpm_loss = dice_dae >= self.use_ddpm_after_dice
-                if self.use_ddpm_loss:
-                    print('---------Start using DDPM loss ---------')
-
-            tta_loss = 0
-            step_dae_loss = 0
-            step_ddpm_loss = 0
-            step_ddpm_guidance_loss = 0
-            
-            n_samples = 0
-            n_samples_diffusion = 0
-
-            self.norm.train()
-            volume_dataset.dataset.set_augmentation(True)
-
-            if accumulate_over_volume:
-                self.optimizer.zero_grad()
-
-            if const_aug_per_volume:
-                volume_dataset.dataset.set_seed(get_seed())
+                if self.use_ddpm_after_dice is not None and not self.use_ddpm_loss:
+                    self.use_ddpm_loss = dice_dae >= self.use_ddpm_after_dice
+                    if self.use_ddpm_loss:
+                        print('---------Start using DDPM loss ---------')
                 
             # Define parameters related to the DDPM loss
             # :============================================================:
@@ -293,16 +278,32 @@ class TTADAEandDDPM(TTADAE):
                 sampled_vol_dl = dae_sampled_vol_dl if self.using_dae_pl else atlas_sampled_vol_dl
             else:
                 sampled_vol_dl = [[None]] * len(volume_dataloader)
-            
+                
+                
+            # :===========================================:
             # Adapting to the target distribution
             # :===========================================:
+            
+            step_tta_loss = 0
+            step_dae_loss = 0
+            step_ddpm_loss = 0
+            step_ddpm_guidance_loss = 0
+            
+            n_samples = 0
+            n_samples_diffusion = 0
+
+            self.norm.train()
+            volume_dataset.dataset.set_augmentation(True)
+
+            if accumulate_over_volume:
+                self.optimizer.zero_grad()
+
+            if const_aug_per_volume:
+                volume_dataset.dataset.set_seed(get_seed())
             
             # To avoid memory issues, we compute x_norm twice to separate the gradient
             #  computation for the DAE and DDPM losses. 
             for b_i, ((x, y_gt,_,_, bg_mask), (y_pl,), (x_sampled,)) in enumerate(zip(volume_dataloader, label_dataloader, sampled_vol_dl)):
-                dae_loss = torch.tensor(0).float().to(device)
-                ddpm_loss = torch.tensor(0).float().to(device)
-                ddpm_guidance_loss = torch.tensor(0).float().to(device)
                             
                 if not accumulate_over_volume:
                     self.optimizer.zero_grad()
@@ -332,7 +333,10 @@ class TTADAEandDDPM(TTADAE):
                     
                  # DDPM loss: Calculate gradients from the noise estimation loss
                 # :============================================================:
-                if b_i in b_i_for_diffusion_loss and self.ddpm_loss_beta > 0 and self.use_ddpm_loss:
+                calculate_ddpm_loss_gradients = b_i in b_i_for_diffusion_loss and \
+                    self.ddpm_loss_beta > 0 and self.use_ddpm_loss
+                if calculate_ddpm_loss_gradients:
+                    print('DEBG, use_ddpm_sample_guidance')
                     n_samples_diffusion += x.shape[0] 
                     
                     x_norm = self.norm(x)
@@ -376,6 +380,7 @@ class TTADAEandDDPM(TTADAE):
                 # DDPM sample guidance
                 # :===============================================================: 
                 if self.use_ddpm_sample_guidance:
+                    print('DEBG, use_ddpm_sample_guidance')
                     x_norm = self.norm(x)
                     x_sampled = x_sampled.to(device)    
                     
@@ -397,9 +402,12 @@ class TTADAEandDDPM(TTADAE):
                     self.optimizer.step()              
 
                 with torch.no_grad():
-                    step_dae_loss += (dae_loss.detach() * x.shape[0]).item()                
-                    step_ddpm_loss += (ddpm_loss.detach() * x.shape[0]).item()
-                    step_ddpm_guidance_loss += (ddpm_guidance_loss.detach() * x.shape[0]).item()
+                    step_dae_loss += (dae_loss.detach() * x.shape[0]).item() \
+                        if self.dae_loss_alpha > 0 else 0               
+                    step_ddpm_loss += (ddpm_loss.detach() * x.shape[0]).item() \
+                        if calculate_ddpm_loss_gradients else 0 
+                    step_ddpm_guidance_loss += (ddpm_guidance_loss.detach() * x.shape[0]).item() \
+                        if self.use_ddpm_sample_guidance else 0
                                               
             # Update the max and min values with those of the current step
             #  Only affects running max and min if it is to decrease their range
@@ -412,16 +420,16 @@ class TTADAEandDDPM(TTADAE):
             step_dae_loss = (step_dae_loss / n_samples) if n_samples > 0 else 0
             step_ddpm_loss = (step_ddpm_loss / n_samples_diffusion) if n_samples_diffusion > 0 else 0
             step_ddpm_guidance_loss = (step_ddpm_guidance_loss / n_samples) if n_samples > 0 else 0
-            tta_loss = step_dae_loss + step_ddpm_loss + step_ddpm_guidance_loss
+            step_tta_loss = step_dae_loss + step_ddpm_loss + step_ddpm_guidance_loss
             
-            self.tta_losses.append(tta_loss)
+            self.tta_losses.append(step_tta_loss)
 
             if self.wandb_log:
                 wandb.log({
                     f'dae_loss/img_{index}': step_dae_loss, 
                     f'ddpm_loss/img_{index}': step_ddpm_loss,
                     f'ddpm_guidance_loss/img_{index}': step_ddpm_guidance_loss,
-                    f'total_loss/img_{index}': tta_loss, 
+                    f'total_loss/img_{index}': step_tta_loss, 
                     'tta_step': step
                     }
                 )  
@@ -516,9 +524,13 @@ class TTADAEandDDPM(TTADAE):
 
     def reset_initial_state(self, state_dict: dict) -> None:
         super().reset_initial_state(state_dict)
+        
         self.use_ddpm_loss = self.use_ddpm_after_dice is None and \
             self.use_ddpm_after_step is None
-            
+                
+        self.use_ddpm_sample_guidance = self.ddpm_sample_guidance_eta is not None and \
+            self.ddpm_sample_guidance_eta > 0
+        
     def _sample_vol(self, x_cond_vol: Union[torch.Tensor, DataLoader], num_sampled_vols: int = 1, 
                     convert_onehot_to_cat: bool = True) -> torch.Tensor:
                
