@@ -549,9 +549,16 @@ class TTADAEandDDPM(TTADAE):
         for _ in range(num_sampled_vols):
             vol_i = []
             for (x_cond, )in vol_dataloader:
+                # print('DEBUG: x_cond.shape', x_cond.shape)
+                # print('DEBUG: x_cond.min()', x_cond.min())
+                # print('DEBUG: x_cond.max()', x_cond.max())
                 if convert_onehot_to_cat:
                     x_cond = du.onehot_to_class(x_cond)
                     x_cond = x_cond.float() / (self.n_classes - 1)
+                    # print('DEBUG, after onehot_to_class and normalizing')
+                    # print('DEBUG: x_cond.shape', x_cond.shape)
+                    # print('DEBUG: x_cond.min()', x_cond.min())
+                    # print('DEBUG: x_cond.max()', x_cond.max())
 
                 x_cond = x_cond.to(self.device)
 

@@ -138,7 +138,8 @@ def export_images(x_original, x_norm, y_original, y_pred, y_dae=None, x_guidance
         
         if x_guidance is not None:
             ax=plt.subplot(n_rows, n_slices, i + 5 * n_slices + 1)
-            plt.imshow(x_guidance[idx, :, :], cmap='gray', interpolation='none', vmin=x_norm.min(), vmax=x_norm.max())
+            plt.imshow(x_guidance[idx, :, :], cmap='gray', interpolation='none',
+                       vmin=x_guidance.min(), vmax=x_guidance.max())
             if i == 0:
                 plt.ylabel('Vol sampled from DDPM')
             plt.xticks([])

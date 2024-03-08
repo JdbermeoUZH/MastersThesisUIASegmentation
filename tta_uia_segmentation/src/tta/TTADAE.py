@@ -513,6 +513,7 @@ class TTADAE:
         self.dae.eval()
         self.dae.requires_grad_(False)
         
+        print('DEBUG DELETE ME: resetting optimizer state')
         self.optimizer = torch.optim.Adam(
             self.norm.parameters(),
             lr=self.learning_rate
