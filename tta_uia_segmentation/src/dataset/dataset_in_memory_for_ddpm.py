@@ -59,6 +59,7 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
         normalize: str = 'min_max',
         one_hot_encode: bool = True, 
         intensity_value_range: Optional[tuple[float, float]] = None,
+        norm_device: str = 'cpu',
         *args,
         **kwargs,
     ):
@@ -69,9 +70,11 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
         super().__init__(*args, **kwargs)
         
         self.norm = norm
+        self.norm_device = norm_device
         if self.norm is not None:
             self.norm.eval()
             self.norm.requires_grad_(False)
+            self.norm.to(norm_device)
         
         self.normalized_img_path = paths_normalized_h5[self.split]
         
@@ -111,8 +114,8 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
         # Use the normalization model to normalize the images, if one is given
         if self.norm is not None:
             with torch.inference_mode():
-                images = images.to(self.norm.device)
-                labels = labels.to(self.norm.device)
+                images = images.to(self.norm_device)
+                labels = labels.to(self.norm_device)
                 images = self.norm(images[None, ...]).squeeze(0)
 
         # Normalize image and label map to [0, 1]

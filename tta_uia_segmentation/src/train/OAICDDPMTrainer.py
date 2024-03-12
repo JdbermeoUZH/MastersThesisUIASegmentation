@@ -1,6 +1,5 @@
 import copy
 import functools
-import os
 
 import blobfile as bf
 import numpy as np
@@ -44,7 +43,8 @@ class OAICDDPMTrainer(TrainLoop):
                 self.ddp_model,
                 micro,
                 t,
-                model_kwargs=micro_cond,
+                micro_cond,
+                model_kwargs=None,
             )
 
             if last_batch or not self.use_ddp:
@@ -67,3 +67,5 @@ class OAICDDPMTrainer(TrainLoop):
                 (loss * loss_scale).backward()
             else:
                 loss.backward()
+                
+                

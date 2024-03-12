@@ -1,5 +1,4 @@
 dae:
-<<<<<<< HEAD
   channel_size:                     [16, 32, 64]
   channels_bottleneck:              128
   skips:                            [False, True, True]
@@ -46,3 +45,8 @@ ddpm_unet:
   dim_mults:                        [1, 2, 4, 8]  # Multipliers for the number of filters in each layer. Default: [1, 2, 4, 8]
   channels:                         1             # Number of input channels
   
+
+ddpm_unet_oai:
+  num_channels:                     64            # Number of filetrs in the first layer. Default 64
+  channel_mult:                     [1, 2, 4, 8]  # Multipliers for the number of filters in each layer. Default: [1, 2, 4, 8]
+  channels:                         1             # Number of input channels

@@ -4,13 +4,14 @@ Train a diffusion model on images.
 import os
 import sys
 import argparse
+from itertools import chain
 
 from improved_diffusion import dist_util, logger
 from improved_diffusion.image_datasets import load_data
 from improved_diffusion.resample import create_named_schedule_sampler
 from improved_diffusion.script_util import (
     model_and_diffusion_defaults,
-    create_model_and_diffusion,
+    create_gaussian_diffusion,
     args_to_dict,
     add_dict_to_argparser,
 )
@@ -21,9 +22,12 @@ from torch.utils.data import DataLoader
 sys.path.append(os.path.normpath(os.path.join(
     os.path.dirname(__file__), '..', '..')))
 
-from dataset.dataset_in_memory_for_ddpm import get_datasets
+from tta_uia_segmentation.src.dataset.dataset_in_memory_for_ddpm import get_datasets
+from tta_uia_segmentation.src.train import OAICDDPMTrainer
 from tta_uia_segmentation.src.utils.io import (
     load_config, rewrite_config_arguments, dump_config, print_config)
+from tta_uia_segmentation.src.models.UNetModelOAI import create_model_conditioned_on_seg_mask
+from tta_uia_segmentation.src.models.ConditionalGaussianDiffusionOAI import create_gaussian_diffusion
 from tta_uia_segmentation.src.models.io import load_norm_from_configs_and_cpt
 from tta_uia_segmentation.src.utils.logging import setup_wandb
 
@@ -35,6 +39,7 @@ def preprocess_cmd_args() -> argparse.Namespace:
     All options specified will overwrite whaterver is specified in the config files.
     
     """
+    parse_bool = lambda s: s.strip().lower() == 'true'
     parser = argparse.ArgumentParser(description="Train Segmentation Model (with shallow normalization module)")
     
     parser.add_argument('dataset_config_file', type=str, help='Path to yaml config file with parameters that define the dataset.')
@@ -56,11 +61,14 @@ def preprocess_cmd_args() -> argparse.Namespace:
     #parser.add_argument('--channels_bottleneck', type=int, help='Number of channels in bottleneck layer of model. Default: 128')
     
     # Training loop
-    # -------------:
+    # -------------:    
     parser.add_argument('--epochs', type=int, help='Number of epochs to train. Default: 100')
     parser.add_argument('--learning_rate', type=float, help='Learning rate for optimizer. Default: 1e-4')
     parser.add_argument('--batch_size', type=int, help='Batch size for training. Default: 4')
     parser.add_argument('--num_workers', type=int, help='Number of workers for dataloader. Default: 0')
+    
+    # Diffusion model
+    parser.add_argument('--learn_sigma', type=parse_bool, help='Whether to learn sigma. Default: False')
     
     # Dataset and its transformations to use for training
     # ---------------------------------------------------:
@@ -70,37 +78,49 @@ def preprocess_cmd_args() -> argparse.Namespace:
     parser.add_argument('--resolution_proc', type=float, nargs='+', help='Resolution of images in dataset. Default: [0.3, 0.3, 0.6]')
     parser.add_argument('--rescale_factor', type=float, help='Rescale factor for images in dataset. Default: None')
     
+    argument_names = [action.dest for action in parser._actions if action.dest != 'help']
+    
+    default_params = get_default_params_original_script()
+    
+    # Remove keys from default_params that are present in argument_names
+    for key in argument_names:
+        if key in default_params:
+            del default_params[key]
+    
+    add_dict_to_argparser(parser, default_params)
+    
     args = parser.parse_args()
     
     return args
 
 
-def get_configuration_arguments() -> tuple[dict, dict, dict]:
-    args = preprocess_cmd_args()
+def get_configuration_arguments() -> tuple[dict, dict, dict, argparse.Namespace]:
+    args_ns_ = preprocess_cmd_args()
     
-    dataset_config = load_config(args.dataset_config_file)
-    dataset_config = rewrite_config_arguments(dataset_config, args, 'dataset')
+    dataset_config = load_config(args_ns_.dataset_config_file)
+    dataset_config = rewrite_config_arguments(dataset_config, args_ns_, 'dataset')
     
-    model_config = load_config(args.model_config_file)
-    model_config = rewrite_config_arguments(model_config, args, 'model')
+    model_config = load_config(args_ns_.model_config_file)
+    model_config = rewrite_config_arguments(model_config, args_ns_, 'model')
 
-    train_config = load_config(args.train_config_file)
-    train_config = rewrite_config_arguments(train_config, args, 'train')
+    train_config = load_config(args_ns_.train_config_file)
+    train_config = rewrite_config_arguments(train_config, args_ns_, 'train')
     
     train_config['ddpm'] = rewrite_config_arguments(
-        train_config['ddpm'], args, 'train, ddpm')
+        train_config['ddpm'], args_ns_, 'train, ddpm')
     
-    return dataset_config, model_config, train_config
+    return dataset_config, model_config, train_config, args_ns_
 
 
 def main():
     
     logger.log(f'Running {__file__}')
     train_type = 'ddpm_oai'
+    model_type = 'ddpm_unet_oai'
     
     # Loading general parameters
     # :=========================================================================:
-    dataset_config, model_config, train_config = get_configuration_arguments()
+    dataset_config, model_config, train_config, args = get_configuration_arguments()
     
     resume          = train_config['resume']
     wandb_log       = train_config['wandb_log']
@@ -141,40 +161,32 @@ def main():
 
     print_config(params, keys=['training', 'model'])
 
-    args = create_argparser().parse_args()
-    
     dist_util.setup_dist()
     logger.configure()
-
-    # Create model and diffusion object
-    # :=========================================================================:
-    logger.log("creating model and diffusion...")
-    model, diffusion = create_model_and_diffusion(
-        **args_to_dict(args, model_and_diffusion_defaults().keys())
-    )
-    model.to(dist_util.dev())
-    schedule_sampler = create_named_schedule_sampler(args.schedule_sampler, diffusion)
-
+    
     # Import dataset and create dataloader 
+    # :=========================================================================:
     logger.log("creating data loader...")
     dataset             = train_config[train_type]['dataset']
     n_classes           = dataset_config[dataset]['n_classes']
     batch_size          = train_config[train_type]['batch_size']
     norm_dir            = train_config[train_type]['norm_dir']   
+    norm_device         = train_config[train_type]['norm_device']
     
     # Load normalization model used in the segmentation network
     if train_config[train_type]['norm_with_nn_on_fly']:
         norm = load_norm_from_configs_and_cpt(
             model_params_norm=model_params_norm,
             cpt_fp=os.path.join(norm_dir, train_params_norm['checkpoint_best']),
-            device='cpu'
+            device=norm_device
         )
     else: 
         norm = None
 
-    data = get_datasets(
+    (data,) = get_datasets(
         splits          = [train_config[train_type]['split']],
         norm            = norm,
+        norm_device     = norm_device,  
         paths           = dataset_config[dataset]['paths_processed'],
         paths_normalized_h5 = dataset_config[dataset]['paths_normalized_with_nn'],
         use_original_imgs = train_config[train_type]['use_original_imgs'],
@@ -193,22 +205,66 @@ def main():
     
     num_workers = train_config[train_type]['num_workers']
     data = DataLoader(
-            dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers,
+            data, batch_size=batch_size, shuffle=True, num_workers=num_workers,
             drop_last=True
         )
     
     data = cycle(data)
+
+    # Create model and diffusion object
+    # :=========================================================================:
+    logger.log("creating model and diffusion...")
+
+    image_channels      = dataset_config[dataset]['image_channels'] 
+
+    num_channels        = model_config[model_type]['num_channels']
+    channel_mult        = model_config[model_type]['channel_mult']
+
+    image_size          = train_config[train_type]['image_size'][-1]
+    learn_sigma         = train_config[train_type]['learn_sigma']
+    seg_cond            = train_config[train_type]['seg_cond']
+    
+    # args_not_to_use = ['image_channels', 'n_classes', 
+    #                    'num_channels', 'channel_mult',
+    #                    'image_size', 'learn_sigma', 'seg_cond']
+    # args_to_use = list(model_and_diffusion_defaults().keys())
+    # args_to_use = [arg for arg in args_to_use if arg not in args_not_to_use]
+    
+    model = create_model_conditioned_on_seg_mask(
+        image_size = image_size,
+        image_channels = image_channels,
+        seg_cond = seg_cond,
+        num_channels = num_channels,
+        channel_mult = channel_mult,
+        learn_sigma = learn_sigma,
+        n_classes = n_classes,
+        **args_to_dict(args, model_defaults().keys())
+    )
+    
+    diffusion_steps     = train_config[train_type]['diffusion_steps']
+    noise_schedule      = train_config[train_type]['noise_schedule']  
+    use_kl              = train_config[train_type]['use_kl']
+    diffusion = create_gaussian_diffusion(
+        steps=diffusion_steps,
+        learn_sigma=learn_sigma,
+        noise_schedule=noise_schedule,
+        use_kl=use_kl,
+        **args_to_dict(args, diffusion_defaults().keys()))
+    model.to(dist_util.dev())
     
     # Train model
     # :=========================================================================:
     logger.log("training...")
     learning_rate = float(train_config[train_type]['learning_rate'])
+    schedule_sampler = train_config[train_type]['schedule_sampler']
+    schedule_sampler = create_named_schedule_sampler(schedule_sampler, diffusion)
     
-    TrainLoop(
+    OAICDDPMTrainer(
         model=model,
         diffusion=diffusion,
         data=data,
         batch_size=batch_size,
+        schedule_sampler=schedule_sampler,
         microbatch=args.microbatch,
         lr=learning_rate,
         ema_rate=args.ema_rate,
@@ -217,17 +273,15 @@ def main():
         resume_checkpoint=args.resume_checkpoint,
         use_fp16=args.use_fp16,
         fp16_scale_growth=args.fp16_scale_growth,
-        schedule_sampler=schedule_sampler,
         weight_decay=args.weight_decay,
         lr_anneal_steps=args.lr_anneal_steps,
     ).run_loop()
 
 
-def create_argparser():
+def get_default_params_original_script() -> dict:
     defaults = dict(
         data_dir="",
         schedule_sampler="uniform",
-        lr=1e-4,
         weight_decay=0.0,
         lr_anneal_steps=0,
         batch_size=1,
@@ -239,10 +293,9 @@ def create_argparser():
         use_fp16=False,
         fp16_scale_growth=1e-3,
     )
-    defaults.update(model_and_diffusion_defaults())
-    parser = argparse.ArgumentParser()
-    add_dict_to_argparser(parser, defaults)
-    return parser
+    defaults.update(model_defaults())
+    defaults.update(diffusion_defaults())
+    return defaults
 
 
 def cycle(dl):
@@ -250,6 +303,33 @@ def cycle(dl):
         for data in dl:
             yield data
 
+
+def model_defaults():
+    """
+    Defaults for image training.
+    """
+    return dict(
+        num_res_blocks=2,
+        num_heads=4,
+        num_heads_upsample=-1,
+        attention_resolutions="16,8",
+        dropout=0.0,
+        use_checkpoint=False,
+        use_scale_shift_norm=True,
+    )
+
+
+def diffusion_defaults():
+    """
+    Defaults for image training.
+    """
+    return dict(
+        sigma_small=False,
+        timestep_respacing="",
+        predict_xstart=False,
+        rescale_timesteps=True,
+        rescale_learned_sigmas=True,
+    )
 
 if __name__ == "__main__":
     main()

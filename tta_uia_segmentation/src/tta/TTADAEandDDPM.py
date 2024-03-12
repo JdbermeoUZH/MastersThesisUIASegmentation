@@ -23,6 +23,18 @@ from tta_uia_segmentation.src.dataset import DatasetInMemory, utils as du
 ssim_loss  = SSIM3DLoss(window_size=11, reduction='mean', max_val=1.0)
 
 class TTADAEandDDPM(TTADAE):
+    """
+    TODO:
+        - DDPM sample guidance
+            - Sampled volumes are not in the same intensity range and normalized volumes
+            - We should normalize sampled volumes to the same range as the normalized images
+        
+        - DDPM loss
+            - Use importance sampling to make the loss function less noisy
+            
+        - DAE Loss  
+            - Determine if there is a gap between this script and the DAE script
+    """
     
     def __init__(
         self,

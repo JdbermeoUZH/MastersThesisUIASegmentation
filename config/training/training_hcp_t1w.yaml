@@ -123,3 +123,53 @@ ddpm:
 
   bg_suppression_opts:          null
   deformation:                  null
+
+
+ddpm_oai:
+  seg_cond:                     True  
+  learn_sigma:                  False
+  noise_schedule:               linear              # linear of cosine
+  use_kl:                       False               # Use L_VLB loss (full KL divergence)
+  schedule_sampler:             uniform  # 'loss-second-moment' or 'uniform'
+  batch_size:                   2
+  gradient_accumulate_every:    8
+  num_workers:                  2
+  dataset:                      hcp_t1    # brain: hcp_t1, hcp_t2, abide_caltech, abide_stanford; wmh: nuhs, umc, vu
+  split:                        train
+  norm_with_nn_on_fly:          True
+  use_original_imgs:            False
+  one_hot_encode:               True
+  normalize:                    min_max
+  image_size:                   [1, 256, 256]
+  rescale_factor:               [1, 1, 1]
+  train_num_steps:              50000    # 7,000,000 or 100,000 in the original script
+  num_samples :                 25        # Must have an interger square root to store images in a square grid
+  diffusion_steps:              1000      # Range of noising steps to sample from during training. 1000 in the constructor  
+  sampling_timesteps:           100       # Number of sampling steps to generate images. If less than 1000, will use DDIM sampling. If null, will be the same as timesteps => linear denoising steps
+  save_and_sample_every:        2500      # 1000 in the constructor 
+  learning_rate:                8e-5      # 1e-4 in the constructor
+  logdir:                       /scratch_net/biwidl319/jbermeo/logs/brain/ddpm/oai/normalized_imgs/03_011/test_1
+  wandb_project:                mt-ddpm
+
+  norm_dir:                     /scratch_net/biwidl319/jbermeo/data/models/brain/segmentation/hcp_t1/bg_supp
+  norm_device:                  cpu
+
+  augmentation:                 
+    da_ratio:           0.25
+    sigma:              20
+    alpha:              1000
+    trans_min:          -10
+    trans_max:          10
+    rot_min:            -10
+    rot_max:            10
+    scale_min:          0.9
+    scale_max:          1.1
+    gamma_min:          0.5
+    gamma_max:          2.0
+    brightness_min:     0.0
+    brightness_max:     0.1
+    noise_mean:         0.0
+    noise_std:          0.0
+
+  bg_suppression_opts:          null
+  deformation:                  null
