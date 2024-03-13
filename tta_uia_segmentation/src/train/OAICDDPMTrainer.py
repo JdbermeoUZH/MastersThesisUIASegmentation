@@ -1,5 +1,6 @@
 import os
 import copy
+import math
 import functools
 from tqdm import tqdm
 import blobfile as bf
@@ -9,9 +10,9 @@ from collections import defaultdict
 import wandb
 import numpy as np
 import torch as th
+from PIL import Image   
+from torchvision.utils import make_grid, save_image 
 from torch.utils.data import DataLoader, Dataset
-from torch.nn.parallel.distributed import DistributedDataParallel as DDP
-from torch.optim import AdamW
 from torchmetrics.functional.image import (
     peak_signal_noise_ratio,
     structural_similarity_index_measure,
@@ -21,17 +22,12 @@ from torchmetrics.functional.regression import mean_absolute_error
 
 from improved_diffusion import dist_util, logger
 from improved_diffusion.fp16_util import (
-    make_master_params,
-    master_params_to_model_params,
-    model_grads_to_master_grads,
-    unflatten_master_params,
     zero_grad,
 )
-from improved_diffusion.nn import update_ema
-from improved_diffusion.resample import LossAwareSampler, UniformSampler
-from improved_diffusion.train_util import TrainLoop, log_loss_dict
-
+from improved_diffusion.train_util import TrainLoop, log_loss_dict, get_blob_logdir
+from improved_diffusion.resample import LossAwareSampler
 from tta_uia_segmentation.src.dataset import DatasetInMemoryForDDPM
+from tta_uia_segmentation.src.dataset.utils import unnormalize_to_zero_to_one, onehot_to_class
 
 
 metrics_to_log_default = {
@@ -46,6 +42,17 @@ def cycle(dl):
     while True:
         for data in dl:
             yield data
+            
+            
+@th.no_grad()
+def tensor_collection_to_image_grid(
+    tensor,
+    **kwargs,
+) -> None:
+    grid = make_grid(tensor, **kwargs)
+    # Add 0.5 after unnormalizing to [0, 255] to round to the nearest integer
+    ndarr = grid.mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).to("cpu", th.uint8).numpy()
+    return Image.fromarray(ndarr)
 
 
 class OAICDDPMTrainer(TrainLoop):
@@ -104,22 +111,16 @@ class OAICDDPMTrainer(TrainLoop):
             self.step + self.resume_step < self.train_num_steps
         ):
             batch, cond = next(self.data)
-            print(f'Batch shape: {batch.shape} in step: {self.step}')
             self.run_step(batch, cond)
+            
             if self.step % self.log_interval == 0:
-                logger.dumpkvs()
+                logged_info = logger.dumpkvs()
                 
                 if self.wandb_log:
-                    wandb.log(
-                        dict(logger.dumpkvs()),
-                        step = self.step
-                    )
+                    wandb.log(dict(logged_info))
                 
             if self.step % self.save_interval == 0:
                 self.save()
-                # Run for a finite amount of time in integration tests.
-                if os.environ.get("DIFFUSION_TRAINING_TEST", "") and self.step > 0:
-                    return
                 
                 # Sample images and log their metrics to wandb
                 if self.measure_performance_on_train:
@@ -144,7 +145,8 @@ class OAICDDPMTrainer(TrainLoop):
         self, 
         dataset: DatasetInMemoryForDDPM,
         dataset_name: str, 
-        num_samples: int = 1000):
+        num_samples: int = 1000,
+        num_imgs_visualized: int = 16):
         
         sample_dl = DataLoader(
             dataset.sample_slices(num_samples),
@@ -152,6 +154,8 @@ class OAICDDPMTrainer(TrainLoop):
             num_workers = self.num_workers)
         
         metrics = defaultdict(list)
+        
+        imgs_for_plot = []
         for img, x_cond in sample_dl:
             img = img.to(dist_util.dev())
             x_cond = x_cond.to(dist_util.dev())
@@ -163,14 +167,36 @@ class OAICDDPMTrainer(TrainLoop):
                 model_kwargs={"x_cond": x_cond}
             )
             
+            img = unnormalize_to_zero_to_one(img)
+            x_gen = unnormalize_to_zero_to_one(x_gen)
+            x_cond = onehot_to_class(unnormalize_to_zero_to_one(
+                x_cond))
+            
             for metric_name, metric_fn in self.metrics_to_log.items():
                 metric = metric_fn(x_gen, img).item()
                 metrics[metric_name].append(metric)
                 
+            if len(imgs_for_plot) <= num_imgs_visualized:
+                imgs_for_plot.append(
+                    th.cat([x_cond, img, x_gen], dim = -1))
+            
+        all_images = th.cat(imgs_for_plot, dim = 0)
+        milestone = self.step // self.save_interval
+        all_images_fn = f'{dataset_name}-sample-m{milestone}-step-{self.step}-img_gt_seg_gt_gen_img.png'
+        plot_rows = int(math.sqrt(len(imgs_for_plot)))
+        save_image(all_images, os.path.join(get_blob_logdir(), all_images_fn), 
+                   nrow = plot_rows)
+
         for metric_name, metric_values in metrics.items():
             wandb.log({f'{dataset_name}_{metric_name}': np.mean(metric_values)},
                       step=self.step)
-                    
+        
+        # Log images in wandb
+        wandb.log({
+                all_images_fn: wandb.Image(tensor_collection_to_image_grid(
+                    all_images,nrow = plot_rows))}, 
+                step = self.step
+            )
     
     def forward_backward(self, batch, cond):
         

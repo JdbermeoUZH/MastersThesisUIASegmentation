@@ -1,4 +1,5 @@
-wandb_log:        False
+wandb_log:        True
+start_new_exp:    False
 seed:             0
 resume:           False
 device:           cuda
@@ -126,7 +127,7 @@ ddpm:
 
 
 ddpm_oai:
-  logdir:                       /scratch_net/biwidl319/jbermeo/logs/brain/ddpm/oai/normalized_imgs/03_012/L_simple_test_single_gpu_2
+  logdir:                       /scratch_net/biwidl319/jbermeo/logs/brain/ddpm/oai/normalized_imgs/tests/test_img_logging
   wandb_project:                mt-ddpm
 
   seg_cond:                     True  

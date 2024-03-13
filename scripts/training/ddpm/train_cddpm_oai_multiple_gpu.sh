@@ -9,5 +9,5 @@ conda activate /scratch_net/biwidl319/jbermeo/GNN-Domain-Generalization-main/net
 mpiexec -n 2 python ./train_cddpm_oai.py \
     /scratch_net/biwidl319/jbermeo/MastersThesisUIASegmentation/config/datasets.yaml \
     /scratch_net/biwidl319/jbermeo/MastersThesisUIASegmentation/config/models.yaml \
-    /scratch_net/biwidl319/jbermeo/MastersThesisUIASegmentation/config/training/training_hcp_t1w.yaml 
-    "$@" 
+    /scratch_net/biwidl319/jbermeo/MastersThesisUIASegmentation/config/training/training_hcp_t1w.yaml \
+    "$@"  

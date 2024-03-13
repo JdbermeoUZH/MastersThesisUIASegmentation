@@ -49,14 +49,13 @@ def preprocess_cmd_args() -> argparse.Namespace:
     
     # Training parameters. If provided, overrides default parameters from config file.
     # :================================================================================================:
-    parser.add_argument('--resume', type=lambda s: s.strip().lower() == 'true', 
+    parser.add_argument('--resume', type=parse_bool, 
                         help='Resume training from last checkpoint. Default: True.') 
-    parser.add_argument('--logdir', type=str, 
-                        help='Path to directory where logs and checkpoints are saved. Default: logs')  
-    parser.add_argument('--wandb_log', type=lambda s: s.strip().lower() == 'true', 
-                        help='Log training to wandb. Default: False.')
+    parser.add_argument('--logdir', type=str,  help='Path to directory where logs and checkpoints are saved. Default: logs')  
+    parser.add_argument('--wandb_log', type=parse_bool, help='Log training to wandb. Default: False.')
     parser.add_argument('--wandb_project', type=str, help='Name of wandb project. Default: None')
-    
+    parser.add_argument('--start_new_exp', type=parse_bool, help='Start a new wandb experiment. Default: False')
+
     # Model parameters
     # ----------------:
     parser.add_argument('--num_channels', type=int, help='Number of channels in the first layer of the model. Default: 64')
@@ -68,6 +67,7 @@ def preprocess_cmd_args() -> argparse.Namespace:
     parser.add_argument('--train_num_steps', type=int, help='Number of steps to train for. Default: 100000')
     parser.add_argument('--learning_rate', type=float, help='Learning rate for optimizer. Default: 1e-4')
     parser.add_argument('--batch_size', type=int, help='Batch size for training. Default: 4')
+    parser.add_argument('--microbatch', type=int, help='Microbatch size for training. Default: -1')
     parser.add_argument('--num_workers', type=int, help='Number of workers for dataloader. Default: 0')
     
     # Diffusion model
@@ -102,7 +102,7 @@ def preprocess_cmd_args() -> argparse.Namespace:
     return args
 
 
-def get_configuration_arguments() -> tuple[dict, dict, dict, argparse.Namespace]:
+def get_configuration_arguments(model_type, train_type) -> tuple[dict, dict, dict, argparse.Namespace]:
     args_ns_ = preprocess_cmd_args()
     
     dataset_config = load_config(args_ns_.dataset_config_file)
@@ -110,12 +110,15 @@ def get_configuration_arguments() -> tuple[dict, dict, dict, argparse.Namespace]
     
     model_config = load_config(args_ns_.model_config_file)
     model_config = rewrite_config_arguments(model_config, args_ns_, 'model')
+    
+    model_config[model_type] = rewrite_config_arguments(
+        model_config[model_type], args_ns_, f'model, {model_type}')
 
     train_config = load_config(args_ns_.train_config_file)
     train_config = rewrite_config_arguments(train_config, args_ns_, 'train')
     
-    train_config['ddpm'] = rewrite_config_arguments(
-        train_config['ddpm'], args_ns_, 'train, ddpm')
+    train_config[train_type] = rewrite_config_arguments(
+        train_config[train_type], args_ns_, f'train, {train_type}')
     
     return dataset_config, model_config, train_config, args_ns_
 
@@ -128,10 +131,12 @@ def main():
     
     # Loading general parameters
     # :=========================================================================:
-    dataset_config, model_config, train_config, args = get_configuration_arguments()
+    dataset_config, model_config, train_config, args = get_configuration_arguments(
+        model_type, train_type)
     
     resume          = train_config['resume']
     wandb_log       = train_config['wandb_log']
+    start_new_exp   = train_config['start_new_exp']
     logdir          = train_config[train_type]['logdir']
     wandb_project   = train_config[train_type]['wandb_project']
     
@@ -167,6 +172,11 @@ def main():
 
         dump_config(os.path.join(logdir, 'params.yaml'), params)
 
+    # Setup wandb logging
+    # :=========================================================================:
+    if wandb_log:
+        wandb_dir = setup_wandb(params, logdir, wandb_project, start_new_exp)
+        
     print_config(params, keys=['training', 'model'])
     
     # Set the dir where things will be logged
@@ -174,12 +184,6 @@ def main():
 
     dist_util.setup_dist()
     logger.configure()
-    
-    
-    # Setup wandb logging
-    # :=========================================================================:
-    if wandb_log:
-        wandb_dir = setup_wandb(params, logdir, wandb_project)
     
     # Import dataset and create dataloader 
     # :=========================================================================:
