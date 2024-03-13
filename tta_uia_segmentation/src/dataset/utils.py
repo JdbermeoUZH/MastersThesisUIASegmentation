@@ -24,6 +24,7 @@ def normalize_quantile(data, min_p=0, max_p=1.0):
     max = torch.quantile(data, max_p)
     return normalize_min_max(data, min, max)
 
+
 def normalize_min_max(data, min=None, max=None, scale: float = 1):
     if min is None:
         min = torch.min(data)
@@ -42,6 +43,7 @@ def normalize_min_max(data, min=None, max=None, scale: float = 1):
     
     return data
 
+
 def normalize(type: str, **kwargs):
     if type == 'min_max':
         return normalize_min_max(**kwargs)
@@ -49,3 +51,11 @@ def normalize(type: str, **kwargs):
         return normalize_quantile(**kwargs)
     else:
         raise ValueError(f'Unknown normalization type: {type}')
+
+    
+def normalize_to_neg_one_to_one(img):
+    return img * 2 - 1
+
+
+def unnormalize_to_zero_to_one(t):
+    return (t + 1) * 0.5

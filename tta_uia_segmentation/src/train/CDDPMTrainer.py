@@ -58,7 +58,9 @@ def check_btw_minus_1_plus_1(*args: torch.Tensor):
 class CDDPMTrainer(Trainer):
 
     """
-           
+       TODO:
+        - Check there are no mistakes in -1 to 1 normalization of the labels due to
+            the label tensor usually being uint8     
     """
     def __init__(
         self,

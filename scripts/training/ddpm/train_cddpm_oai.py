@@ -6,6 +6,9 @@ import sys
 import argparse
 from itertools import chain
 
+import wandb
+import torch.distributed as dist
+from torch.utils.data import DataLoader
 from improved_diffusion import dist_util, logger
 from improved_diffusion.image_datasets import load_data
 from improved_diffusion.resample import create_named_schedule_sampler
@@ -15,9 +18,7 @@ from improved_diffusion.script_util import (
     args_to_dict,
     add_dict_to_argparser,
 )
-from improved_diffusion.train_util import TrainLoop
 
-from torch.utils.data import DataLoader
 
 sys.path.append(os.path.normpath(os.path.join(
     os.path.dirname(__file__), '..', '..')))
@@ -54,21 +55,28 @@ def preprocess_cmd_args() -> argparse.Namespace:
                         help='Path to directory where logs and checkpoints are saved. Default: logs')  
     parser.add_argument('--wandb_log', type=lambda s: s.strip().lower() == 'true', 
                         help='Log training to wandb. Default: False.')
-
+    parser.add_argument('--wandb_project', type=str, help='Name of wandb project. Default: None')
+    
     # Model parameters
     # ----------------:
+    parser.add_argument('--num_channels', type=int, help='Number of channels in the first layer of the model. Default: 64')
     #parser.add_argument('--channel_size', type=int, nargs='+', help='Number of feature maps for each block. Default: [16, 32, 64]')
     #parser.add_argument('--channels_bottleneck', type=int, help='Number of channels in bottleneck layer of model. Default: 128')
     
     # Training loop
     # -------------:    
-    parser.add_argument('--epochs', type=int, help='Number of epochs to train. Default: 100')
+    parser.add_argument('--train_num_steps', type=int, help='Number of steps to train for. Default: 100000')
     parser.add_argument('--learning_rate', type=float, help='Learning rate for optimizer. Default: 1e-4')
     parser.add_argument('--batch_size', type=int, help='Batch size for training. Default: 4')
     parser.add_argument('--num_workers', type=int, help='Number of workers for dataloader. Default: 0')
     
     # Diffusion model
     parser.add_argument('--learn_sigma', type=parse_bool, help='Whether to learn sigma. Default: False')
+    parser.add_argument('--use_kl', type=parse_bool, help='Whether to use KL divergence. Default: False')
+    parser.add_argument('--schedule_sampler', type=str, help='Schedule sampler for the loss. Default: uniform',
+                        choices=['uniform', 'loss-second-moment'])
+    parser.add_argument('--noise_schedule', type=str, help='Noise schedule for diffusion. Default: cosine',
+                        choices=['linear', 'cosine'])
     
     # Dataset and its transformations to use for training
     # ---------------------------------------------------:
@@ -160,9 +168,18 @@ def main():
         dump_config(os.path.join(logdir, 'params.yaml'), params)
 
     print_config(params, keys=['training', 'model'])
+    
+    # Set the dir where things will be logged
+    os.environ['DIFFUSION_BLOB_LOGDIR'] = logdir
 
     dist_util.setup_dist()
     logger.configure()
+    
+    
+    # Setup wandb logging
+    # :=========================================================================:
+    if wandb_log:
+        wandb_dir = setup_wandb(params, logdir, wandb_project)
     
     # Import dataset and create dataloader 
     # :=========================================================================:
@@ -183,10 +200,12 @@ def main():
     else: 
         norm = None
 
-    (data,) = get_datasets(
-        splits          = [train_config[train_type]['split']],
+    (train_data, val_data) = get_datasets(
+        splits          = [train_config[train_type]['split'],
+                           train_config[train_type]['split_val']],
         norm            = norm,
-        norm_device     = norm_device,  
+        norm_device     = norm_device,
+        norm_neg_one_to_one = True,
         paths           = dataset_config[dataset]['paths_processed'],
         paths_normalized_h5 = dataset_config[dataset]['paths_normalized_with_nn'],
         use_original_imgs = train_config[train_type]['use_original_imgs'],
@@ -202,15 +221,7 @@ def main():
         deformation     = None,
         load_original   = False,
     )
-    
-    num_workers = train_config[train_type]['num_workers']
-    data = DataLoader(
-            data, batch_size=batch_size, shuffle=True, num_workers=num_workers,
-            drop_last=True
-        )
-    
-    data = cycle(data)
-
+        
     # Create model and diffusion object
     # :=========================================================================:
     logger.log("creating model and diffusion...")
@@ -219,16 +230,11 @@ def main():
 
     num_channels        = model_config[model_type]['num_channels']
     channel_mult        = model_config[model_type]['channel_mult']
+    num_res_blocks      = model_config[model_type]['num_res_blocks']
 
     image_size          = train_config[train_type]['image_size'][-1]
     learn_sigma         = train_config[train_type]['learn_sigma']
     seg_cond            = train_config[train_type]['seg_cond']
-    
-    # args_not_to_use = ['image_channels', 'n_classes', 
-    #                    'num_channels', 'channel_mult',
-    #                    'image_size', 'learn_sigma', 'seg_cond']
-    # args_to_use = list(model_and_diffusion_defaults().keys())
-    # args_to_use = [arg for arg in args_to_use if arg not in args_not_to_use]
     
     model = create_model_conditioned_on_seg_mask(
         image_size = image_size,
@@ -238,57 +244,79 @@ def main():
         channel_mult = channel_mult,
         learn_sigma = learn_sigma,
         n_classes = n_classes,
+        num_res_blocks = num_res_blocks,
         **args_to_dict(args, model_defaults().keys())
     )
     
     diffusion_steps     = train_config[train_type]['diffusion_steps']
     noise_schedule      = train_config[train_type]['noise_schedule']  
     use_kl              = train_config[train_type]['use_kl']
+    timestep_respacing  = train_config[train_type]['timestep_respacing']
+
     diffusion = create_gaussian_diffusion(
         steps=diffusion_steps,
         learn_sigma=learn_sigma,
         noise_schedule=noise_schedule,
         use_kl=use_kl,
+        timestep_respacing=timestep_respacing,
         **args_to_dict(args, diffusion_defaults().keys()))
     model.to(dist_util.dev())
     
     # Train model
     # :=========================================================================:
     logger.log("training...")
-    learning_rate = float(train_config[train_type]['learning_rate'])
-    schedule_sampler = train_config[train_type]['schedule_sampler']
-    schedule_sampler = create_named_schedule_sampler(schedule_sampler, diffusion)
+    train_num_steps     = train_config[train_type]['train_num_steps']
+    learning_rate       = float(train_config[train_type]['learning_rate'])
+    microbatch          = train_config[train_type]['microbatch']
+    num_workers = train_config[train_type]['num_workers']
+    
+    global_batch_size = dist.get_world_size() * \
+        (batch_size * microbatch if microbatch > 0 else batch_size)
+    logger.log(f"Effective batch size of {global_batch_size}")
+    
+    schedule_sampler    = train_config[train_type]['schedule_sampler']
+    schedule_sampler    = create_named_schedule_sampler(schedule_sampler, diffusion)
+    
+    log_interval        = train_config[train_type]['log_interval']
+    save_interval       = train_config[train_type]['save_interval']
+    use_ddim            = train_config[train_type]['use_ddim']   
+    num_samples_for_metrics = train_config[train_type]['num_samples_for_metrics']
+    if wandb_log:
+        wandb.watch([model], log='all')
     
     OAICDDPMTrainer(
         model=model,
         diffusion=diffusion,
-        data=data,
+        train_data=train_data,
+        train_num_steps=train_num_steps,
         batch_size=batch_size,
+        microbatch=microbatch,
         schedule_sampler=schedule_sampler,
-        microbatch=args.microbatch,
         lr=learning_rate,
+        num_workers=num_workers,
+        log_interval=log_interval,
+        save_interval=save_interval,
+        val_data=val_data,
+        use_ddim=use_ddim,
+        num_samples_for_metrics=num_samples_for_metrics,
+        wandb_log=wandb_log,
         ema_rate=args.ema_rate,
-        log_interval=args.log_interval,
-        save_interval=args.save_interval,
         resume_checkpoint=args.resume_checkpoint,
         use_fp16=args.use_fp16,
         fp16_scale_growth=args.fp16_scale_growth,
         weight_decay=args.weight_decay,
         lr_anneal_steps=args.lr_anneal_steps,
+        
     ).run_loop()
 
 
 def get_default_params_original_script() -> dict:
     defaults = dict(
         data_dir="",
-        schedule_sampler="uniform",
         weight_decay=0.0,
         lr_anneal_steps=0,
-        batch_size=1,
         microbatch=-1,  # -1 disables microbatches
         ema_rate="0.9999",  # comma-separated list of EMA values
-        log_interval=10,
-        save_interval=10000,
         resume_checkpoint="",
         use_fp16=False,
         fp16_scale_growth=1e-3,
@@ -298,18 +326,11 @@ def get_default_params_original_script() -> dict:
     return defaults
 
 
-def cycle(dl):
-    while True:
-        for data in dl:
-            yield data
-
-
 def model_defaults():
     """
     Defaults for image training.
     """
     return dict(
-        num_res_blocks=2,
         num_heads=4,
         num_heads_upsample=-1,
         attention_resolutions="16,8",
@@ -325,7 +346,6 @@ def diffusion_defaults():
     """
     return dict(
         sigma_small=False,
-        timestep_respacing="",
         predict_xstart=False,
         rescale_timesteps=True,
         rescale_learned_sigmas=True,

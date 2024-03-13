@@ -60,6 +60,7 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
         one_hot_encode: bool = True, 
         intensity_value_range: Optional[tuple[float, float]] = None,
         norm_device: str = 'cpu',
+        norm_neg_one_to_one: bool = False,
         *args,
         **kwargs,
     ):
@@ -80,6 +81,7 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
         
         self.concatenate_along_channel = concatenate_along_channel
         self.normalize = normalize
+        self.norm_neg_one_to_one = norm_neg_one_to_one
         self.one_hot_encode = one_hot_encode
         self.num_vols = int(self.images.shape[0] / self.dim_proc[-1]) if self.image_size[0] == 1 else self.images.shape[0]
         
@@ -133,6 +135,14 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
         elif self.one_hot_encode:
             labels = du.class_to_onehot(labels, self.n_classes, class_dim=0) 
         
+        else:
+            raise ValueError('Only min_max normalization is supported at the moment.')
+
+        # Normalize image to [-1, 1], if specified
+        if self.norm_neg_one_to_one:
+            images = du.normalize_to_neg_one_to_one(images)
+            labels = du.normalize_to_neg_one_to_one(labels.type(torch.int8))
+        
         if self.concatenate_along_channel:
             return torch.concatenate([images, labels], axis=0).float()
         
@@ -149,7 +159,7 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
         sampled_slices = [np.random.randint(idx_start * min_slice_idx, (idx_start + 1) * max_slice_idx, n_slices) 
                           for idx_start, n_slices in enumerate(n_slices_per_volume)]
         sampled_slices = list(np.concatenate(sampled_slices))
-        
+    
         return Subset(self, sampled_slices)
     
     def _find_min_max_in_normalized_imgs(self):
