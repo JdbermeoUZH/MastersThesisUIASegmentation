@@ -159,8 +159,8 @@ class OAICDDPMTrainer(TrainLoop):
             x_gen = self.sample_fn(
                 self.model,
                 img.shape,
-                x_cond,
                 clip_denoised=self.clip_denoised,
+                model_kwargs={"x_cond": x_cond}
             )
             
             for metric_name, metric_fn in self.metrics_to_log.items():
@@ -190,8 +190,7 @@ class OAICDDPMTrainer(TrainLoop):
                 self.ddp_model,
                 micro,
                 t,
-                micro_cond,
-                model_kwargs=None,
+                model_kwargs={"x_cond": micro_cond},
             )
 
             if last_batch or not self.use_ddp:

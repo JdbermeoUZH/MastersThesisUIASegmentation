@@ -13,7 +13,7 @@ from improved_diffusion import dist_util, logger
 from improved_diffusion.image_datasets import load_data
 from improved_diffusion.resample import create_named_schedule_sampler
 from improved_diffusion.script_util import (
-    model_and_diffusion_defaults,
+    create_gaussian_diffusion,
     create_gaussian_diffusion,
     args_to_dict,
     add_dict_to_argparser,
@@ -28,7 +28,7 @@ from tta_uia_segmentation.src.train import OAICDDPMTrainer
 from tta_uia_segmentation.src.utils.io import (
     load_config, rewrite_config_arguments, dump_config, print_config)
 from tta_uia_segmentation.src.models.UNetModelOAI import create_model_conditioned_on_seg_mask
-from tta_uia_segmentation.src.models.ConditionalGaussianDiffusionOAI import create_gaussian_diffusion
+#from tta_uia_segmentation.src.models.ConditionalGaussianDiffusionOAI import create_gaussian_diffusion
 from tta_uia_segmentation.src.models.io import load_norm_from_configs_and_cpt
 from tta_uia_segmentation.src.utils.logging import setup_wandb
 

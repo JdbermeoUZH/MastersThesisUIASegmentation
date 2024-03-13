@@ -51,8 +51,8 @@ class UNetModelConditionedOnSegMask(UNetModel):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         
-    def forward(self, x, timesteps, seg_mask=None):
-        if seg_mask is not None:
-            x = torch.cat([x, seg_mask], dim=1)
-        return super().forward(x, timesteps)
+    def forward(self, x, timesteps, x_cond=None, y=None):
+        if x_cond is not None:
+            x = torch.cat([x, x_cond], dim=1)
+        return super().forward(x, timesteps, y)
 
