@@ -143,7 +143,7 @@ ddpm_oai:
   num_workers:                  2
   log_interval:                 10        # Default 10
   save_interval:                2500      # Default 10000
-  num_samples_for_metrics:      250       # Must have an interger square root to store images in a square grid
+  num_samples_for_metrics:      100       # Must have an interger square root to store images in a square grid
   diffusion_steps:              4000      # Range of noising steps to sample from during training. 4000 in the original implementation  
   use_ddim:                     True      # To generate samples to check performance during training
   timestep_respacing:           ddim100   # Number of sampling steps to generate images. If prepended with ddim, then it uses ddim style respacing

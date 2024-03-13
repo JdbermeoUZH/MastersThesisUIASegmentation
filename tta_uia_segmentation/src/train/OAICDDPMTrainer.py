@@ -169,8 +169,10 @@ class OAICDDPMTrainer(TrainLoop):
             
             img = unnormalize_to_zero_to_one(img)
             x_gen = unnormalize_to_zero_to_one(x_gen)
+            n_classes = x_cond.shape[1]
             x_cond = onehot_to_class(unnormalize_to_zero_to_one(
                 x_cond))
+            x_cond = x_cond / (n_classes - 1)
             
             for metric_name, metric_fn in self.metrics_to_log.items():
                 metric = metric_fn(x_gen, img).item()
