@@ -172,18 +172,19 @@ def main():
 
         dump_config(os.path.join(logdir, 'params.yaml'), params)
 
-    # Setup wandb logging
-    # :=========================================================================:
-    if wandb_log:
-        wandb_dir = setup_wandb(params, logdir, wandb_project, start_new_exp)
-        
-    print_config(params, keys=['training', 'model'])
-    
     # Set the dir where things will be logged
     os.environ['DIFFUSION_BLOB_LOGDIR'] = logdir
 
     dist_util.setup_dist()
     logger.configure()
+    
+    # Setup wandb logging
+    # :=========================================================================:
+    if wandb_log and dist.get_rank() == 0:
+        wandb_dir = setup_wandb(params, logdir, wandb_project, start_new_exp)
+        
+    print_config(params, keys=['training', 'model'])
+    
     
     # Import dataset and create dataloader 
     # :=========================================================================:
@@ -211,7 +212,7 @@ def main():
         norm_device     = norm_device,
         norm_neg_one_to_one = True,
         paths           = dataset_config[dataset]['paths_processed'],
-        paths_normalized_h5 = dataset_config[dataset]['paths_normalized_with_nn'],
+        paths_normalized_h5 = None, # dataset_config[dataset]['paths_normalized_with_nn'],
         use_original_imgs = train_config[train_type]['use_original_imgs'],
         one_hot_encode  = train_config[train_type]['one_hot_encode'],
         normalize       = train_config[train_type]['normalize'],
@@ -235,10 +236,12 @@ def main():
     num_channels        = model_config[model_type]['num_channels']
     channel_mult        = model_config[model_type]['channel_mult']
     num_res_blocks      = model_config[model_type]['num_res_blocks']
-
+    
     image_size          = train_config[train_type]['image_size'][-1]
     learn_sigma         = train_config[train_type]['learn_sigma']
     seg_cond            = train_config[train_type]['seg_cond']
+    dropout             = train_config[train_type]['dropout']
+
     
     model = create_model_conditioned_on_seg_mask(
         image_size = image_size,
@@ -249,6 +252,7 @@ def main():
         learn_sigma = learn_sigma,
         n_classes = n_classes,
         num_res_blocks = num_res_blocks,
+        dropout = dropout,
         **args_to_dict(args, model_defaults().keys())
     )
     
@@ -310,7 +314,6 @@ def main():
         fp16_scale_growth=args.fp16_scale_growth,
         weight_decay=args.weight_decay,
         lr_anneal_steps=args.lr_anneal_steps,
-        
     ).run_loop()
 
 
@@ -338,7 +341,6 @@ def model_defaults():
         num_heads=4,
         num_heads_upsample=-1,
         attention_resolutions="16,8",
-        dropout=0.0,
         use_checkpoint=False,
         use_scale_shift_norm=True,
     )

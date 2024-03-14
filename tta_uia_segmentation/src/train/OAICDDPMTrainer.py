@@ -11,6 +11,7 @@ import wandb
 import numpy as np
 import torch as th
 from PIL import Image   
+import torch.distributed as dist
 from torchvision.utils import make_grid, save_image 
 from torch.utils.data import DataLoader, Dataset
 from torchmetrics.functional.image import (
@@ -116,18 +117,23 @@ class OAICDDPMTrainer(TrainLoop):
             if self.step % self.log_interval == 0:
                 logged_info = logger.dumpkvs()
                 
-                if self.wandb_log:
-                    wandb.log(dict(logged_info))
+                if self.wandb_log and dist.get_rank() == 0:
+                    del logged_info['step']
+                    wandb.log(dict(logged_info),
+                              step=self.step + self.resume_step)
                 
             if self.step % self.save_interval == 0:
                 self.save()
                 
                 # Sample images and log their metrics to wandb
-                if self.measure_performance_on_train:
-                    self.measure_performance(self.train_data, 'train', self.num_samples_for_metrics)
-                
-                if self.measure_performance_on_val and self.val_data is not None:
-                    self.measure_performance(self.val_data, 'val', self.num_samples_for_metrics)
+                if self.wandb_log and dist.get_rank() == 0:
+                    if self.measure_performance_on_train:
+                        self.measure_performance(
+                            self.train_data, 'train', self.num_samples_for_metrics)
+                    
+                    if self.measure_performance_on_val and self.val_data is not None:
+                        self.measure_performance(
+                            self.val_data, 'val', self.num_samples_for_metrics)
             
             self.step += 1
             
@@ -167,12 +173,11 @@ class OAICDDPMTrainer(TrainLoop):
                 model_kwargs={"x_cond": x_cond}
             )
             
-            img = unnormalize_to_zero_to_one(img)
-            x_gen = unnormalize_to_zero_to_one(x_gen)
+            img = unnormalize_to_zero_to_one(img).cpu()
+            x_gen = unnormalize_to_zero_to_one(x_gen).cpu()
             n_classes = x_cond.shape[1]
             x_cond = onehot_to_class(unnormalize_to_zero_to_one(
-                x_cond))
-            x_cond = x_cond / (n_classes - 1)
+                x_cond)).cpu() / (n_classes - 1)
             
             for metric_name, metric_fn in self.metrics_to_log.items():
                 metric = metric_fn(x_gen, img).item()
@@ -183,21 +188,22 @@ class OAICDDPMTrainer(TrainLoop):
                     th.cat([x_cond, img, x_gen], dim = -1))
             
         all_images = th.cat(imgs_for_plot, dim = 0)
-        milestone = self.step // self.save_interval
-        all_images_fn = f'{dataset_name}-sample-m{milestone}-step-{self.step}-img_gt_seg_gt_gen_img.png'
+        global_step = self.step + self.resume_step
+        milestone = global_step // self.save_interval
+        all_images_fn = f'{dataset_name}-sample-m{milestone}-step-{global_step}-img_gt_seg_gt_gen_img.png'
         plot_rows = int(math.sqrt(len(imgs_for_plot)))
         save_image(all_images, os.path.join(get_blob_logdir(), all_images_fn), 
                    nrow = plot_rows)
 
         for metric_name, metric_values in metrics.items():
             wandb.log({f'{dataset_name}_{metric_name}': np.mean(metric_values)},
-                      step=self.step)
+                      step=global_step)
         
         # Log images in wandb
         wandb.log({
                 all_images_fn: wandb.Image(tensor_collection_to_image_grid(
                     all_images,nrow = plot_rows))}, 
-                step = self.step
+                step = global_step
             )
     
     def forward_backward(self, batch, cond):

@@ -2,23 +2,22 @@ import os
 import sys
 import argparse
 
-import torch
 import wandb
 import numpy as np
 from torch.utils.data import DataLoader
 
 sys.path.append(os.path.normpath(os.path.join(
-    os.path.dirname(__file__), '..', '..', '..', 'tta_uia_segmentation', 'src')))
+    os.path.dirname(__file__), '..', '..', '..')))
 
-from dataset.dataset_in_memory import get_datasets
-from models import Normalization, UNet
-from models.normalization import background_suppression
-from train import NormSegTrainer
-from utils.loss import DiceLoss, dice_score
-from utils.io import (load_config, dump_config, print_config,
-                      save_checkpoint, write_to_csv, deep_get, rewrite_config_arguments)
-from utils.utils import seed_everything, define_device
-from utils.logging import setup_wandb
+from tta_uia_segmentation.src.dataset.dataset_in_memory import get_datasets
+from tta_uia_segmentation.src.models import Normalization, UNet
+from tta_uia_segmentation.src.train import NormSegTrainer
+from tta_uia_segmentation.src.utils.loss import DiceLoss
+from tta_uia_segmentation.src.utils.io import (
+    load_config, dump_config, print_config, 
+    write_to_csv, rewrite_config_arguments)
+from tta_uia_segmentation.src.utils.utils import seed_everything, define_device
+from tta_uia_segmentation.src.utils.logging import setup_wandb
 
 
 

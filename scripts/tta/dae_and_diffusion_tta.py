@@ -31,6 +31,7 @@ def preprocess_cmd_args() -> argparse.Namespace:
     All options specified will overwrite whaterver is specified in the config files.
     
     """
+    parse_bool = lambda s: s.strip().lower() == 'true'
     parser = argparse.ArgumentParser(description="Test Time Adaption with DAE")
     
     parser.add_argument('dataset_config_file', type=str, help='Path to yaml config file with parameters that define the dataset.')
@@ -38,16 +39,15 @@ def preprocess_cmd_args() -> argparse.Namespace:
     
     # TTA parameters. If provided, overrides default parameters from config file.
     # :================================================================================================:
-    parser.add_argument('--start', required=False, type=int, help='starting volume index to be used for testing')
-    parser.add_argument('--stop', required=False, type=int, help='stopping volume index to be used for testing (index not included)')
+    parser.add_argument('--start', type=int, help='starting volume index to be used for testing')
+    parser.add_argument('--stop', type=int, help='stopping volume index to be used for testing (index not included)')
     parser.add_argument('--logdir', type=str, help='Path to directory where logs and checkpoints are saved. Default: logs')  
     parser.add_argument('--dae_dir', type=str, help='Path to directory where DAE checkpoints are saved')
     parser.add_argument('--seg_dir', type=str, help='Path to directory where segmentation checkpoints are saved')
-    parser.add_argument('--wandb_log', type=lambda s: s.strip().lower() == 'true', help='Log tta to wandb. Default: False.')
+    parser.add_argument('--wandb_log', type=parse_bool, help='Log tta to wandb. Default: False.')
     parser.add_argument('--wandb_project', type=str, help='Name of wandb project to log to. Default: "tta"')
-    parser.add_argument('--start_new_exp', type=lambda s: s.strip().lower() == 'true', help='Start a new wandb experiment. Default: False')
-    parser.add_argument('--calculate_dice_every', type=int, help='Calculate dice every x steps. Default: 25')
-
+    parser.add_argument('--start_new_exp', type=parse_bool, help='Start a new wandb experiment. Default: False')
+    
     # TTA loop
     # -------------:
     # optimization params
@@ -55,7 +55,7 @@ def preprocess_cmd_args() -> argparse.Namespace:
     parser.add_argument('--learning_rate', type=float, help='Learning rate for optimizer. Default: 1e-4')
     parser.add_argument('--batch_size', type=int, help='Batch size for tta. Default: 4')
     parser.add_argument('--num_workers', type=int, help='Number of workers for dataloader. Default: 0')
-    parser.add_argument('--accumulate_over_volume', type=lambda s: s.strip().lower() == 'true', help='Whether to accumulate gradients over volume. Default: False')
+    parser.add_argument('--accumulate_over_volume', type=parse_bool, help='Whether to accumulate gradients over volume. Default: False')
     
     parser.add_argument('--ddpm_loss_beta', type=float, help='Weight for DDPM loss. Default: 1.0')
     parser.add_argument('--dae_loss_alpha', type=float, help='Weight for DAE loss. Default: 1.0')
@@ -64,26 +64,28 @@ def preprocess_cmd_args() -> argparse.Namespace:
     parser.add_argument('--use_ddpm_after_step', type=int, help='Use DDPM after x steps. Default: None')
     parser.add_argument('--use_ddpm_after_dice', type=float, help='Use DDPM after dice is below x. Default: None')
     parser.add_argument('--warmup_steps_for_ddpm_loss', type=int, help='Warmup steps for DDPM loss. Default: 0')
+    
     # Seg model params
-    parser.add_argument('--seg_with_bg_supp', type=lambda s: s.strip().lower() == 'true', help='Whether to use background suppression for segmentation. Default: True')
+    parser.add_argument('--seg_with_bg_supp', type=parse_bool, help='Whether to use background suppression for segmentation. Default: True')
     
     # DDPM params
     parser.add_argument('--min_t_diffusion_tta', type=int, help='Minimum value for diffusion time. Default: 0')
     parser.add_argument('--max_t_diffusion_tta', type=int, help='Maximum value for diffusion time. Default: 1000')       
-    parser.add_argument('--use_y_pred_for_ddpm_loss', type=lambda s: s.strip().lower() == 'true', help='Whether to use predicted segmentation as conditional for DDPM. Default: True')
-    parser.add_argument('--use_x_cond_gt', type=lambda s: s.strip().lower() == 'true', help='Whether to use ground truth segmetnation as conditional for DDPM. ONLY FOR DEBUGGING. Default: False')
+    parser.add_argument('--use_y_pred_for_ddpm_loss', type=parse_bool, help='Whether to use predicted segmentation as conditional for DDPM. Default: True')
+    parser.add_argument('--use_x_cond_gt', type=parse_bool, help='Whether to use ground truth segmetnation as conditional for DDPM. ONLY FOR DEBUGGING. Default: False')
     parser.add_argument('--minibatch_size_ddpm', type=int, help='Minibatch size for DDPM. Default: 2')
     
     # DAE and Atlas params
     parser.add_argument('--alpha', type=float, help='Proportion of how much better the dice of the DAE pseudolabel and predicted segmentation'
                                                     'should be than the dice of the Atlas pseudolabel. Default: 1')
     parser.add_argument('--beta', type=float, help='Minimum dice of the Atlas pseudolabel and the predicted segmentation. Default: 0.25')
-    parser.add_argument('--use_atlas_only_for_intit', type=lambda s: s.strip().lower() == 'true', help='Whether to use the atlas only for initialization. Default: False')
-    
+    parser.add_argument('--use_atlas_only_for_intit', type=parse_bool, help='Whether to use the atlas only for initialization. Default: False')
+    parser.add_argument('--calculate_dice_every', type=int, help='Calculate dice every x steps. Default: 25')
+
     # Probably not used arguments
     parser.add_argument('--seed', type=int, help='Seed for random number generators. Default: 0')   
     parser.add_argument('--device', type=str, help='Device to use for tta. Default cuda', )
-    parser.add_argument('--save_checkpoints', type=lambda s: s.strip().lower() == 'true',
+    parser.add_argument('--save_checkpoints', type=parse_bool,
                         help='Whether to save checkpoints. Default: True')
     
     # Dataset and its transformations to use for TTA
@@ -121,7 +123,7 @@ def preprocess_cmd_args() -> argparse.Namespace:
     parser.add_argument('--bg_supression_max', type=float, help='Maximum value to use for random background suppression. Default: 1.0')
     parser.add_argument('--bg_supression_max_source', type=str, choices=['thresholding', 'ground_truth'], help='Maximum value to use for random background suppression. Default: "thresholding"')
     parser.add_argument('--bg_supression_thresholding', type=str, choices=['otsu', 'yen', 'li', 'minimum', 'mean', 'triangle', 'isodata'], help='Maximum value to use for random background suppression. Default: "otsu"') 
-    parser.add_argument('--bg_supression_hole_filling', type=lambda s: s.strip().lower() == 'true', help='Whether to use hole filling for background suppression. Default: True')
+    parser.add_argument('--bg_supression_hole_filling', type=parse_bool, help='Whether to use hole filling for background suppression. Default: True')
     args = parser.parse_args()
     
     return args

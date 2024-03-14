@@ -24,6 +24,10 @@ dae:
   logdir: /scratch_net/biwidl319/jbermeo/logs/brain/tta/debugging/dae_only/3_01/lr_1em3_grad_acc_1x1_conv_norm
   dae_dir: /scratch_net/biwidl319/jbermeo/data/models/brain/dae/hcp_t1
   seg_dir: /scratch_net/biwidl319/jbermeo/data/models/brain/segmentation/hcp_t1/no_bg_supp_norm_w_1x1_conv
+
+  seg_with_bg_supp: False
+
+  accumulate_over_volume: True
   batch_size: 16
   dataset_repetition: 1
   num_steps: 1000  # 500 for brain, 2700 for wmh
@@ -34,9 +38,6 @@ dae:
   learning_rate: 0.001
   save_checkpoints: True
   const_aug_per_volume: False
-  accumulate_over_volume: True
-
-  seg_with_bg_supp: False
   
   bg_suppression_opts:
     type: none  # possible values: none, fixed_value, random_value
@@ -69,7 +70,7 @@ dae_and_diffusion:
   wandb_project: mt-tta-dae_and_diffusion_tta-baselines # mt-tta-brain-hcp_t2
   logdir: /scratch_net/biwidl319/jbermeo/logs/brain/sota/tests/ddpm_sample_guidance
   dae_dir: /scratch_net/biwidl319/jbermeo/data/models/brain/dae/hcp_t1
-  seg_dir: /scratch_net/biwidl319/jbermeo/data/models/brain/segmentation/hcp_t1/bg_supp #bg_supp_norm_w_1x1_conv 
+  seg_dir: /scratch_net/biwidl319/jbermeo/data/models/brain/segmentation/hcp_t1/no_bg_supp_norm_w_1x1_conv #bg_supp_norm_w_1x1_conv 
   ddpm_dir: /scratch_net/biwidl319/jbermeo/logs/brain/ddpm/not_one_hot_64_base_filters_with_aug_except_noise
   cpt_fn: 'model-9.pt' # or 23, 28, or 31
 
@@ -95,13 +96,13 @@ dae_and_diffusion:
   accumulate_over_volume: True
   batch_size: 16
   dataset_repetition: 1
-  num_steps: 2000  # 500 for brain, 2700 for wmh
+  num_steps: 1000  # 500 for brain, 2700 for wmh
   update_dae_output_every: 25
   calculate_dice_every: 25  # 25 for brain, 135 for wmh (nuhs, umc, vu)
   alpha: 1.0
   beta: 0.25 
   use_atlas_only_for_intit: False
-  learning_rate: 0.0005
+  learning_rate: 0.001
   save_checkpoints: True
   const_aug_per_volume: False
   
@@ -129,7 +130,7 @@ dae_and_diffusion:
     brightness_min: 0.0
     brightness_max: 0.1
     noise_mean: 0.0
-    noise_std: 0.0
+    noise_std: 0.1
 
 diffusion_tta:
   wandb_project: mt-tta-diffusion_tta-tests

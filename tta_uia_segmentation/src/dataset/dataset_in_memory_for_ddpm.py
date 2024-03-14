@@ -5,7 +5,7 @@ import h5py
 import torch
 import numpy as np
 from typing import Union
-from torch.utils.data import Subset, Dataset
+from torch.utils.data import Subset, Dataset, DataLoader
 from torchmetrics.functional.classification import dice
 
 from tta_uia_segmentation.src.dataset.dataset_in_memory import DatasetInMemory
@@ -53,7 +53,6 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
     def __init__(
         self,
         norm: Optional[torch.nn.Module],
-        paths_normalized_h5: dict[str, str],
         use_original_imgs: bool = False,
         concatenate_along_channel: bool = False,
         normalize: str = 'min_max',
@@ -61,11 +60,15 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
         intensity_value_range: Optional[tuple[float, float]] = None,
         norm_device: str = 'cpu',
         norm_neg_one_to_one: bool = False,
+        paths_normalized_h5: Optional[dict[str, str]] = None,
         *args,
         **kwargs,
     ):
         
         if norm is None and not use_original_imgs:
+            if paths_normalized_h5 is None:
+                raise ValueError('Either a normalization model or paths to normalized images should be given,'
+                                 'if not using original images')
             kwargs['paths'] = paths_normalized_h5
         
         super().__init__(*args, **kwargs)
@@ -77,7 +80,7 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
             self.norm.requires_grad_(False)
             self.norm.to(norm_device)
         
-        self.normalized_img_path = paths_normalized_h5[self.split]
+        self.normalized_img_path = paths_normalized_h5[self.split] if paths_normalized_h5 is not None else None
         
         self.concatenate_along_channel = concatenate_along_channel
         self.normalize = normalize
@@ -92,6 +95,8 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
         else:
             self.images_min, self.images_max = self._find_min_max_in_normalized_imgs()
         
+        print(f'Min and max values of normalized images: {self.images_min}, {self.images_max}')
+
     def __getitem__(self, index) -> Union[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]:
 
         images = self.images[index, ...]
@@ -112,13 +117,20 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
             
         images = torch.from_numpy(images).float()
         labels = torch.from_numpy(labels).float()
-    
+        
         # Use the normalization model to normalize the images, if one is given
         if self.norm is not None:
             with torch.inference_mode():
                 images = images.to(self.norm_device)
                 labels = labels.to(self.norm_device)
                 images = self.norm(images[None, ...]).squeeze(0)
+                
+        # Update the min and max values of the images, in case a larger value is observed
+        img_max, img_min = images.max(), images.min()   
+        if img_min < self.images_min:
+            self.images_min = img_min
+        if img_max > self.images_max:
+            self.images_max = img_max
 
         # Normalize image and label map to [0, 1]
         if self.normalize == 'min_max':
@@ -163,10 +175,30 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
         return Subset(self, sampled_slices)
     
     def _find_min_max_in_normalized_imgs(self):
-        with h5py.File(self.normalized_img_path, 'r') as data:
-            images = data['images'][:]
-            images_min = images.min()
-            images_max = images.max()
+        if self.normalized_img_path is not None:    
+            with h5py.File(self.normalized_img_path, 'r') as data:
+                images = data['images'][:]
+                images_min = images.min()
+                images_max = images.max()
+        
+        elif self.norm is not None:
+            print('Determining min and max values of normalized images from a sample of the dataset')
+            self.images_min, self.images_max = np.inf, -np.inf
+            sample_dataset = self.sample_slices(256)
+            sample_dataset = DataLoader(sample_dataset, batch_size=4, num_workers=2)
+            
+            for img, _ in sample_dataset:
+                img = img.to(self.norm_device)
+                img = self.norm(img)
+                current_max, current_min = img.max(), img.min()
+                if current_min < self.images_min:
+                    images_min = current_min
+                if current_max > self.images_max:
+                    images_max = current_max
+                
+        else: 
+            raise ValueError('No normalization model or normalized images were given, '
+                             'thus the min and max values of normalized images cannot be determined')
             
         return images_min, images_max 
 
