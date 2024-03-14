@@ -85,12 +85,12 @@ segmentation:
 
 ddpm:
   batch_size:                   2
-  gradient_accumulate_every:    8
-  num_workers:                  5
+  gradient_accumulate_every:    64
+  num_workers:                  3
   dataset:                      hcp_t1    # brain: hcp_t1, hcp_t2, abide_caltech, abide_stanford; wmh: nuhs, umc, vu
-  norm_with_nn_on_fly:          False
+  norm_with_nn_on_fly:          True
   use_original_imgs:            True
-  one_hot_encode:               False
+  one_hot_encode:               True
   normalize:                    min_max
   image_size:                   [1, 256, 256]
   rescale_factor:               [1, 1, 1]
@@ -100,7 +100,7 @@ ddpm:
   sampling_timesteps:           100       # Number of sampling steps to generate images. If less than 1000, will use DDIM sampling. If null, will be the same as timesteps => linear denoising steps
   save_and_sample_every:        2500      # 1000 in the constructor 
   learning_rate:                8e-5      # 1e-4 in the constructor
-  logdir:                       /scratch_net/biwidl319/jbermeo/logs/brain/ddpm/original_imgs/not_one_hot_64_base_filters_with_aug_except_noise
+  logdir:                       /scratch_net/biwidl319/jbermeo/logs/brain/ddpm/normalized_imgs/1x1_conv/batch_size_128
   wandb_project:                mt-ddpm
 
   norm_dir:                     /scratch_net/biwidl319/jbermeo/data/models/brain/segmentation/hcp_t1/no_bg_supp_norm_w_1x1_conv

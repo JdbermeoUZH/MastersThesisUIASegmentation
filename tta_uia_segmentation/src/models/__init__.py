@@ -1,3 +1,5 @@
 from tta_uia_segmentation.src.models.UNet import UNet
 from tta_uia_segmentation.src.models.normalization import Normalization
 from tta_uia_segmentation.src.models.ConditionalGaussianDiffusion import ConditionalGaussianDiffusion
+from tta_uia_segmentation.src.models.ConditionalUnet import ConditionalUnet
+from tta_uia_segmentation.src.models.UNetModelOAI import UNetModelConditionedOnSegMask

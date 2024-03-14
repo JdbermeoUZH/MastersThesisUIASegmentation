@@ -106,7 +106,6 @@ class CDDPMTrainer(Trainer):
         self.channels = diffusion_model.channels
         is_ddim_sampling = diffusion_model.is_ddim_sampling
 
-
         # sampling and training hyperparameters
 
         assert has_int_squareroot(num_samples), 'number of samples must have an integer square root'
@@ -166,7 +165,7 @@ class CDDPMTrainer(Trainer):
         self.wandb_log = wandb_log
         self.wandb_dir = wandb_dir
         self.metrics_to_log = metrics_to_log
-                
+    
         # FID-score computation
 
         self.calculate_fid = calculate_fid and self.accelerator.is_main_process

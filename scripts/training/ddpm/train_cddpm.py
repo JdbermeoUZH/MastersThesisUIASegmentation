@@ -5,14 +5,12 @@ import glob
 import argparse
 
 import wandb
-from torch.utils.data import DataLoader
-from denoising_diffusion_pytorch import Unet, GaussianDiffusion
 
 sys.path.append(os.path.normpath(os.path.join(
     os.path.dirname(__file__), '..', '..', '..')))
 
-from dataset.dataset_in_memory_for_ddpm import get_datasets
-from tta_uia_segmentation.src.models import ConditionalGaussianDiffusion
+from tta_uia_segmentation.src.dataset.dataset_in_memory_for_ddpm import get_datasets
+from tta_uia_segmentation.src.models import ConditionalGaussianDiffusion, ConditionalUnet
 from tta_uia_segmentation.src.models.io import load_norm_from_configs_and_cpt
 from tta_uia_segmentation.src.train import CDDPMTrainer
 from tta_uia_segmentation.src.utils.io import (
@@ -191,7 +189,7 @@ if __name__ == '__main__':
         splits          = ['train', 'val'],
         norm            = norm,
         paths           = dataset_config[dataset]['paths_processed'],
-        paths_normalized_h5 = dataset_config[dataset]['paths_normalized_with_nn'],
+        paths_normalized_h5 = None, # dataset_config[dataset]['paths_normalized_with_nn'],
         use_original_imgs = train_config[train_type]['use_original_imgs'],
         one_hot_encode  = train_config[train_type]['one_hot_encode'],
         normalize       = train_config[train_type]['normalize'],
@@ -219,12 +217,12 @@ if __name__ == '__main__':
     
     print(f'Using Device {device}')
     # Model definition
-    model = Unet(
+    model = ConditionalUnet(
         dim=dim,
-        dim_mults=dim_mults,   
+        dim_mults=dim_mults,
+        n_classes=n_classes,   
         flash_attn=True,
-        channels=channels, 
-        self_condition=True,
+        image_channels=channels, 
     )
     
     diffusion = ConditionalGaussianDiffusion(

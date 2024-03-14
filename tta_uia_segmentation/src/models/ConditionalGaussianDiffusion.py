@@ -64,7 +64,7 @@ class ConditionalGaussianDiffusion(GaussianDiffusion):
         assert h == img_size and w == img_size, f'height and width of image must be {img_size}, \
             but got {h} and {w} respectively'
             
-        assert cond_img.shape == img.shape, 'cond_img and img must have the same shape'
+        assert cond_img.shape[-2:] == img.shape[-2:], 'cond_img and img must have the same shape in H and W'
         
         min_t = default(min_t, 0)
         max_t = default(max_t, self.num_timesteps)
