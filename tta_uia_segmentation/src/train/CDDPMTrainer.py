@@ -141,7 +141,6 @@ class CDDPMTrainer(Trainer):
         self.val_dl = cycle(val_dl)
         
         # optimizer
-
         self.opt = Adam(diffusion_model.parameters(), lr = train_lr, betas = adam_betas)
 
         # for logging results in a folder periodically
@@ -154,7 +153,6 @@ class CDDPMTrainer(Trainer):
         self.results_folder.mkdir(exist_ok = True)
 
         # step counter state
-
         self.step = 0
 
         # prepare model, dataloader, optimizer with accelerator

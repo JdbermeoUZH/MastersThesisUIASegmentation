@@ -89,7 +89,7 @@ ddpm:
   num_workers:                  3
   dataset:                      hcp_t1    # brain: hcp_t1, hcp_t2, abide_caltech, abide_stanford; wmh: nuhs, umc, vu
   norm_with_nn_on_fly:          True
-  use_original_imgs:            True
+  use_original_imgs:            False
   one_hot_encode:               True
   normalize:                    min_max
   image_size:                   [1, 256, 256]

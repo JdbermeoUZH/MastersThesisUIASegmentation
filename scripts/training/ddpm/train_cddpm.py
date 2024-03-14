@@ -243,7 +243,7 @@ if __name__ == '__main__':
     train_num_steps = train_config[train_type]['train_num_steps']
     num_samples = train_config[train_type]['num_samples']
     save_and_sample_every = train_config[train_type]['save_and_sample_every']
-        
+    
     trainer = CDDPMTrainer(
         diffusion,
         train_dataset=train_dataset,
