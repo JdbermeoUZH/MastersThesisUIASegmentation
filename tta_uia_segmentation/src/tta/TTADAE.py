@@ -213,6 +213,10 @@ class TTADAE:
 
             if const_aug_per_volume:
                 volume_dataset.dataset.set_seed(get_seed())
+                
+            # TODO: Delete these next lines, DEBUGGING
+            print('DEBUG DELETE ME: len(volume_dataloader)', len(volume_dataloader))
+            print('DEBUG DELETE ME: len(label_dataloader)', len(label_dataloader))
                                                         
             # Adapting to the target distribution.
             for (x,_,_,_, bg_mask), (y,) in zip(volume_dataloader, label_dataloader):
@@ -228,7 +232,7 @@ class TTADAE:
 
                 if self.rescale_factor is not None:
                     mask = self.rescale_volume(mask)
-
+                    
                 loss = self.loss_func(mask, y)
 
                 if accumulate_over_volume:
@@ -276,7 +280,7 @@ class TTADAE:
         
         dice_scores = {i * calculate_dice_every: score for i, score in enumerate(self.test_scores)}
 
-        return self.norm, self.norm_dict, self.metrics_best, dice_scores
+        return self.norm_dict, self.metrics_best, dice_scores
 
     def forward_pass_seg(
         self, 
@@ -443,7 +447,7 @@ class TTADAE:
             masks.append(mask)
 
         masks = torch.cat(masks)
-        masks = masks.permute(1,0,2,3).unsqueeze(0)
+        masks = masks.permute(1,0,2,3).unsqueeze(0) # CDHW -> DCHW
 
         if self.rescale_factor is not None:
             masks = F.interpolate(masks, scale_factor=self.rescale_factor, mode='trilinear')
@@ -459,7 +463,7 @@ class TTADAE:
             or self.use_only_dae_pl:
             print('Using DAE output as pseudo label')
             target_labels = dae_output
-            dice = dice_denoised
+            dice = dice_denoised.item()
             self.using_dae_pl = True
             self.using_atlas_pl = False
             
@@ -471,7 +475,7 @@ class TTADAE:
         else:
             print('Using Atlas as pseudo label')
             target_labels = self.atlas
-            dice = dice_atlas
+            dice = dice_atlas.item()
             self.using_atlas_pl = True
             self.using_dae_pl = False
             

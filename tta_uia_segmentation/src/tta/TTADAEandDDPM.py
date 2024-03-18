@@ -468,7 +468,7 @@ class TTADAEandDDPM(TTADAE):
         
         dice_scores = {i * calculate_dice_every: score for i, score in enumerate(self.test_scores)}
 
-        return self.norm, self.norm_dict, self.metrics_best, dice_scores
+        return self.norm_dict, self.metrics_best, dice_scores
     
     def calculate_ddpm_gradients(
         self,

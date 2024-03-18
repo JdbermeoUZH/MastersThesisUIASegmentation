@@ -5,7 +5,7 @@ resume:           False
 device:           cuda
 checkpoint_best:  checkpoint_best.pth
 checkpoint_last:  checkpoint_last.pth
-n_classes:        15                # 15 for brain, 2 for WMH
+n_classes:        2     # 15 for brain, 2 for WMH
 
 dae:
   wandb_project:                mt-tta-dae-dae_training
@@ -51,8 +51,8 @@ segmentation:
   image_size:                   [1, 256, 256]
   epochs:                       1000  # 150 for brain, 1000 for WMH (nuhs, umc)
   validate_every:               3
-  learning_rate:                1.0e-3
-  logdir:                       /scratch_net/biwidl319/jbermeo/data/models/wmh/umc/no_bg_supp_norm_w_1x1_conv
+  learning_rate:                0.001
+  logdir:                       /scratch_net/biwidl319/jbermeo/data/models/wmh/umc/no_bg_supp_norm_w_3x3_conv_v2
   wandb_project:                mt-segmentation_models
   
   with_bg_supression:           False
@@ -86,25 +86,26 @@ segmentation:
 
 ddpm:
   batch_size:                   2
-  gradient_accumulate_every:    8
-  num_workers:                  5
-  dataset:                      hcp_t1    # brain: hcp_t1, hcp_t2, abide_caltech, abide_stanford; wmh: nuhs, umc, vu
-  norm_with_nn_on_fly:          False
-  use_original_imgs:            True
-  one_hot_encode:               False
+  gradient_accumulate_every:    64
+  num_workers:                  3
+  dataset:                      umc    # brain: hcp_t1, hcp_t2, abide_caltech, abide_stanford; wmh: nuhs, umc, vu
+  norm_with_nn_on_fly:          True
+  use_original_imgs:            False
+  one_hot_encode:               True
   normalize:                    min_max
   image_size:                   [1, 256, 256]
   rescale_factor:               [1, 1, 1]
-  train_num_steps:              50000    # 7,000,000 or 100,000 in the original script
+  condition_by_mult:            False
+
+  train_num_steps:              2000    # 7,000,000 or 100,000 in the original script
   num_samples :                 25        # Must have an interger square root to store images in a square grid
   timesteps:                    1000      # Range of noising steps to sample from during training. 1000 in the constructor  
   sampling_timesteps:           100       # Number of sampling steps to generate images. If less than 1000, will use DDIM sampling. If null, will be the same as timesteps => linear denoising steps
-  save_and_sample_every:        2500      # 1000 in the constructor 
+  save_and_sample_every:        250      # 1000 in the constructor 
   learning_rate:                8e-5      # 1e-4 in the constructor
-  logdir:                       /scratch_net/biwidl319/jbermeo/logs/brain/ddpm/original_imgs/not_one_hot_64_base_filters_with_aug_except_noise
+  logdir:                       /scratch_net/biwidl319/jbermeo/logs/wmh/umc/ddpm/normalized_imgs/3x3_norm_filters/3_18/batch_size_128_cond_by_concat
   wandb_project:                mt-ddpm
-
-  norm_dir:                     /scratch_net/biwidl319/jbermeo/data/models/brain/segmentation/hcp_t1/no_bg_supp_norm_w_1x1_conv
+  norm_dir:                     /scratch_net/biwidl319/jbermeo/data/models/wmh/segmentation/umc/no_bg_supp_norm_w_3x3_conv
 
   augmentation:                 
     da_ratio:           0.25
@@ -128,7 +129,7 @@ ddpm:
 
 
 ddpm_oai:
-  logdir:                       /scratch_net/biwidl319/jbermeo/logs/brain/ddpm/oai/normalized_imgs/tests/test_img_logging
+  logdir:                       /scratch_net/biwidl319/jbermeo/logs/wmh/umc/ddpm/oai/normalized_imgs/tests/test_img_logging
   wandb_project:                mt-ddpm
 
   seg_cond:                     True  
@@ -154,7 +155,7 @@ ddpm_oai:
   split:                        train
   split_val:                    val
   norm_with_nn_on_fly:          True
-  norm_dir:                     /scratch_net/biwidl319/jbermeo/data/models/brain/segmentation/hcp_t1/no_bg_supp_norm_w_1x1_conv
+  norm_dir:                     /scratch_net/biwidl319/jbermeo/data/models/wmh/segmentation/umc/no_bg_supp_norm_w_1x1_conv
   norm_device:                  cpu
   use_original_imgs:            False
   one_hot_encode:               True

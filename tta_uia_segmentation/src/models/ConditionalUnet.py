@@ -1,6 +1,7 @@
 from typing import Optional
 from functools import partial
 
+import torch
 from torch import nn
 
 from denoising_diffusion_pytorch.denoising_diffusion_pytorch import (
@@ -12,7 +13,8 @@ from denoising_diffusion_pytorch.denoising_diffusion_pytorch import (
     Attention,
     LinearAttention,
     Downsample,
-    Upsample
+    Upsample,
+    divisible_by
     )
 
 
@@ -35,6 +37,7 @@ class ConditionalUnet(Unet):
         attn_heads = 4,
         full_attn = None,    # defaults to full attention only for inner most layer
         flash_attn = False,
+        condition_by_concat: bool = True
         
     ):
         super(Unet, self).__init__()
@@ -42,9 +45,26 @@ class ConditionalUnet(Unet):
         # determine dimensions
 
         self.channels = image_channels
-        input_channels = image_channels + (n_classes if n_classes is not None else 0)
-        self.self_condition = n_classes is not None
+        self.self_condition = False
+        self.condition_by_concat = False
+        self.condition_by_mult = False
 
+        if n_classes is not None:
+            self.self_condition = True
+
+            # This means the DDPM is conditioned on a segmentation mask
+            if condition_by_concat: 
+                input_channels = image_channels + (n_classes if n_classes is not None else 0)
+                self.condition_by_concat = True
+
+            # If not conditioning will happen via multiplication
+            else: 
+                input_channels = n_classes
+                self.condition_by_mult = True
+        
+        else:
+            input_channels = image_channels                
+        
         init_dim = default(init_dim, dim)
         self.init_conv = nn.Conv2d(input_channels, init_dim, 7, padding = 3)
 
@@ -129,5 +149,49 @@ class ConditionalUnet(Unet):
         self.final_conv = nn.Conv2d(dim, self.out_dim, 1)
 
 
-    def forward(self, x, t, x_cond):
-        return super().forward(x, t, x_cond)
+    def forward(self, x, time, x_cond = None):
+        assert all([divisible_by(d, self.downsample_factor) for d in x.shape[-2:]]), f'your input dimensions {x.shape[-2:]} need to be divisible by {self.downsample_factor}, given the unet'
+
+        if self.self_condition:
+            if self.condition_by_concat:
+                x = torch.cat((x, x_cond), dim = 1)
+            elif self.condition_by_mult:
+                x = x * x_cond
+            else:
+                raise ValueError('self_condition is True, but condition_by_concat and condition_by_mult are both False')
+
+        x = self.init_conv(x)
+        r = x.clone()
+
+        t = self.time_mlp(time)
+
+        h = []
+
+        for block1, block2, attn, downsample in self.downs:
+            x = block1(x, t)
+            h.append(x)
+
+            x = block2(x, t)
+            x = attn(x) + x
+            h.append(x)
+
+            x = downsample(x)
+
+        x = self.mid_block1(x, t)
+        x = self.mid_attn(x) + x
+        x = self.mid_block2(x, t)
+
+        for block1, block2, attn, upsample in self.ups:
+            x = torch.cat((x, h.pop()), dim = 1)
+            x = block1(x, t)
+
+            x = torch.cat((x, h.pop()), dim = 1)
+            x = block2(x, t)
+            x = attn(x) + x
+
+            x = upsample(x)
+
+        x = torch.cat((x, r), dim = 1)
+
+        x = self.final_res_block(x, t)
+        return self.final_conv(x)

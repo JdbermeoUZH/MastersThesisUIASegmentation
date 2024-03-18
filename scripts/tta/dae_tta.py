@@ -226,6 +226,9 @@ if __name__ == '__main__':
         n_dimensions            = model_params_dae['n_dimensions']
     ).to(device)
     
+    if wandb_log:
+        wandb.watch([norm], log='all', log_freq=1)
+    
     ## Load their checkpoints
     checkpoint = torch.load(os.path.join(seg_dir, train_params_seg['checkpoint_best']), 
                             map_location=device)
@@ -280,10 +283,6 @@ if __name__ == '__main__':
     const_aug_per_volume        = tta_config[tta_mode]['const_aug_per_volume']
     accumulate_over_volume      = tta_config[tta_mode]['accumulate_over_volume']
     calculate_dice_every        = tta_config[tta_mode]['calculate_dice_every']
-    
-
-    if wandb_log:
-        wandb.watch([norm], log='all', log_freq=1)
         
     indices_per_volume = test_dataset.get_volume_indices()
     
@@ -304,6 +303,7 @@ if __name__ == '__main__':
     
     for i in range(start_idx, stop_idx):
 
+        seed_everything(seed)
         indices = indices_per_volume[i]
         print(f'processing volume {i}')
 
@@ -311,7 +311,7 @@ if __name__ == '__main__':
 
         dae_tta.reset_initial_state(norm_state_dict)
 
-        norm, norm_dict, metrics_best, dice_scores_wrt_gt = dae_tta.tta(
+        norm_dict, metrics_best, dice_scores_wrt_gt = dae_tta.tta(
             volume_dataset = volume_dataset,
             dataset_name = dataset,
             index = i,
@@ -328,6 +328,7 @@ if __name__ == '__main__':
             logdir = logdir
         )
         
+        # Calculate dice scores for the last step
         dice_scores[i, :], dice_scores_fg = dae_tta.test_volume(
             volume_dataset = volume_dataset,
             dataset_name = dataset,
@@ -337,6 +338,7 @@ if __name__ == '__main__':
             num_workers = num_workers,
             device = device,
             logdir = logdir,
+            bg_suppression_opts=bg_suppression_opts,
         )
         
         dice_scores_wrt_gt[num_steps] = dice_scores_fg.mean().item() 
@@ -351,12 +353,6 @@ if __name__ == '__main__':
             f'start_vol_{start_idx}_stop_vol_{stop_idx}.csv')
         )
         
-        write_to_csv(
-            os.path.join(logdir, f'scores_{dataset}_last_iteration.csv'),
-            np.hstack([[[f'volume_{i:02d}']], dice_scores[None, i, :].numpy()]),
-            mode='a',
-        )
-
         write_to_csv(
             os.path.join(logdir, f'scores_{dataset}_last_iteration.csv'),
             np.hstack([[[f'volume_{i:02d}']], dice_scores[None, i, :].numpy()]),

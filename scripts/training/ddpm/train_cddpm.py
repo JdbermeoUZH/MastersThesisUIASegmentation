@@ -214,6 +214,7 @@ if __name__ == '__main__':
     
     timesteps           = train_config[train_type]['timesteps']
     sampling_timesteps  = train_config[train_type]['sampling_timesteps']
+    condition_by_mult   = train_config[train_type]['condition_by_mult']
     
     print(f'Using Device {device}')
     # Model definition
@@ -223,6 +224,7 @@ if __name__ == '__main__':
         n_classes=n_classes,   
         flash_attn=True,
         image_channels=channels, 
+        condition_by_concat= not condition_by_mult
     )
     
     diffusion = ConditionalGaussianDiffusion(
@@ -259,6 +261,7 @@ if __name__ == '__main__':
         calculate_fid = False,            # whether to calculate fid during training 
         results_folder=logdir,
         save_and_sample_every = save_and_sample_every,
+        wandb_log=wandb_log,
         )
     
     if wandb_log:

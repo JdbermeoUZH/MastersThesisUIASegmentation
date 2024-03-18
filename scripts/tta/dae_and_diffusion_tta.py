@@ -195,6 +195,8 @@ if __name__ == '__main__':
     logdir                  = tta_config[tta_mode]['logdir']
     wandb_project           = tta_config[tta_mode]['wandb_project']
     
+    seed_everything(seed)
+    
     os.makedirs(logdir, exist_ok=True)
     dump_config(os.path.join(logdir, 'params.yaml'), params)
     print_config(params, keys=['datset', 'model', 'tta'])
@@ -207,7 +209,6 @@ if __name__ == '__main__':
     # Define the dataset that is to be used for training
     # :=========================================================================:
     print('Defining dataset and its datloader that will be used for TTA')
-    seed_everything(seed)
     device                 = define_device(device)
     dataset                = tta_config['dataset']
     split                  = tta_config['split']
@@ -405,15 +406,16 @@ if __name__ == '__main__':
     dice_per_vol = {}
     
     for i in range(start_idx, stop_idx):
-
+        seed_everything(seed)
+        
         indices = indices_per_volume[i]
-        print(f'processing volume {i}')
+        print(f'Processing volume {i}')
 
         volume_dataset = Subset(test_dataset, indices)
 
         tta.reset_initial_state(norm_state_dict)
 
-        norm, norm_dict, metrics_best, dice_scores_wrt_gt = tta.tta(
+        norm_dict, metrics_best, dice_scores_wrt_gt = tta.tta(
             volume_dataset = volume_dataset,
             dataset_name = dataset,
             index = i,
@@ -430,6 +432,7 @@ if __name__ == '__main__':
             logdir = logdir
         )
         
+        # Calculate dice scores for the last step
         dice_scores[i, :], _ = tta.test_volume(
             volume_dataset = volume_dataset,
             dataset_name = dataset,
@@ -485,6 +488,8 @@ if __name__ == '__main__':
                 np.hstack([[[f'volume_{i:02d}']], scores.numpy()]),
                 mode='a',
             )
+            
+        print(f'Volume {i} done!! \n\n')
 
     print(f'Overall mean dice (only foreground): {dice_scores[:, 1:].mean()}')
     

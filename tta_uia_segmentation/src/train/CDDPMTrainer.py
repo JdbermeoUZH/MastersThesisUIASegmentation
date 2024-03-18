@@ -26,6 +26,7 @@ from denoising_diffusion_pytorch.version import __version__
 
 from tta_uia_segmentation.src.models import ConditionalGaussianDiffusion
 from tta_uia_segmentation.src.dataset import DatasetInMemoryForDDPM
+from tta_uia_segmentation.src.dataset.utils import onehot_to_class
 
 
 metrics_to_log_default = {
@@ -272,7 +273,16 @@ class CDDPMTrainer(Trainer):
         
         for img_gt, seg_gt in sample_dl:
             img_gt, seg_gt = img_gt.to(device), seg_gt.to(device)
-            generated_img = self.ema.ema_model.sample(x_cond=seg_gt)
+            generated_img = self.ema.ema_model.sample(
+                img_shape=img_gt.shape, x_cond=seg_gt)
+            
+            # Convert seg_gt to single channel to plot it
+            assert seg_gt.max() == 1, 'seg_gt should be one-hot encoded'
+            assert seg_gt.min() == 0, 'seg_gt should be one-hot encoded'
+            n_classes = seg_gt.shape[1]
+            seg_gt = onehot_to_class(seg_gt)
+            seg_gt = seg_gt / (n_classes - 1)
+            assert seg_gt.shape[1] == 1, 'seg_gt should be single channel'
             
             # Store the generated image and the segmentation map side by side
             samples_imgs.append(torch.cat([seg_gt, img_gt, generated_img], dim = -1)) 
@@ -284,27 +294,28 @@ class CDDPMTrainer(Trainer):
                 for metric_name, metric_func in self.metrics_to_log.items():
                     metric_cum[metric_name] += metric_func(generated_img, img_gt).item()
                     
-        if self.wandb_log:
-            for metric_name, metric_val in metric_cum.items():
-                metric_val /= len(sample_dl)
-                wandb.log({f'{prefix}_{metric_name}': metric_val}, step = self.step)
-        
+                
         all_images = torch.cat(samples_imgs, dim = 0)
 
         all_images_fn = f'{prefix}-sample-m{milestone}-step-{self.step}-img_gt_seg_gt_gen_img.png'
         utils.save_image(all_images, str(self.results_folder / all_images_fn), 
                         nrow = int(math.sqrt(self.num_samples)))
         
-        # Log images in wandb
-        wandb.log(
-            {all_images_fn: wandb.Image(
-                tensor_collection_to_image_grid(
-                    all_images, 
-                    nrow = int(math.sqrt(self.num_samples))
-                    )
-                )}, 
-            step = self.step
-            ) 
+        # Log metrics and images in wandb
+        if self.wandb_log:
+            for metric_name, metric_val in metric_cum.items():
+                metric_val /= len(sample_dl)
+                wandb.log({f'{prefix}_{metric_name}': metric_val}, step = self.step)
+
+            wandb.log(
+                {all_images_fn: wandb.Image(
+                    tensor_collection_to_image_grid(
+                        all_images, 
+                        nrow = int(math.sqrt(self.num_samples))
+                        )
+                    )}, 
+                step = self.step
+                ) 
         
     def save(self, milestone):
         if not self.accelerator.is_local_main_process:

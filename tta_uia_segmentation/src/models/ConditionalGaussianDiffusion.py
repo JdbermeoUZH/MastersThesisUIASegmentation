@@ -75,9 +75,9 @@ class ConditionalGaussianDiffusion(GaussianDiffusion):
         return self.p_losses_conditioned_on_img(img, t, cond_img, *args, **kwargs)      
     
     @torch.inference_mode()
-    def p_sample_loop(self, x_cond, return_all_timesteps = False):
+    def p_sample_loop(self, img_shape, x_cond, return_all_timesteps = False):
         x_cond = self.normalize(x_cond)
-        img = torch.randn(x_cond.shape, device = self.device)
+        img = torch.randn(img_shape, device = self.device)
         imgs = [img]
 
         for t in tqdm(reversed(range(0, self.num_timesteps)), desc = 'sampling loop time step', total = self.num_timesteps):
@@ -90,7 +90,7 @@ class ConditionalGaussianDiffusion(GaussianDiffusion):
         return ret
 
     @torch.inference_mode()
-    def ddim_sample(self, x_cond, return_all_timesteps = False):
+    def ddim_sample(self, img_shape, x_cond, return_all_timesteps = False):
         x_cond = self.normalize(x_cond)
 
         batch, device, total_timesteps, sampling_timesteps, eta, objective = x_cond.shape[0], self.device, self.num_timesteps, self.sampling_timesteps, self.ddim_sampling_eta, self.objective
@@ -99,7 +99,7 @@ class ConditionalGaussianDiffusion(GaussianDiffusion):
         times = list(reversed(times.int().tolist()))
         time_pairs = list(zip(times[:-1], times[1:])) # [(T-1, T-2), (T-2, T-3), ..., (1, 0), (0, -1)]
 
-        img = torch.randn(x_cond.shape, device = device)
+        img = torch.randn(img_shape, device = device)
         imgs = [img]
 
         for time, time_next in tqdm(time_pairs, desc = 'sampling loop time step'):
@@ -131,9 +131,9 @@ class ConditionalGaussianDiffusion(GaussianDiffusion):
         return ret
 
     @torch.inference_mode()
-    def sample(self, x_cond: torch.Tensor, return_all_timesteps = False):
+    def sample(self, img_shape: tuple, x_cond: torch.Tensor, return_all_timesteps = False):
         sample_fn = self.p_sample_loop if not self.is_ddim_sampling else self.ddim_sample
-        return sample_fn(x_cond, return_all_timesteps = return_all_timesteps)
+        return sample_fn(img_shape, x_cond, return_all_timesteps)
 
     def set_sampling_timesteps(self, sampling_timesteps):
         self.sampling_timesteps = sampling_timesteps

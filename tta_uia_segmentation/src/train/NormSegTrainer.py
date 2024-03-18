@@ -227,19 +227,7 @@ class NormSegTrainer:
         validation_score /= n_samples_val
 
         return validation_loss, validation_score
-    
-    def forward(
-        self,
-        x: torch.Tensor,
-        bg_mask: Optional[torch.Tensor] = None
-        ) -> tuple[torch.Tensor, torch.Tensor]:
         
-        x_norm = self.norm(x)
-        if self.with_bg_supression:
-            x_norm = background_suppression(x_norm, bg_mask, self.bg_suppression_opts)
-        
-        return self.seg(x_norm)
-    
     def _load_checkpoint(self, checkpoint_path: str):
         checkpoint = torch.load(checkpoint_path, map_location=self.device)
 
