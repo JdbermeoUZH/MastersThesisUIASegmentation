@@ -5,6 +5,7 @@ import glob
 import argparse
 
 import wandb
+from accelerate import Accelerator
 
 sys.path.append(os.path.normpath(os.path.join(
     os.path.dirname(__file__), '..', '..', '..')))
@@ -28,6 +29,7 @@ def preprocess_cmd_args() -> argparse.Namespace:
     
     """
     parser = argparse.ArgumentParser(description="Train Segmentation Model (with shallow normalization module)")
+    parse_bool = lambda s: s.strip().lower() == 'true'
     
     parser.add_argument('dataset_config_file', type=str, help='Path to yaml config file with parameters that define the dataset.')
     parser.add_argument('model_config_file', type=str, help='Path to yaml config file with parameters that define the model.')
@@ -35,41 +37,47 @@ def preprocess_cmd_args() -> argparse.Namespace:
     
     # Training parameters. If provided, overrides default parameters from config file.
     # :================================================================================================:
-    parser.add_argument('--resume', type=lambda s: s.strip().lower() == 'true', 
-                        help='Resume training from last checkpoint. Default: True.') 
-    parser.add_argument('--logdir', type=str, 
-                        help='Path to directory where logs and checkpoints are saved. Default: logs')  
-    parser.add_argument('--wandb_log', type=lambda s: s.strip().lower() == 'true', 
-                        help='Log training to wandb. Default: False.')
+    parser.add_argument('--resume', type=parse_bool, help='Resume training from last checkpoint. Default: True.') 
+    parser.add_argument('--logdir', type=str, help='Path to directory where logs and checkpoints are saved. Default: logs')  
+    parser.add_argument('--wandb_log', type=parse_bool, help='Log training to wandb. Default: False.')
+    parser.add_argument('--start_new_exp', type=parse_bool, help='Start a new wandb experiment. Default: False')
 
     # Model parameters
     # ----------------:
     parser.add_argument('--channel_size', type=int, nargs='+', help='Number of feature maps for each block. Default: [16, 32, 64]')
     parser.add_argument('--channels_bottleneck', type=int, help='Number of channels in bottleneck layer of model. Default: 128')
-    parser.add_argument('--skips', type=lambda s: [val.strip().lower() == 'true' for val in s.split()], 
+    parser.add_argument('--skips', type=lambda s: [parse_bool(val) for val in s.split()], 
                         help='Whether to use skip connections on each block, specified as a space-separated list of booleans (True or False)'
                         'Default: True True True')
-    parser.add_argument('--n_dimensions', type=int, help='Number of dimensions of the model, i.e: 1D, 2D, or 3D. Default: 3')  
+    parser.add_argument('--condition_by_mult', type=parse_bool, help='Whether to condition by multiplication or concatenation. Default: False')
+    
+    # Noising parameters
+    # ------------------:
+    parser.add_argument('--timesteps', type=int, help='Number of timesteps in diffusion process. Default: 1000')
+    parser.add_argument('--save_and_sample_every', type=int, help='Save and sample every n steps. Default: 1000')
+    parser.add_argument('--sampling_timesteps', type=int, help='Number of timesteps to sample from. Default: 1000')
+    parser.add_argument('--num_validation_samples', type=int, help='Number of samples to generate for metric evaluation. Default: 1000')
+    parser.add_argument('--num_viz_samples', type=int, help='Number of samples to generate for visualization. Default: 16')
     
     # Training loop
     # -------------:
-    parser.add_argument('--epochs', type=int, help='Number of epochs to train. Default: 100')
-    parser.add_argument('--learning_rate', type=float, help='Learning rate for optimizer. Default: 1e-4')
     parser.add_argument('--batch_size', type=int, help='Batch size for training. Default: 4')
+    parser.add_argument('--gradient_accumulate_every', type=int, help='Number of steps to accumulate gradients over. Default: 1')
+    parser.add_argument('--train_num_steps', type=int, help='Total number of training steps. Default: 1000000') 
+    parser.add_argument('--learning_rate', type=float, help='Learning rate for optimizer. Default: 1e-4')
     parser.add_argument('--num_workers', type=int, help='Number of workers for dataloader. Default: 0')
-    parser.add_argument('--validate_every', type=int, help='Validate every n epochs. Default: 1')
     parser.add_argument('--seed', type=int, help='Seed for random number generators. Default: 0')   
     parser.add_argument('--device', type=str, help='Device to use for training. Default cuda', )
-    parser.add_argument('--checkpoint_last', type=str, help='Name of last checkpoint file. Default: checkpoint_last.pth')
-    parser.add_argument('--checkpoint_best', type=str, help='Name of best checkpoint file. Default: checkpoint_best.pth')
     
     # Dataset and its transformations to use for training
     # ---------------------------------------------------:
-    parser.add_argument('--dataset', type=str, help='Name of dataset to use for training. Default: USZ')
-    parser.add_argument('--n_classes', type=int, help='Number of classes in dataset. Default: 21')
-    parser.add_argument('--image_size', type=int, nargs='+', help='Size of images in dataset. Default: [560, 640, 160]')
-    parser.add_argument('--resolution_proc', type=float, nargs='+', help='Resolution of images in dataset. Default: [0.3, 0.3, 0.6]')
-    parser.add_argument('--rescale_factor', type=float, help='Rescale factor for images in dataset. Default: None')
+    parser.add_argument('--dataset', type=str, help='Name of dataset to use for training')
+    parser.add_argument('--n_classes', type=int, help='Number of classes in dataset')
+    parser.add_argument('--image_size', type=int, nargs='+', help='Size of images in dataset')
+    parser.add_argument('--resolution_proc', type=float, nargs='+', help='Resolution of images in dataset')
+    parser.add_argument('--rescale_factor', type=float, help='Rescale factor for images in dataset')
+    
+    parser.add_argument('--norm_dir', type=str, help='Path to directory where normalization model is saved')
     
     args = parser.parse_args()
     
@@ -114,6 +122,11 @@ if __name__ == '__main__':
 
     print(f'Running {__file__}')
     train_type = 'ddpm'
+    accelerator = Accelerator(
+            split_batches = True,
+            mixed_precision = 'no'
+        )
+    
     # Loading general parameters
     # :=========================================================================:
     dataset_config, model_config, train_config = get_configuration_arguments()
@@ -122,13 +135,15 @@ if __name__ == '__main__':
     seed            = train_config['seed']
     device          = train_config['device']
     wandb_log       = train_config['wandb_log']
+    start_new_exp   = train_config['start_new_exp']
+    
     logdir          = train_config[train_type]['logdir']
     wandb_project   = train_config[train_type]['wandb_project']
     
     # Write or load parameters to/from logdir, used if a run is resumed.
     # :=========================================================================:
     is_resumed = os.path.exists(os.path.join(logdir, 'params.yaml')) and resume
-    print(f'training resumed: {is_resumed}')
+    if accelerator.is_main_process: print(f'training resumed: {is_resumed}')
 
     if is_resumed:
         params = load_config(os.path.join(logdir, 'params.yaml'))
@@ -155,18 +170,18 @@ if __name__ == '__main__':
             'training': {**train_config, 'norm': train_params_norm}, 
         }
 
-        dump_config(os.path.join(logdir, 'params.yaml'), params)
+        if accelerator.is_main_process: dump_config(os.path.join(logdir, 'params.yaml'), params)
 
-    print_config(params, keys=['training', 'model'])
+    if accelerator.is_main_process: print_config(params, keys=['training', 'model'])
 
     # Setup wandb logging
     # :=========================================================================:
-    if wandb_log:
-        wandb_dir = setup_wandb(params, logdir, wandb_project)
+    if wandb_log and accelerator.is_main_process:
+        wandb_dir = setup_wandb(params, logdir, wandb_project, start_new_exp)
     
     # Define the dataset that is to be used for training
     # :=========================================================================:
-    print('Defining dataset')
+    if accelerator.is_main_process: print('Defining dataset')
     seed_everything(seed)
     device              = define_device(device)
     dataset             = train_config[train_type]['dataset']
@@ -203,7 +218,7 @@ if __name__ == '__main__':
         deformation     = None,
         load_original   = False,
     )
-    print('Dataloaders defined')
+    if accelerator.is_main_process: print('Dataloaders defined')
     
     # Define the denoiser model diffusion pipeline
     # :=========================================================================:
@@ -216,7 +231,7 @@ if __name__ == '__main__':
     sampling_timesteps  = train_config[train_type]['sampling_timesteps']
     condition_by_mult   = train_config[train_type]['condition_by_mult']
     
-    print(f'Using Device {device}')
+    if accelerator.is_main_process: print(f'Using Device {device}')
     # Model definition
     model = ConditionalUnet(
         dim=dim,
@@ -236,15 +251,16 @@ if __name__ == '__main__':
 
     # Execute the training loop
     # :=========================================================================:
-    print('Defining trainer: training loop, optimizer and loss')
-    batch_size = train_config[train_type]['batch_size']
-    gradient_accumulate_every = train_config[train_type]['gradient_accumulate_every']
-    save_and_sample_every = train_config[train_type]['save_and_sample_every']
-    train_lr = float(train_config[train_type]['learning_rate'])
-    num_workers = train_config[train_type]['num_workers']
-    train_num_steps = train_config[train_type]['train_num_steps']
-    num_samples = train_config[train_type]['num_samples']
-    save_and_sample_every = train_config[train_type]['save_and_sample_every']
+    if accelerator.is_main_process: print('Defining trainer: training loop, optimizer and loss')
+    batch_size                  = train_config[train_type]['batch_size']
+    gradient_accumulate_every   = train_config[train_type]['gradient_accumulate_every']
+    save_and_sample_every       = train_config[train_type]['save_and_sample_every']
+    train_lr                    = float(train_config[train_type]['learning_rate'])
+    num_workers                 = train_config[train_type]['num_workers']
+    train_num_steps             = train_config[train_type]['train_num_steps']
+    save_and_sample_every       = train_config[train_type]['save_and_sample_every']
+    num_validation_samples      = train_config[train_type]['num_validation_samples']
+    num_viz_samples             = train_config[train_type]['num_viz_samples']
     
     trainer = CDDPMTrainer(
         diffusion,
@@ -254,7 +270,8 @@ if __name__ == '__main__':
         train_lr = train_lr,
         num_workers=num_workers,
         train_num_steps = train_num_steps,# total training steps
-        num_samples=num_samples,          # number of samples to generate for metric evaluation
+        num_validation_samples=num_validation_samples,          # number of samples to generate for metric evaluation
+        num_viz_samples=num_viz_samples,                        # number of samples to generate for visualization
         gradient_accumulate_every = gradient_accumulate_every,    # gradient accumulation steps
         ema_decay = 0.995,                # exponential moving average decay
         amp = True,                       # turn on mixed precision
@@ -262,9 +279,10 @@ if __name__ == '__main__':
         results_folder=logdir,
         save_and_sample_every = save_and_sample_every,
         wandb_log=wandb_log,
+        accelerator=accelerator
         )
     
-    if wandb_log:
+    if wandb_log and accelerator.is_main_process:
         #wandb.save(os.path.join(wandb_dir, trainer.get_last_checkpoint_name()), base_path=wandb_dir)
         #wandb.watch([diffusion, model], trainer.get_loss_function(), log='all')
         wandb.watch([diffusion, model], log='all')
@@ -272,7 +290,7 @@ if __name__ == '__main__':
     # Resume previous point if necessary
     if resume:
         last_milestone = get_last_milestone(logdir)
-        print(f'Resuming training from milestone {last_milestone}')
+        if accelerator.is_main_process: print(f'Resuming training from milestone {last_milestone}')
         trainer.load(last_milestone)
         
     # Start training

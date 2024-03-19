@@ -78,7 +78,8 @@ class CDDPMTrainer(Trainer):
         ema_decay = 0.995,
         adam_betas = (0.9, 0.99),
         save_and_sample_every = 1000,
-        num_samples = 25,
+        num_validation_samples = 100,
+        num_viz_samples = 25,
         results_folder = './results',
         amp = False,
         mixed_precision_type = 'fp16',
@@ -91,27 +92,29 @@ class CDDPMTrainer(Trainer):
         wandb_log: bool = True,
         wandb_dir: str = 'wandb',
         metrics_to_log: dict[str, callable] = metrics_to_log_default, 
+        accelerator: Accelerator = None,
     ):
         super(object, self).__init__()
         
         # accelerator
 
-        self.accelerator = Accelerator(
+        self.accelerator = accelerator or Accelerator(
             split_batches = split_batches,
             mixed_precision = mixed_precision_type if amp else 'no'
         )
 
         # model
-
         self.model = diffusion_model
         self.channels = diffusion_model.channels
         is_ddim_sampling = diffusion_model.is_ddim_sampling
 
         # sampling and training hyperparameters
 
-        assert has_int_squareroot(num_samples), 'number of samples must have an integer square root'
-        self.num_samples = num_samples
+        assert has_int_squareroot(num_viz_samples), \
+            'number of samples to visualize must have an integer square root'
         self.save_and_sample_every = save_and_sample_every
+        self.num_validation_samples = num_validation_samples
+        self.num_viz_samples = num_viz_samples
 
         self.batch_size = train_batch_size
         self.gradient_accumulate_every = gradient_accumulate_every
@@ -204,6 +207,7 @@ class CDDPMTrainer(Trainer):
                 total_loss = 0.
 
                 for _ in range(self.gradient_accumulate_every):
+                    # TODO: Check they are not already normalized btw -1 and 1
                     img, cond_img = next(self.train_dl)
                     img, cond_img = img.to(device), cond_img.to(device)
 
@@ -237,14 +241,14 @@ class CDDPMTrainer(Trainer):
                     
                         # Evaluate the model on a sample of the training set
                         train_sample_dl = DataLoader(
-                            self.train_ds.sample_slices(self.num_samples), 
+                            self.train_ds.sample_slices(self.num_validation_samples), 
                             batch_size=self.batch_size, pin_memory = True, num_workers = self.num_workers)
                         
                         self.evaluate(train_sample_dl, device=device, prefix='train')
                         
                         # Evaluate the model on a sample of the validation set
                         val_sample_dl = DataLoader(
-                            self.val_ds.sample_slices(self.num_samples), 
+                            self.val_ds.sample_slices(self.num_validation_samples), 
                             batch_size=self.batch_size, pin_memory=True, num_workers=self.num_workers)
                         self.evaluate(val_sample_dl, device=device, prefix='val')
                         
@@ -272,7 +276,7 @@ class CDDPMTrainer(Trainer):
         metric_cum = {metric_name: 0. for metric_name in self.metrics_to_log.keys()}
         
         for img_gt, seg_gt in sample_dl:
-            img_gt, seg_gt = img_gt.to(device), seg_gt.to(device)
+            img_gt, seg_gt = img_gt.to(device), seg_gt.to(device).type(torch.int8)
             generated_img = self.ema.ema_model.sample(
                 img_shape=img_gt.shape, x_cond=seg_gt)
             
@@ -285,7 +289,8 @@ class CDDPMTrainer(Trainer):
             assert seg_gt.shape[1] == 1, 'seg_gt should be single channel'
             
             # Store the generated image and the segmentation map side by side
-            samples_imgs.append(torch.cat([seg_gt, img_gt, generated_img], dim = -1)) 
+            if len(samples_imgs) <= self.num_viz_samples:
+                samples_imgs.append(torch.cat([seg_gt, img_gt, generated_img], dim = -1)) 
             
             check_btw_0_1(img_gt, seg_gt, generated_img)
             
@@ -299,7 +304,7 @@ class CDDPMTrainer(Trainer):
 
         all_images_fn = f'{prefix}-sample-m{milestone}-step-{self.step}-img_gt_seg_gt_gen_img.png'
         utils.save_image(all_images, str(self.results_folder / all_images_fn), 
-                        nrow = int(math.sqrt(self.num_samples)))
+                        nrow = int(math.sqrt(self.num_viz_samples)))
         
         # Log metrics and images in wandb
         if self.wandb_log:
@@ -311,7 +316,7 @@ class CDDPMTrainer(Trainer):
                 {all_images_fn: wandb.Image(
                     tensor_collection_to_image_grid(
                         all_images, 
-                        nrow = int(math.sqrt(self.num_samples))
+                        nrow = int(math.sqrt(self.num_viz_samples))
                         )
                     )}, 
                 step = self.step
