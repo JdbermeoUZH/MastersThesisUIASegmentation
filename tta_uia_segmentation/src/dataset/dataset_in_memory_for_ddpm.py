@@ -61,6 +61,8 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
         norm_device: str = 'cpu',
         norm_neg_one_to_one: bool = False,
         paths_normalized_h5: Optional[dict[str, str]] = None,
+        shard: int = 0,
+        num_shards: int = 1,
         *args,
         **kwargs,
     ):
@@ -96,6 +98,11 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
             self.images_min, self.images_max = self._find_min_max_in_normalized_imgs()
         
         print(f'Min and max values of normalized images: {self.images_min}, {self.images_max}')
+        
+        # Shard the dataset
+        self.images = self.images[shard:][::num_shards]
+        self.labels = self.labels[shard:][::num_shards]
+        
 
     def __getitem__(self, index) -> Union[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]:
 

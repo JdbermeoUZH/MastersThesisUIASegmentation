@@ -154,11 +154,11 @@ ddpm_oai:
   use_ddim:                     True      # To generate samples to check performance during training
   timestep_respacing:           ddim100   # Number of sampling steps to generate images. If prepended with ddim, then it uses ddim style respacing
 
-  dataset:                      hcp_t1    # brain: hcp_t1, hcp_t2, abide_caltech, abide_stanford; wmh: nuhs, umc, vu
+  dataset:                      umc       # brain: hcp_t1, hcp_t2, abide_caltech, abide_stanford; wmh: nuhs, umc, vu
   split:                        train
   split_val:                    val
   norm_with_nn_on_fly:          True
-  norm_dir:                     /scratch_net/biwidl319/jbermeo/data/models/wmh/segmentation/umc/no_bg_supp_norm_w_1x1_conv
+  norm_dir:                     /scratch_net/biwidl319/jbermeo/data/models/wmh/umc/no_bg_supp_norm_w_3x3_conv
   norm_device:                  cpu
   use_original_imgs:            False
   one_hot_encode:               True

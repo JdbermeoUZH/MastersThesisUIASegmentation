@@ -4,13 +4,11 @@ Train a diffusion model on images.
 import os
 import sys
 import argparse
-from itertools import chain
 
 import wandb
+from mpi4py import MPI
 import torch.distributed as dist
-from torch.utils.data import DataLoader
 from improved_diffusion import dist_util, logger
-from improved_diffusion.image_datasets import load_data
 from improved_diffusion.resample import create_named_schedule_sampler
 from improved_diffusion.script_util import (
     create_gaussian_diffusion,
@@ -21,7 +19,7 @@ from improved_diffusion.script_util import (
 
 
 sys.path.append(os.path.normpath(os.path.join(
-    os.path.dirname(__file__), '..', '..')))
+    os.path.dirname(__file__), '..', '..', '..')))
 
 from tta_uia_segmentation.src.dataset.dataset_in_memory_for_ddpm import get_datasets
 from tta_uia_segmentation.src.train import OAICDDPMTrainer
@@ -69,6 +67,8 @@ def preprocess_cmd_args() -> argparse.Namespace:
     parser.add_argument('--batch_size', type=int, help='Batch size for training. Default: 4')
     parser.add_argument('--microbatch', type=int, help='Microbatch size for training. Default: -1')
     parser.add_argument('--num_workers', type=int, help='Number of workers for dataloader. Default: 0')
+    parser.add_argument('--log_interval', type=int, help='Number of steps between logging. Default: 2')
+    parser.add_argument('--save_interval', type=int, help='Number of steps between saving checkpoints. Default: 1000')
     
     # Diffusion model
     parser.add_argument('--learn_sigma', type=parse_bool, help='Whether to learn sigma. Default: False')
@@ -80,11 +80,13 @@ def preprocess_cmd_args() -> argparse.Namespace:
     
     # Dataset and its transformations to use for training
     # ---------------------------------------------------:
-    parser.add_argument('--dataset', type=str, help='Name of dataset to use for training. Default: USZ')
-    parser.add_argument('--n_classes', type=int, help='Number of classes in dataset. Default: 21')
-    parser.add_argument('--image_size', type=int, nargs='+', help='Size of images in dataset. Default: [560, 640, 160]')
-    parser.add_argument('--resolution_proc', type=float, nargs='+', help='Resolution of images in dataset. Default: [0.3, 0.3, 0.6]')
-    parser.add_argument('--rescale_factor', type=float, help='Rescale factor for images in dataset. Default: None')
+    parser.add_argument('--dataset', type=str, help='Name of dataset to use for training')
+    parser.add_argument('--n_classes', type=int, help='Number of classes in dataset.')
+    parser.add_argument('--norm_dir', type=str, help='Path to directory where normalization model is saved.')
+    parser.add_argument('--image_size', type=int, nargs='+', help='Size of images in dataset.')
+    parser.add_argument('--resolution_proc', type=float, nargs='+', help='Resolution of images in dataset')
+    parser.add_argument('--rescale_factor', type=float, help='Rescale factor for images in dataset')
+    
     
     argument_names = [action.dest for action in parser._actions if action.dest != 'help']
     
@@ -194,37 +196,53 @@ def main():
     batch_size          = train_config[train_type]['batch_size']
     norm_dir            = train_config[train_type]['norm_dir']   
     norm_device         = train_config[train_type]['norm_device']
+    cpt_fp              = os.path.join(norm_dir, train_config[train_type]['checkpoint_best'])
     
     # Load normalization model used in the segmentation network
     if train_config[train_type]['norm_with_nn_on_fly']:
         norm = load_norm_from_configs_and_cpt(
             model_params_norm=model_params_norm,
-            cpt_fp=os.path.join(norm_dir, train_params_norm['checkpoint_best']),
+            cpt_fp=cpt_fp,
             device=norm_device
         )
     else: 
         norm = None
 
+    train_split         = train_config[train_type]['split']
+    val_split           = train_config[train_type]['split_val']
+    use_original_imgs   = train_config[train_type]['use_original_imgs']
+    one_hot_encode      = train_config[train_type]['one_hot_encode']
+    normalize           = train_config[train_type]['normalize']
+    image_size          = train_config[train_type]['image_size']
+    aug_params          = train_config[train_type]['augmentation']
+    bg_suppression_opts = train_config[train_type]['bg_suppression_opts']
+
+    paths               = dataset_config[dataset]['paths_processed']
+    paths_original      = dataset_config[dataset]['paths_original']
+    resolution_proc     = dataset_config[dataset]['resolution_proc']
+    dim_proc            = dataset_config[dataset]['dim']
+    
     (train_data, val_data) = get_datasets(
-        splits          = [train_config[train_type]['split'],
-                           train_config[train_type]['split_val']],
-        norm            = norm,
-        norm_device     = norm_device,
+        splits = [train_split, val_split],
+        norm = norm,
+        norm_device = norm_device,
         norm_neg_one_to_one = True,
-        paths           = dataset_config[dataset]['paths_processed'],
+        paths = paths,
         paths_normalized_h5 = None, # dataset_config[dataset]['paths_normalized_with_nn'],
-        use_original_imgs = train_config[train_type]['use_original_imgs'],
-        one_hot_encode  = train_config[train_type]['one_hot_encode'],
-        normalize       = train_config[train_type]['normalize'],
-        paths_original  = dataset_config[dataset]['paths_original'],
-        image_size      = train_config[train_type]['image_size'],
-        resolution_proc = dataset_config[dataset]['resolution_proc'],
-        dim_proc        = dataset_config[dataset]['dim'],
-        n_classes       = n_classes,
-        aug_params      = train_config[train_type]['augmentation'],
-        bg_suppression_opts = train_config[train_type]['bg_suppression_opts'],
+        use_original_imgs = use_original_imgs,
+        one_hot_encode = one_hot_encode,
+        normalize = normalize,
+        paths_original = paths_original,
+        image_size = image_size,
+        resolution_proc = resolution_proc,
+        dim_proc = dim_proc,
+        n_classes = n_classes,
+        aug_params = aug_params,
+        bg_suppression_opts = bg_suppression_opts,
         deformation     = None,
         load_original   = False,
+        shard = MPI.COMM_WORLD.Get_rank(),
+        num_shards = MPI.COMM_WORLD.Get_size(),
     )
         
     # Create model and diffusion object
@@ -241,7 +259,6 @@ def main():
     learn_sigma         = train_config[train_type]['learn_sigma']
     seg_cond            = train_config[train_type]['seg_cond']
     dropout             = train_config[train_type]['dropout']
-
     
     model = create_model_conditioned_on_seg_mask(
         image_size = image_size,
@@ -338,7 +355,7 @@ def model_defaults():
     Defaults for image training.
     """
     return dict(
-        num_heads=4,
+        num_heads=2,
         num_heads_upsample=-1,
         attention_resolutions="16,8",
         use_checkpoint=False,
