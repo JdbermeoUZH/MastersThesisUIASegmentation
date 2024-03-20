@@ -289,6 +289,7 @@ class TTADAE:
         bg_suppression_opts: Optional[dict] = None,
         device: Optional[Union[str, torch.device]] = None
         ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        
         x_norm = self.norm(x)
         
         if self.seg_with_bg_supp:

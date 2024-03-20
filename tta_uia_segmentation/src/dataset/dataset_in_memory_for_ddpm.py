@@ -86,7 +86,7 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
         self.normalize = normalize
         self.norm_neg_one_to_one = norm_neg_one_to_one
         self.one_hot_encode = one_hot_encode
-        self.num_vols = int(self.images.shape[0] / self.dim_proc[-1]) if self.image_size[0] == 1 else self.images.shape[0]
+        self.num_vols = int(self.images.shape[0] / self.dim_proc[0]) if self.image_size[0] == 1 else self.images.shape[0]
         
         if intensity_value_range is not None:
             self.images_min, self.images_max = intensity_value_range
@@ -167,7 +167,7 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
         n_slices_per_volume = distribute_n_in_m_slots(sample_size, self.num_vols)
         
         # Sample the idxs of the slices
-        min_slice_idx, max_slice_idx = int(self.dim_proc[-1] * range_[0]), int(self.dim_proc[-1] * range_[1])
+        min_slice_idx, max_slice_idx = int(self.dim_proc[0] * range_[0]), int(self.dim_proc[0] * range_[1])
         sampled_slices = [np.random.randint(idx_start * min_slice_idx, (idx_start + 1) * max_slice_idx, n_slices) 
                           for idx_start, n_slices in enumerate(n_slices_per_volume)]
         sampled_slices = list(np.concatenate(sampled_slices))
@@ -184,7 +184,7 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
         elif self.norm is not None:
             print('Determining min and max values of normalized images from a sample of the dataset')
             self.images_min, self.images_max = np.inf, -np.inf
-            sample_dataset = self.sample_slices(256)
+            sample_dataset = self.sample_slices(min(256, self.__len__()))
             sample_dataset = DataLoader(sample_dataset, batch_size=4, num_workers=2)
             
             for img, _ in sample_dataset:

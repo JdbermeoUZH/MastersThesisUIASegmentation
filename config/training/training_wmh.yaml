@@ -97,15 +97,18 @@ ddpm:
   rescale_factor:               [1, 1, 1]
   condition_by_mult:            False
 
-  train_num_steps:              2000    # 7,000,000 or 100,000 in the original script
-  num_samples :                 25        # Must have an interger square root to store images in a square grid
+  learning_rate:                8e-5      # 1e-4 in the constructor
+  train_num_steps:              50000      # 7,000,000 or 100,000 in the original script
   timesteps:                    1000      # Range of noising steps to sample from during training. 1000 in the constructor  
   sampling_timesteps:           100       # Number of sampling steps to generate images. If less than 1000, will use DDIM sampling. If null, will be the same as timesteps => linear denoising steps
-  save_and_sample_every:        250      # 1000 in the constructor 
-  learning_rate:                8e-5      # 1e-4 in the constructor
+  save_and_sample_every:        2500       # 1000 in the constructor 
+  num_validation_samples:       100       # Num of images to sample to check performance during training
+  num_viz_samples:              25        # Must have an interger square root to store images in a square grid
+
   logdir:                       /scratch_net/biwidl319/jbermeo/logs/wmh/umc/ddpm/normalized_imgs/3x3_norm_filters/3_18/batch_size_128_cond_by_concat
   wandb_project:                mt-ddpm
-  norm_dir:                     /scratch_net/biwidl319/jbermeo/data/models/wmh/segmentation/umc/no_bg_supp_norm_w_3x3_conv
+  
+  norm_dir:                     /scratch_net/biwidl319/jbermeo/data/models/wmh/umc/no_bg_supp_norm_w_3x3_conv
 
   augmentation:                 
     da_ratio:           0.25

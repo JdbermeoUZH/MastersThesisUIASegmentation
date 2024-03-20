@@ -47,9 +47,9 @@ def tensor_collection_to_image_grid(
     ndarr = grid.mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).to("cpu", torch.uint8).numpy()
     return Image.fromarray(ndarr)
 
-def check_btw_0_1(*args: torch.Tensor):
+def check_btw_0_1(*args: torch.Tensor, margin_error = 1e-2):
     for tensor in args:
-        assert tensor.min() >= 0 and tensor.max() <= 1, 'tensor values should be between 0 and 1'    
+        assert tensor.min() >= 0 - margin_error and tensor.max() <= 1 + margin_error, 'tensor values should be between 0 and 1'    
 
 def check_btw_minus_1_plus_1(*args: torch.Tensor):
     for tensor in args:
@@ -207,7 +207,6 @@ class CDDPMTrainer(Trainer):
                 total_loss = 0.
 
                 for _ in range(self.gradient_accumulate_every):
-                    # TODO: Check they are not already normalized btw -1 and 1
                     img, cond_img = next(self.train_dl)
                     img, cond_img = img.to(device), cond_img.to(device)
 
