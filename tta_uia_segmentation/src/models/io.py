@@ -1,3 +1,4 @@
+import os
 from typing import Optional, Union
 
 import torch
@@ -106,3 +107,29 @@ def load_norm_and_seg_from_configs_and_cpt(
         return norm, seg, norm_state_dict   
     else:
         return norm, seg
+    
+def load_dae_and_atlas_from_configs_and_cpt(
+    n_classes: int,
+    model_params_dae: dict,
+    cpt_fp: str,
+    device: torch.device,
+)-> Union[nn.Module, torch.Tensor]:
+    
+    dae = UNet(
+        in_channels             = n_classes,
+        n_classes               = n_classes,
+        channels                = model_params_dae['channel_size'],
+        channels_bottleneck     = model_params_dae['channels_bottleneck'],
+        skips                   = model_params_dae['skips'],
+        n_dimensions            = model_params_dae['n_dimensions']
+    ).to(device)
+    
+    checkpoint = torch.load(cpt_fp, map_location=device)
+    dae.load_state_dict(checkpoint['dae_state_dict'])
+
+    dae_dir = os.path.dirname(cpt_fp)
+    checkpoint = torch.load(
+        os.path.join(dae_dir, 'atlas.h5py'), map_location=device)
+    atlas = checkpoint['atlas']
+    
+    return dae, atlas

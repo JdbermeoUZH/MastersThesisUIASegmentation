@@ -57,13 +57,14 @@ def preprocess_cmd_args() -> argparse.Namespace:
     # Model parameters
     # ----------------:
     parser.add_argument('--num_channels', type=int, help='Number of channels in the first layer of the model. Default: 64')
-    #parser.add_argument('--channel_size', type=int, nargs='+', help='Number of feature maps for each block. Default: [16, 32, 64]')
-    #parser.add_argument('--channels_bottleneck', type=int, help='Number of channels in bottleneck layer of model. Default: 128')
-    
+    parser.add_argument('--channel_mult', type=int, nargs='+', help='multiplier for number of channels in each layer of the model. Default: 1 2 3 4')
+    parser.add_argument('--num_heads', type=int, help='Number of heads in the attention layer. Default: 1')
+
     # Training loop
     # -------------:    
     parser.add_argument('--train_num_steps', type=int, help='Number of steps to train for. Default: 100000')
     parser.add_argument('--learning_rate', type=float, help='Learning rate for optimizer. Default: 1e-4')
+    parser.add_argument('--use_fp16', type=parse_bool, help='Use mixed precision training. Default: True')
     parser.add_argument('--batch_size', type=int, help='Batch size for training. Default: 4')
     parser.add_argument('--microbatch', type=int, help='Microbatch size for training. Default: -1')
     parser.add_argument('--num_workers', type=int, help='Number of workers for dataloader. Default: 0')
@@ -196,13 +197,13 @@ def main():
     batch_size          = train_config[train_type]['batch_size']
     norm_dir            = train_config[train_type]['norm_dir']   
     norm_device         = train_config[train_type]['norm_device']
-    cpt_fp              = os.path.join(norm_dir, train_config[train_type]['checkpoint_best'])
+    cpt_type            = 'checkpoint_best' if train_config[train_type]['load_best_cpt'] else 'checkpoint_last'
     
     # Load normalization model used in the segmentation network
     if train_config[train_type]['norm_with_nn_on_fly']:
         norm = load_norm_from_configs_and_cpt(
             model_params_norm=model_params_norm,
-            cpt_fp=cpt_fp,
+            cpt_fp=os.path.join(norm_dir, train_config[cpt_type]),
             device=norm_device
         )
     else: 
@@ -254,6 +255,7 @@ def main():
     num_channels        = model_config[model_type]['num_channels']
     channel_mult        = model_config[model_type]['channel_mult']
     num_res_blocks      = model_config[model_type]['num_res_blocks']
+    num_heads           = model_config[model_type]['num_heads']
     
     image_size          = train_config[train_type]['image_size'][-1]
     learn_sigma         = train_config[train_type]['learn_sigma']
@@ -269,6 +271,7 @@ def main():
         learn_sigma = learn_sigma,
         n_classes = n_classes,
         num_res_blocks = num_res_blocks,
+        num_heads=num_heads,
         dropout = dropout,
         **args_to_dict(args, model_defaults().keys())
     )
@@ -292,11 +295,11 @@ def main():
     logger.log("training...")
     train_num_steps     = train_config[train_type]['train_num_steps']
     learning_rate       = float(train_config[train_type]['learning_rate'])
+    use_fp16            = train_config[train_type]['use_fp16']
     microbatch          = train_config[train_type]['microbatch']
     num_workers = train_config[train_type]['num_workers']
     
-    global_batch_size = dist.get_world_size() * \
-        (batch_size * microbatch if microbatch > 0 else batch_size)
+    global_batch_size = dist.get_world_size() * batch_size
     logger.log(f"Effective batch size of {global_batch_size}")
     
     schedule_sampler    = train_config[train_type]['schedule_sampler']
@@ -318,6 +321,7 @@ def main():
         microbatch=microbatch,
         schedule_sampler=schedule_sampler,
         lr=learning_rate,
+        use_fp16=use_fp16,
         num_workers=num_workers,
         log_interval=log_interval,
         save_interval=save_interval,
@@ -327,7 +331,6 @@ def main():
         wandb_log=wandb_log,
         ema_rate=args.ema_rate,
         resume_checkpoint=args.resume_checkpoint,
-        use_fp16=args.use_fp16,
         fp16_scale_growth=args.fp16_scale_growth,
         weight_decay=args.weight_decay,
         lr_anneal_steps=args.lr_anneal_steps,
@@ -342,7 +345,6 @@ def get_default_params_original_script() -> dict:
         microbatch=-1,  # -1 disables microbatches
         ema_rate="0.9999",  # comma-separated list of EMA values
         resume_checkpoint="",
-        use_fp16=False,
         fp16_scale_growth=1e-3,
     )
     defaults.update(model_defaults())
@@ -355,7 +357,6 @@ def model_defaults():
     Defaults for image training.
     """
     return dict(
-        num_heads=2,
         num_heads_upsample=-1,
         attention_resolutions="16,8",
         use_checkpoint=False,

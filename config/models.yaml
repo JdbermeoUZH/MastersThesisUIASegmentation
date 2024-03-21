@@ -54,3 +54,4 @@ ddpm_unet_oai:
   channel_mult:                     [1, 2, 3, 4]  # Multipliers for the number of filters in each layer. Default: [1, 2, 4, 8]
   channels:                         1             # Number of input channels
   num_res_blocks:                   3             # Default is 2, but for bigger datasets they use 3
+  num_heads:                        1             # Default is 4 on the original paper when used on Imagenet

@@ -108,8 +108,9 @@ ddpm:
   logdir:                       /scratch_net/biwidl319/jbermeo/logs/wmh/umc/ddpm/normalized_imgs/3x3_norm_filters/3_18/batch_size_128_cond_by_concat
   wandb_project:                mt-ddpm
   
-  norm_dir:                     /scratch_net/biwidl319/jbermeo/data/models/wmh/umc/no_bg_supp_norm_w_3x3_conv
-
+  norm_dir:                     /scratch_net/biwidl319/jbermeo/data/models/wmh/segmentation/umc/no_bg_supp_norm_w_3x3_conv
+  load_best_cpt:                True
+  
   augmentation:                 
     da_ratio:           0.25
     sigma:              20
@@ -145,10 +146,11 @@ ddpm_oai:
   train_num_steps:              50000     # 200,000 in the original script
   learning_rate:                1e-4      # 1e-4 in the constructor
   batch_size:                   128
-  microbatch:                   2         # -1 disables microbatching
-  num_workers:                  2
+  microbatch:                   8         # -1 disables microbatching
+  num_workers:                  3
+  use_fp16:                     False
   log_interval:                 2         # Default 10
-  save_interval:                1000      # Default 10000
+  save_interval:                2500      # Default 10000
   num_samples_for_metrics:      100       # Must have an interger square root to store images in a square grid
   diffusion_steps:              4000      # Range of noising steps to sample from during training. 4000 in the original implementation  
   use_ddim:                     True      # To generate samples to check performance during training
@@ -158,7 +160,8 @@ ddpm_oai:
   split:                        train
   split_val:                    val
   norm_with_nn_on_fly:          True
-  norm_dir:                     /scratch_net/biwidl319/jbermeo/data/models/wmh/umc/no_bg_supp_norm_w_3x3_conv
+  norm_dir:                     /scratch_net/biwidl319/jbermeo/data/models/wmh/segmentation/umc/no_bg_supp_norm_w_3x3_conv
+  load_best_cpt:                True
   norm_device:                  cpu
   use_original_imgs:            False
   one_hot_encode:               True

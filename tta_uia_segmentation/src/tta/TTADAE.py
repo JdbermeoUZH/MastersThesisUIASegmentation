@@ -62,7 +62,7 @@ class TTADAE:
         learning_rate: float = 1e-3,
         alpha: float = 1.0,
         beta: float = 0.25,
-        use_atlas_only_for_intit: bool = False,
+        use_atlas_only_for_init: bool = False,
         seg_with_bg_supp: bool = True,
         wandb_log: bool = False,
         device: str = 'cuda',
@@ -86,7 +86,7 @@ class TTADAE:
         # Thresholds for pseudo label selection
         self.alpha = alpha
         self.beta = beta
-        self.use_atlas_only_for_intit = use_atlas_only_for_intit
+        self.use_atlas_only_for_intit = use_atlas_only_for_init
         
         self.use_only_dae_pl = self.alpha == 0 and self.beta == 0
         

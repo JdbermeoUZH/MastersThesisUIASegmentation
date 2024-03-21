@@ -262,6 +262,10 @@ if __name__ == '__main__':
     num_validation_samples      = train_config[train_type]['num_validation_samples']
     num_viz_samples             = train_config[train_type]['num_viz_samples']
     
+    if accelerator.is_main_process:
+        print(f'Minibatch size: {batch_size}')
+        print(f'Effective batch size: {batch_size * gradient_accumulate_every}')
+    
     trainer = CDDPMTrainer(
         diffusion,
         train_dataset=train_dataset,

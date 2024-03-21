@@ -14,8 +14,11 @@ sys.path.append(os.path.normpath(os.path.join(
 
 from tta_uia_segmentation.src.tta import TTADAEandDDPM
 from tta_uia_segmentation.src.dataset.dataset_in_memory import get_datasets
-from tta_uia_segmentation.src.models import Normalization, UNet
-from tta_uia_segmentation.src.models.io import load_ddpm_from_configs_and_cpt, load_norm_and_seg_from_configs_and_cpt
+from tta_uia_segmentation.src.models.io import (
+    load_ddpm_from_configs_and_cpt,
+    load_norm_and_seg_from_configs_and_cpt,
+    load_dae_and_atlas_from_configs_and_cpt
+)
 from tta_uia_segmentation.src.utils.io import load_config, dump_config, print_config, write_to_csv, rewrite_config_arguments
 from tta_uia_segmentation.src.utils.utils import seed_everything, define_device
 from tta_uia_segmentation.src.utils.logging import setup_wandb
@@ -90,40 +93,17 @@ def preprocess_cmd_args() -> argparse.Namespace:
     
     # Dataset and its transformations to use for TTA
     # ---------------------------------------------------:
-    parser.add_argument('--dataset', type=str, help='Name of dataset to use for tta. Default: USZ')
-    parser.add_argument('--split', type=str, help='Name of split to use for tta. Default: test')
+    parser.add_argument('--dataset', type=str, help='Name of dataset to use for tta.')
+    parser.add_argument('--split', type=str, help='Name of split to use for tta')
     
     # Probably not used arguments
-    parser.add_argument('--n_classes', type=int, help='Number of classes in dataset. Default: 21')
-    parser.add_argument('--image_size', type=int, nargs='+', help='Size of images in dataset. Default: [560, 640, 160]')
-    parser.add_argument('--resolution_proc', type=float, nargs='+', help='Resolution of images in dataset. Default: [0.3, 0.3, 0.6]')
-    parser.add_argument('--rescale_factor', type=float, help='Rescale factor for images in dataset. Default: None')
-    
-    # Augmentations
-    parser.add_argument('--aug_da_ratio', type=float, help='Ratio of images to apply DA to. Default: 0.25')
-    parser.add_argument('--aug_sigma', type=float, help='augmentation. Default: 20') #TODO: specify what this is
-    parser.add_argument('--aug_alpha', type=float, help='augmentation. Default: 1000') #TODO: specify what this is
-    parser.add_argument('--aug_trans_min', type=float, help='Minimum value for translation augmentation. Default: -10')
-    parser.add_argument('--aug_trans_max', type=float, help='Maximum value for translation augmentation. Default: 10')
-    parser.add_argument('--aug_rot_min', type=float, help='Minimum value for rotation augmentation. Default: -10')
-    parser.add_argument('--aug_rot_max', type=float, help='Maximum value for rotation augmentation. Default: 10') 
-    parser.add_argument('--aug_scale_min', type=float, help='Minimum value for zooming augmentation. Default: 0.9') 
-    parser.add_argument('--aug_scale_max', type=float, help='Maximum value for zooming augmentation. Default: 1.1')
-    parser.add_argument('--aug_gamma_min', type=float, help=' augmentation. Default: 1.0') #TODO: specify what this is
-    parser.add_argument('--aug_gamma_max', type=float, help=' augmentation. Default: 1.0') #TODO: specify what this is
-    parser.add_argument('--aug_brightness_min', type=float, help='Minimum value for brightness augmentation. Default: 0.0') 
-    parser.add_argument('--aug_brightness_max', type=float, help='Maximum value for brightness augmentation. Default: 0.0')   
-    parser.add_argument('--aug_noise_mean', type=float, help='Mean value for noise augmentation. Default: 0.0')
-    parser.add_argument('--aug_noise_std', type=float, help='Standard deviation value for noise augmentation. Default: 0.0') 
+    parser.add_argument('--n_classes', type=int, help='Number of classes in dataset.')
+    parser.add_argument('--image_size', type=int, nargs='+', help='Size of images in dataset.')
+    parser.add_argument('--resolution_proc', type=float, nargs='+', help='Resolution of images in dataset.')
+    parser.add_argument('--rescale_factor', type=float, help='Rescale factor for images in dataset.')
     
     # Backround suppression for normalized images
-    parser.add_argument('--bg_supression_type', choices=['fixed_value', 'random_value', 'none', None], help='Type of background suppression to use. Default: fixed_value')
-    parser.add_argument('--bg_supression_value', type=float, help='Value to use for background suppression. Default: -0.5')
-    parser.add_argument('--bg_supression_min', type=float, help='Minimum value to use for random background suppression. Default: -0.5')
-    parser.add_argument('--bg_supression_max', type=float, help='Maximum value to use for random background suppression. Default: 1.0')
-    parser.add_argument('--bg_supression_max_source', type=str, choices=['thresholding', 'ground_truth'], help='Maximum value to use for random background suppression. Default: "thresholding"')
-    parser.add_argument('--bg_supression_thresholding', type=str, choices=['otsu', 'yen', 'li', 'minimum', 'mean', 'triangle', 'isodata'], help='Maximum value to use for random background suppression. Default: "otsu"') 
-    parser.add_argument('--bg_supression_hole_filling', type=parse_bool, help='Whether to use hole filling for background suppression. Default: True')
+    parser.add_argument('--bg_supression_type', choices=['fixed_value', 'random_value', 'none', None], help='Type of background suppression to use. Default: none')
     args = parser.parse_args()
     
     return args
@@ -235,50 +215,27 @@ if __name__ == '__main__':
 
     # Define the  segmentation model
     # :=========================================================================:
-    norm = Normalization(
-        n_layers                = model_params_norm['n_layers'],
-        image_channels          = model_params_norm['image_channels'],
-        channel_size            = model_params_norm['channel_size'],
-        kernel_size             = model_params_norm['kernel_size'],
-        activation              = model_params_norm['activation'], 
-        batch_norm              = model_params_norm['batch_norm'],
-        residual                = model_params_norm['residual'],
-        n_dimensions            = model_params_norm['n_dimensions'] 
-    ).to(device)
-
-    seg = UNet(
-        in_channels             = model_params_seg['image_channels'],
-        n_classes               = n_classes,
-        channels                = model_params_seg['channel_size'],
-        channels_bottleneck     = model_params_seg['channels_bottleneck'],
-        skips                   = model_params_seg['skips'],
-        n_dimensions            = model_params_seg['n_dimensions'] 
-    ).to(device)
+    print('Loading segmentation model')
+    cpt_type = 'checkpoint_best' if tta_config['load_best_cpt'] \
+        else 'checkpoint_last'
     
-    dae = UNet(
-        in_channels             = n_classes,
-        n_classes               = n_classes,
-        channels                = model_params_dae['channel_size'],
-        channels_bottleneck     = model_params_dae['channels_bottleneck'],
-        skips                   = model_params_dae['skips'],
-        n_dimensions            = model_params_dae['n_dimensions']
-    ).to(device)
-    
-    ## Load their checkpoints
-    # Segmentation network
-    checkpoint = torch.load(os.path.join(seg_dir, train_params_seg['checkpoint_best']), 
-                            map_location=device)
-    norm.load_state_dict(checkpoint['norm_state_dict'])
-    seg.load_state_dict(checkpoint['seg_state_dict'])
-    norm_state_dict = checkpoint['norm_state_dict']
-
+    norm, seg, norm_state_source_domain = load_norm_and_seg_from_configs_and_cpt(
+        n_classes = n_classes,
+        model_params_norm = model_params_norm,
+        model_params_seg = model_params_seg,
+        cpt_fp = os.path.join(seg_dir, train_params_seg[cpt_type]),
+        device = device,
+        return_norm_state_dict=True,
+    )
+    print('Segmentation model loaded')
+       
     # DAE
-    checkpoint = torch.load(os.path.join(dae_dir, train_params_dae['checkpoint_best']), 
-                            map_location=device)
-    dae.load_state_dict(checkpoint['dae_state_dict'])
-
-    checkpoint = torch.load(os.path.join(dae_dir, 'atlas.h5py'), map_location=device)
-    atlas = checkpoint['atlas']
+    dae, atlas = load_dae_and_atlas_from_configs_and_cpt(
+        n_classes = n_classes,
+        model_params_dae = model_params_dae,
+        cpt_fp = os.path.join(dae_dir, train_params_dae[cpt_type]),
+        device = device,
+    )
 
     # DDPM
     ddpm = load_ddpm_from_configs_and_cpt(
@@ -289,23 +246,25 @@ if __name__ == '__main__':
         device                   = device,
         sampling_timesteps       = tta_config[tta_mode]['sampling_timesteps'],
     )
-
-    del checkpoint
    
     # Define the TTADAE object that does the test time adapatation
     # :=========================================================================:    
     learning_rate               = tta_config[tta_mode]['learning_rate']
+    dae_loss_alpha              = tta_config[tta_mode]['dae_loss_alpha']
+    ddpm_loss_beta              = tta_config[tta_mode]['ddpm_loss_beta']
+    ddpm_sample_guidance_eta    = tta_config[tta_mode]['ddpm_sample_guidance_eta']
+
+    seg_with_bg_supp            = tta_config[tta_mode]['seg_with_bg_supp']
+
+    # DAE-TTA params
     alpha                       = tta_config[tta_mode]['alpha']
     beta                        = tta_config[tta_mode]['beta']
     rescale_factor              = train_params_dae['dae']['rescale_factor']
     bg_suppression_opts_tta     = tta_config[tta_mode]['bg_suppression_opts']
+    use_atlas_only_for_init    = tta_config[tta_mode]['use_atlas_only_for_init']
     
+    # DDPM-TTA params    
     minibatch_size_ddpm         = tta_config[tta_mode]['minibatch_size_ddpm']
-    use_atlas_only_for_intit    = tta_config[tta_mode]['use_atlas_only_for_intit']
-    seg_with_bg_supp            = tta_config[tta_mode]['seg_with_bg_supp']
-    dae_loss_alpha              = tta_config[tta_mode]['dae_loss_alpha']
-    ddpm_loss_beta              = tta_config[tta_mode]['ddpm_loss_beta']
-    ddpm_sample_guidance_eta    = tta_config[tta_mode]['ddpm_sample_guidance_eta']
     frac_vol_diffusion_tta      = tta_config[tta_mode]['frac_vol_diffusion_tta']
     min_t_diffusion_tta         = tta_config[tta_mode]['min_t_diffusion_tta']
     max_t_diffusion_tta         = tta_config[tta_mode]['max_t_diffusion_tta']
@@ -317,8 +276,7 @@ if __name__ == '__main__':
     use_ddpm_after_step         = tta_config[tta_mode]['use_ddpm_after_step']
     use_ddpm_after_dice         = tta_config[tta_mode]['use_ddpm_after_dice']
     warmup_steps_for_ddpm_loss  = tta_config[tta_mode]['warmup_steps_for_ddpm_loss']
-    
-    
+        
     tta = TTADAEandDDPM(
         norm                    = norm,
         seg                     = seg,
@@ -331,7 +289,7 @@ if __name__ == '__main__':
         dae_loss_alpha          = dae_loss_alpha,
         alpha                   = alpha,
         beta                    = beta,
-        use_atlas_only_for_intit=use_atlas_only_for_intit,
+        use_atlas_only_for_init=use_atlas_only_for_init,
         seg_with_bg_supp        = seg_with_bg_supp,
         rescale_factor          = rescale_factor,
         bg_suppression_opts     = bg_suppression_opts,
@@ -371,36 +329,30 @@ if __name__ == '__main__':
         
     indices_per_volume = test_dataset.get_volume_indices()
     
-    start_idx = 0
-    stop_idx = len(indices_per_volume)  # == number of volumes
-    if tta_config['start'] is not None:
-        start_idx = tta_config['start']
-    if tta_config['stop'] is not None:
-        stop_idx = tta_config['stop']
+    start_idx = 0 if tta_config['start'] is None else tta_config['start']
+    stop_idx = len(indices_per_volume) if tta_config['stop'] is None \
+        else tta_config['stop']
     
     print('---------------------TTA---------------------')
     print('start vol_idx:', start_idx)
     print('end vol_idx:', stop_idx)
     
-    if dae_loss_alpha > 0 and ddpm_loss_beta > 0:
+    if dae_loss_alpha > 0:
         if beta <= 1.0:
-            print(f'Using DAE {dae_loss_alpha: .5f} and DDPM {ddpm_loss_beta: .5f} for TTA')
+            print(f'Using DAE and Atlas {dae_loss_alpha: .5f}')
+            if use_atlas_only_for_init:
+                print(f'Using only the Atlas for initialization'
+                      'Once it switches to the DAE, it will not switch back to the Atlas')
+
         else:
-            print(f'Using DDPM {ddpm_loss_beta: .5f} and ATLAS guided segmentation {dae_loss_alpha: .5f} for TTA')    
+            print(f'Using only the Atlas as a pseudo-label {ddpm_loss_beta: .5f}')    
+                
+    if ddpm_loss_beta > 0:
+        print(f'Using DDPM {ddpm_loss_beta}')
         
-    elif dae_loss_alpha > 0:
-        if beta <= 1.0:
-            print(f'Using DAE {dae_loss_alpha: .5f} for TTA')
-        else: 
-            print(f'Using ATLAS guided segmentation {dae_loss_alpha: .5f} for TTA')
-            
-    elif ddpm_loss_beta > 0:
-        print(f'Using DDPM {ddpm_loss_beta} for TTA')
-        
-    else:
-        raise ValueError('Both dae_loss_alpha and ddpm_loss_beta are <= 0.'
-                         'Please specify at least one of them to be > 0')
-        
+    if ddpm_sample_guidance_eta is not None:
+        print(f'Using DDPM sample guidance with eta {ddpm_sample_guidance_eta}')
+                
     dice_scores = torch.zeros((len(indices_per_volume), n_classes))
     
     dice_per_vol = {}
@@ -413,7 +365,7 @@ if __name__ == '__main__':
 
         volume_dataset = Subset(test_dataset, indices)
 
-        tta.reset_initial_state(norm_state_dict)
+        tta.reset_initial_state(norm_state_source_domain)
 
         norm_dict, metrics_best, dice_scores_wrt_gt = tta.tta(
             volume_dataset = volume_dataset,
