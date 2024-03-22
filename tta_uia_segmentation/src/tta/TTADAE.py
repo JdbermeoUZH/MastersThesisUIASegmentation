@@ -6,7 +6,7 @@ import wandb
 import torch
 import numpy as np
 from torch.nn import functional as F
-from torch.utils.data import Dataset, TensorDataset, ConcatDataset, DataLoader
+from torch.utils.data import TensorDataset, ConcatDataset, DataLoader
 
 
 from tta_uia_segmentation.src.models.normalization import background_suppression
@@ -219,13 +219,13 @@ class TTADAE:
             print('DEBUG DELETE ME: len(label_dataloader)', len(label_dataloader))
                                                         
             # Adapting to the target distribution.
-            for (x,_,_,_, bg_mask), (y,) in zip(volume_dataloader, label_dataloader):
+            for (x,_,_,_, bg_mask), (y_pl,) in zip(volume_dataloader, label_dataloader):
 
                 if not accumulate_over_volume:
                     self.optimizer.zero_grad()
 
                 x = x.to(device).float()
-                y = y.to(device)
+                y_pl = y_pl.to(device)
                 
                 _, mask, _ = self.forward_pass_seg(
                     x, bg_mask, self.bg_suppression_opts_tta, device)
@@ -233,7 +233,7 @@ class TTADAE:
                 if self.rescale_factor is not None:
                     mask = self.rescale_volume(mask)
                     
-                loss = self.loss_func(mask, y)
+                loss = self.loss_func(mask, y_pl)
 
                 if accumulate_over_volume:
                     loss /= len(volume_dataloader)
@@ -284,16 +284,17 @@ class TTADAE:
 
     def forward_pass_seg(
         self, 
-        x: torch.Tensor,
+        x: Optional[torch.Tensor] = None,
         bg_mask: Optional[torch.Tensor] = None,
         bg_suppression_opts: Optional[dict] = None,
-        device: Optional[Union[str, torch.device]] = None
+        device: Optional[Union[str, torch.device]] = None,
+        x_norm: Optional[torch.Tensor] = None,
         ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         
-        x_norm = self.norm(x)
+        x_norm = x_norm or self.norm(x)
         
         if self.seg_with_bg_supp:
-            print('Using background suppression')
+            print('DEBUG, delete me: Using background suppression')
             bg_mask = bg_mask.to(device)
             x_norm_bg_supp = background_suppression(x_norm, bg_mask, bg_suppression_opts)
             mask, logits = self.seg(x_norm_bg_supp)

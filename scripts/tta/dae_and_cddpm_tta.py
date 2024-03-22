@@ -1,3 +1,12 @@
+""" 
+
+TODO:
+
+ - Change model selection to either the one with total lowest loss or the one at the last iteration.
+    - Currently it is choosing the one with the highest dice score agreement with the pseudo-label from the DAE.
+
+
+"""
 import os
 import sys
 import argparse
@@ -420,7 +429,9 @@ if __name__ == '__main__':
         )
 
         for key in norm_dict.keys():
-            print(f'Model at minimum {key} = {metrics_best[key]}')
+            # TODO: We might not want to pick the model with the highest agreeement, 
+            #  but the one of the last step
+            print(f'Model at minimum {key} (best agreement with PL) = {metrics_best[key]}')
 
             tta.load_state_dict_norm(norm_dict[key])
             scores, _ = tta.test_volume(

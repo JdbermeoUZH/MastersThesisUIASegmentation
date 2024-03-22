@@ -40,13 +40,13 @@ class TTADAEandDDPM(TTADAE):
         self,
         ddpm: ConditionalGaussianDiffusion,
         dae_loss_alpha: float = 0.5,
-        ddpm_loss_beta: float = 0.5,
+        ddpm_loss_beta: float = 1.0,
         ddpm_sample_guidance_eta: Optional[float] = None,
         guidance_loss: Optional[callable] = ssim_loss,
         minibatch_size_ddpm: int = 2,
-        frac_vol_diffusion_tta: float = 0.25,
-        min_t_diffusion_tta: int = 250,
-        max_t_diffusion_tta: int = 1000,
+        frac_vol_diffusion_tta: float = 1.0,
+        min_t_diffusion_tta: int = 0,
+        max_t_diffusion_tta: int = 999,
         sampling_timesteps: Optional[int] = None,
         min_max_int_norm_imgs: tuple[float, float] = (0, 1),
         use_x_norm_for_ddpm_loss: bool = True,
@@ -125,7 +125,7 @@ class TTADAEandDDPM(TTADAE):
         save_checkpoints: bool,
         device: str,
         logdir: Optional[str] = None,        
-        running_min_max_momentum: float = 0.8,
+        running_min_max_momentum: float = 0.95,
     ):       
         """_summary_
 
@@ -183,8 +183,11 @@ class TTADAEandDDPM(TTADAE):
             warmup_steps_for_ddpm_loss = list(np.linspace(1, 1/self.warmup_steps_for_ddpm_loss,
                                                     self.warmup_steps_for_ddpm_loss))
         else:
-            warmup_steps_for_ddpm_loss = []     
-               
+            warmup_steps_for_ddpm_loss = []    
+            
+        # Define the number of batches to use for the DDPM loss for per step (full pass over the volume)
+        num_batches_for_ddpm_loss = int(self.frac_vol_diffusion_tta * len(volume_dataloader))
+                
         for step in tqdm(range(num_steps)):
             
             self.norm.eval()
@@ -197,9 +200,11 @@ class TTADAEandDDPM(TTADAE):
                 if self.use_ddpm_loss:
                     print('---------Start using DDPM loss ---------')
     
-            # Test performance during adaptation.
+            # Mesaure performance during adaptation
+            # :===============================================================:
             if step % calculate_dice_every == 0 and calculate_dice_every != -1:
                 
+                # Get the pseudo label from the DAE or Atlas to log how it looks like 
                 if self.dae_loss_alpha > 0:
                     if not self.using_dae_pl:
                         y_dae_or_atlas = self.atlas 
@@ -213,6 +218,7 @@ class TTADAEandDDPM(TTADAE):
                 else:
                     y_dae_or_atlas = None
                     
+                # Get the guidance volume generated with the DDPM to log how it looks like
                 if self.use_ddpm_sample_guidance:
                     x_guidance = dae_sampled_vol if self.using_dae_pl else self.atlas_sampled_vol
                     x_guidance = x_guidance[0:1]
@@ -237,12 +243,13 @@ class TTADAEandDDPM(TTADAE):
                 self.test_scores.append(dices_fg.mean().item())
 
             # Update Pseudo label, with DAE or Atlas, depending on which has a better agreement
+            # :===============================================================:
             if step % update_dae_output_every == 0:
                 # Only update the pseudo label if it has not been calculated yet or
                 #  if the beta is less than 1.0
 
                 if step == 0 or self.beta <= 1.0:
-                    dice_dae, dice_atlas, label_dataloader = self.generate_pseudo_labels(
+                    dice_dae, _, label_dataloader = self.generate_pseudo_labels(
                         dae_dataloader=dae_dataloader,
                         label_batch_size=label_batch_size,
                         device=device,
@@ -250,6 +257,13 @@ class TTADAEandDDPM(TTADAE):
                         dataset_repetition=dataset_repetition
                     )
                     
+                # Check whether to use the DDPM loss based on the dice score flag
+                if self.use_ddpm_after_dice is not None and not self.use_ddpm_loss:
+                    self.use_ddpm_loss = dice_dae >= self.use_ddpm_after_dice
+                    if self.use_ddpm_loss:
+                        print('---------Start using DDPM loss ---------')
+                
+                # Sample volumes from the DDPM using the DAE predicted labels 
                 if self.use_ddpm_sample_guidance and self.using_dae_pl:
                     dae_sampled_vol = self._sample_vol(label_dataloader)
                     dae_sampled_vol_dl = DataLoader(
@@ -260,17 +274,11 @@ class TTADAEandDDPM(TTADAE):
                         drop_last=False,
                     )
                     
-                if self.use_ddpm_after_dice is not None and not self.use_ddpm_loss:
-                    self.use_ddpm_loss = dice_dae >= self.use_ddpm_after_dice
-                    if self.use_ddpm_loss:
-                        print('---------Start using DDPM loss ---------')
-                
-            # Define parameters related to the DDPM loss
+            # Define parameters related to the DDPM loss for the current step
             # :============================================================:
-            # Sample batches of images on which to use the noise estimation task
-            num_batches_sample = int(self.frac_vol_diffusion_tta * len(volume_dataloader))
+            # Sample on which specific batches of images to use the DDPM loss for this step
             b_i_for_diffusion_loss = np.random.choice(
-                range(len(volume_dataloader)), num_batches_sample, replace=False)
+                range(len(volume_dataloader)), num_batches_for_ddpm_loss, replace=False)
             
             # Reweigh factor for the ddpm loss to take into account how many 
             #  times less it is used than the dae loss or if averaged over entire volume
@@ -284,7 +292,7 @@ class TTADAEandDDPM(TTADAE):
                         
             ddpm_reweigh_factor = warmup_factor * ddpm_reweigh_factor
             
-            # Define parameters related to the DDPM sample guidance
+            # Define which volumes to use for the DDPM sample guidance (if any at all)
             # :============================================================:
             if self.use_ddpm_sample_guidance:
                 sampled_vol_dl = dae_sampled_vol_dl if self.using_dae_pl else atlas_sampled_vol_dl
@@ -347,32 +355,30 @@ class TTADAEandDDPM(TTADAE):
                 # :============================================================:
                 calculate_ddpm_loss_gradients = b_i in b_i_for_diffusion_loss and \
                     self.ddpm_loss_beta > 0 and self.use_ddpm_loss
+                    
                 if calculate_ddpm_loss_gradients:
-                    print('DEBG, use_ddpm_sample_guidance')
                     n_samples_diffusion += x.shape[0] 
                     
                     x_norm = self.norm(x)
                     
                     img = x_norm if self.use_x_norm_for_ddpm_loss else x
                     
-                    # Check if the max and min values of the input images have changed
-                    #  especially impotant to do it before the fwd/bwd pass of the DDPM when 
-                    #  updating first with dae or atlas for some steps           
-                    running_max = max(running_max, img.max().item())
-                    running_min = min(running_min, img.min().item())
+                    # Keep track of the max and min in the current step
+                    step_max = max(step_max, img.max().item())
+                    step_min = min(step_min, img.min().item())
                     
                     if self.use_x_cond_gt:
                         # Only for debugging
                         y_gt = y_gt.to(device)
                         x_cond = y_gt
+                        
                     elif self.use_y_pred_for_ddpm_loss:
-                        if self.seg_with_bg_supp:
-                            bg_mask = bg_mask.to(device)
-                            x_norm_bg_supp = background_suppression(
-                                x_norm, bg_mask, self.bg_suppression_opts_tta)
-                            x_cond, _ = self.seg(x_norm_bg_supp)
-                        else:
-                            x_cond, _ = self.seg(x_norm)
+                        # Use predicted segmentation mask for the DDPM loss
+                        _, x_cond, _ = self.forward_pass_seg(
+                            x_norm=x_norm, bg_mask=bg_mask, 
+                            bg_suppression_opts=self.bg_suppression_opts_tta, 
+                            device=device
+                        )
                     else:
                         # Uses the pseudo label for the DDPM loss
                         x_cond = y_pl
@@ -384,10 +390,6 @@ class TTADAEandDDPM(TTADAE):
                         max_int_norm_imgs=running_max,
                         min_int_norm_imgs=running_min
                     )
-                    
-                    # Keep track of the max and min in the current step
-                    step_max = max(step_max, img.max().item())
-                    step_min = min(step_min, img.min().item())
                     
                 # DDPM sample guidance
                 # :===============================================================: 
