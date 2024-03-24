@@ -291,7 +291,7 @@ class TTADAE:
         x_norm: Optional[torch.Tensor] = None,
         ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         
-        x_norm = x_norm or self.norm(x)
+        x_norm = x_norm if x_norm is not None else self.norm(x)
         
         if self.seg_with_bg_supp:
             print('DEBUG, delete me: Using background suppression')
@@ -424,7 +424,7 @@ class TTADAE:
         if self.wandb_log:
             wandb.log(
                 {
-                    f'dice_score_fg/img_{index}': dices_fg.mean().item(),
+                    f'dice_score_fg/img_{index:03d}': dices_fg.mean().item(),
                     'tta_step': iteration
                 }
             )

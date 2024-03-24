@@ -5,16 +5,16 @@ import torch
 import torch.nn as nn
 from torch import nn as nn
 from ema_pytorch import EMA
-from denoising_diffusion_pytorch import Unet
 
 from tta_uia_segmentation.src.utils.utils import assert_in
-from tta_uia_segmentation.src.models import Normalization, UNet
+from tta_uia_segmentation.src.models import Normalization, ConditionalUnet, UNet
 from tta_uia_segmentation.src.models.ConditionalGaussianDiffusion import ConditionalGaussianDiffusion
 
 
 def load_ddpm_from_configs_and_cpt(
     train_ddpm_cfg: dict,
     model_ddpm_cfg: dict,
+    n_classes: int,
     cpt_fp: str,
     img_size: int,
     device: torch.device,
@@ -25,12 +25,13 @@ def load_ddpm_from_configs_and_cpt(
         if sampling_timesteps is None else sampling_timesteps
 
     # Model definition
-    model = Unet(
+    model = ConditionalUnet(
         dim = model_ddpm_cfg['dim'],
         dim_mults = model_ddpm_cfg['dim_mults'],   
+        n_classes = n_classes,
         flash_attn = True,
-        channels=model_ddpm_cfg['channels'], 
-        self_condition=True,
+        image_channels=model_ddpm_cfg['channels'], 
+        condition_by_concat=not train_ddpm_cfg['condition_by_mult'],
     ).to(device)
 
     ddpm = ConditionalGaussianDiffusion(

@@ -36,6 +36,8 @@ from tta_uia_segmentation.src.utils.loss import DiceLoss
 
 torch.autograd.set_detect_anomaly(True)
 
+tta_mode = 'dae_and_ddpm'
+
 def preprocess_cmd_args() -> argparse.Namespace:
     """_
     Parse command line arguments and return them as a Namespace object.
@@ -127,15 +129,15 @@ def get_configuration_arguments() -> tuple[dict, dict]:
     tta_config = load_config(args.tta_config_file)
     tta_config = rewrite_config_arguments(tta_config, args, 'tta')
     
-    tta_config['dae_and_diffusion'] = rewrite_config_arguments(
-        tta_config['dae_and_diffusion'], args, 'tta, dae_and_diffusion')
+    tta_config[tta_mode] = rewrite_config_arguments(
+        tta_config[tta_mode], args, 'tta, tta_mode')
     
-    tta_config['dae_and_diffusion']['augmentation'] = rewrite_config_arguments(
-        tta_config['dae_and_diffusion']['augmentation'], args, 'tta, dae_and_diffusion, augmentation',
+    tta_config[tta_mode]['augmentation'] = rewrite_config_arguments(
+        tta_config[tta_mode]['augmentation'], args, 'tta, tta_mode, augmentation',
         prefix_to_remove='aug_')
     
-    tta_config['dae_and_diffusion']['bg_suppression_opts'] = rewrite_config_arguments(
-        tta_config['dae_and_diffusion']['bg_suppression_opts'], args, 'tta, dae_and_diffusion, bg_suppression_opts',
+    tta_config[tta_mode]['bg_suppression_opts'] = rewrite_config_arguments(
+        tta_config[tta_mode]['bg_suppression_opts'], args, 'tta, tta_mode, bg_suppression_opts',
         prefix_to_remove='bg_supression_')
     
     return dataset_config, tta_config
@@ -149,10 +151,10 @@ if __name__ == '__main__':
     # Loading general parameters
     # :=========================================================================:
     dataset_config, tta_config = get_configuration_arguments()
-    
-    tta_mode                = 'dae_and_diffusion'
+
+    seg_dir                 = tta_config['seg_dir']
+
     dae_dir                 = tta_config[tta_mode]['dae_dir']
-    seg_dir                 = tta_config[tta_mode]['seg_dir']
     ddpm_dir                = tta_config[tta_mode]['ddpm_dir']
     
     params_dae              = load_config(os.path.join(dae_dir, 'params.yaml'))
@@ -250,6 +252,7 @@ if __name__ == '__main__':
     ddpm = load_ddpm_from_configs_and_cpt(
         train_ddpm_cfg           = train_params_ddpm,
         model_ddpm_cfg           = model_params_ddpm,
+        n_classes                = n_classes,
         cpt_fp                   = os.path.join(ddpm_dir, tta_config[tta_mode]['cpt_fn']),
         img_size                 = dataset_config[dataset]['dim'][-1],
         device                   = device,
@@ -348,19 +351,19 @@ if __name__ == '__main__':
     
     if dae_loss_alpha > 0:
         if beta <= 1.0:
-            print(f'Using DAE and Atlas {dae_loss_alpha: .5f}')
+            print(f'Using DAE and Atlas loss with weight: {dae_loss_alpha: .5f}')
             if use_atlas_only_for_init:
                 print(f'Using only the Atlas for initialization'
                       'Once it switches to the DAE, it will not switch back to the Atlas')
 
         else:
-            print(f'Using only the Atlas as a pseudo-label {ddpm_loss_beta: .5f}')    
+            print(f'Using only the Atlas as a pseudo-label with weight: {ddpm_loss_beta: .5f}')    
                 
     if ddpm_loss_beta > 0:
-        print(f'Using DDPM {ddpm_loss_beta}')
+        print(f'Using DDPM with weight: {ddpm_loss_beta}')
         
-    if ddpm_sample_guidance_eta is not None:
-        print(f'Using DDPM sample guidance with eta {ddpm_sample_guidance_eta}')
+    if ddpm_sample_guidance_eta is not None and ddpm_sample_guidance_eta > 0:
+        print(f'Using DDPM sample guidance with weight: {ddpm_sample_guidance_eta}')
                 
     dice_scores = torch.zeros((len(indices_per_volume), n_classes))
     
