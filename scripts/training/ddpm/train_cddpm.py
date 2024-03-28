@@ -50,11 +50,8 @@ def preprocess_cmd_args() -> argparse.Namespace:
 
     # Model parameters
     # ----------------:
-    parser.add_argument('--channel_size', type=int, nargs='+', help='Number of feature maps for each block. Default: [16, 32, 64]')
-    parser.add_argument('--channels_bottleneck', type=int, help='Number of channels in bottleneck layer of model. Default: 128')
-    parser.add_argument('--skips', type=lambda s: [parse_bool(val) for val in s.split()], 
-                        help='Whether to use skip connections on each block, specified as a space-separated list of booleans (True or False)'
-                        'Default: True True True')
+    parser.add_argument('--dim', type=int, help='Number of feature maps in the first block. Default: 64')
+    parser.add_argument('--dim_mults', type=int, nargs='+', help='Multiplicative factors for the number of feature maps in each block. Default: [1, 2, 4, 8]')
     parser.add_argument('--condition_by_mult', type=parse_bool, help='Whether to condition by multiplication or concatenation. Default: False')
     
     # Noising parameters
@@ -67,6 +64,7 @@ def preprocess_cmd_args() -> argparse.Namespace:
     
     # Training loop
     # -------------:
+    parser.add_argument('--objective', type=str, help='Objective to use for training. Default: gaussian')
     parser.add_argument('--batch_size', type=int, help='Batch size for training. Default: 4')
     parser.add_argument('--gradient_accumulate_every', type=int, help='Number of steps to accumulate gradients over. Default: 1')
     parser.add_argument('--train_num_steps', type=int, help='Total number of training steps. Default: 1000000') 
@@ -101,6 +99,9 @@ def get_configuration_arguments() -> tuple[dict, dict, dict]:
 
     train_config = load_config(args.train_config_file)
     train_config = rewrite_config_arguments(train_config, args, 'train')
+    
+    model_config['ddpm_unet'] = rewrite_config_arguments(
+        model_config['ddpm_unet'], args, 'model, ddpm_unet')
     
     train_config['ddpm'] = rewrite_config_arguments(
         train_config['ddpm'], args, 'train, ddpm')
@@ -233,6 +234,7 @@ if __name__ == '__main__':
     dim_mults           = model_config['ddpm_unet']['dim_mults']
     channels            = model_config['ddpm_unet']['channels']
     
+    objective           = train_config[train_type]['objective']
     timesteps           = train_config[train_type]['timesteps']
     sampling_timesteps  = train_config[train_type]['sampling_timesteps']
     condition_by_mult   = train_config[train_type]['condition_by_mult']
@@ -251,7 +253,8 @@ if __name__ == '__main__':
     diffusion = ConditionalGaussianDiffusion(
         model,
         image_size=train_config[train_type]['image_size'][-1],
-        timesteps=timesteps,    # Range of steps in diffusion process
+        objective=objective,
+        timesteps=timesteps,
         sampling_timesteps = sampling_timesteps 
     )
 
@@ -269,9 +272,13 @@ if __name__ == '__main__':
     num_viz_samples             = train_config[train_type]['num_viz_samples']
     
     if accelerator.is_main_process:
+        print(f'Objective: {objective}')
         print(f'Minibatch size: {batch_size}')
         print(f'Effective batch size: {batch_size * gradient_accumulate_every}')
-    
+        print(f'num_validation_samples: {num_validation_samples}')
+        print(f'num_viz_samples: {num_viz_samples}')
+        print(f'Number of parameters of the model: {sum(p.numel() for p in diffusion.parameters()):,}')
+        
     trainer = CDDPMTrainer(
         diffusion,
         train_dataset=train_dataset,
