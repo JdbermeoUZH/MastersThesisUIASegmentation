@@ -13,10 +13,9 @@ from torchmetrics.functional.image import (
     multiscale_structural_similarity_index_measure
 )
 from torchmetrics.functional.regression import mean_absolute_error, mean_squared_error
-from denoising_diffusion_pytorch import Unet, GaussianDiffusion
 
 from tta_uia_segmentation.src.dataset import DatasetInMemoryForDDPM 
-from tta_uia_segmentation.src.models import ConditionalGaussianDiffusion
+from tta_uia_segmentation.src.models import ConditionalGaussianDiffusion, ConditionalUnet
 
 
 metrics_to_log_default = {
@@ -84,23 +83,25 @@ def load_ddpm_from_configs_and_cpt(
     train_ddpm_cfg: dict,
     model_ddpm_cfg: dict,
     cpt_fp: str,
+    n_classes: int,
     device: torch.device) -> ConditionalGaussianDiffusion:
 
     timesteps           = train_ddpm_cfg['timesteps']
     sampling_timesteps  = train_ddpm_cfg['sampling_timesteps']
 
     # Model definition
-    model = Unet(
-        dim = model_ddpm_cfg['dim'],
-        dim_mults = model_ddpm_cfg['dim_mults'],   
-        flash_attn = True,
-        channels=model_ddpm_cfg['channels'], 
-        self_condition=True,
+    model = ConditionalUnet(
+        dim=model_ddpm_cfg['dim'],
+        dim_mults=model_ddpm_cfg['dim_mults'],
+        n_classes=n_classes,   
+        flash_attn=True,
+        image_channels=model_ddpm_cfg['channels'], 
+        condition_by_concat=train_ddpm_cfg['condition_by_mult']
     ).to(device)
 
     ddpm = ConditionalGaussianDiffusion(
         model,
-        image_size = 256,
+        image_size = train_ddpm_cfg['image_size'][-1],
         timesteps = timesteps,    # Range of steps in diffusion process
         sampling_timesteps = sampling_timesteps 
     ).to(device)

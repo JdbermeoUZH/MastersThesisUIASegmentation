@@ -97,6 +97,7 @@ ddpm:
   rescale_factor:               [1, 1, 1]
   condition_by_mult:            False
 
+  objective:                    pred_v   # default is pred_v
   learning_rate:                8e-5      # 1e-4 in the constructor
   train_num_steps:              50000      # 7,000,000 or 100,000 in the original script
   timesteps:                    1000      # Range of noising steps to sample from during training. 1000 in the constructor  

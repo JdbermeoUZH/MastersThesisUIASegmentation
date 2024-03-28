@@ -86,7 +86,7 @@ dae_and_ddpm:
 
   use_ddpm_after_step: null # 500
   use_ddpm_after_dice: 0.5 # 0.5
-  warmup_steps_for_ddpm_loss: 100
+  warmup_steps_for_ddpm_loss: null # 100
   minibatch_size_ddpm: 2
   frac_vol_diffusion_tta: 1.0
   min_t_diffusion_tta: 0
@@ -100,7 +100,7 @@ dae_and_ddpm:
   accumulate_over_volume: True
   batch_size: 16
   dataset_repetition: 2
-  num_steps: 2700  # 500 for brain, 2700 for wmh
+  num_steps: 11000  # 500 for brain, 2700 for wmh
   update_dae_output_every: 135 # 68 on the final results params reported by nico
   calculate_dice_every: 135  # 25 for brain, 135 for wmh (nuhs, umc, vu), on the documented repo
   alpha: 1.0

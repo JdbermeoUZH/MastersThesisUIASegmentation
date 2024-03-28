@@ -28,9 +28,6 @@ class TTADAEandDDPM(TTADAE):
         - DDPM sample guidance
             - Sampled volumes are not in the same intensity range and normalized volumes
             - We should normalize sampled volumes to the same range as the normalized images
-        
-        - DDPM loss
-            - Use importance sampling to make the loss function less noisy
             
         - DAE Loss  
             - Determine if there is a gap between this script and the DAE script
@@ -67,8 +64,9 @@ class TTADAEandDDPM(TTADAE):
         self.ddpm_loss_adaptive_beta = ddpm_loss_adaptive_beta_init
         self.ddpm_sample_guidance_eta = ddpm_sample_guidance_eta
         
-        self.x_norm_out_grad_dae_loss = 0
-        self.x_norm_out_grad_ddpm_loss = 0
+        self.x_norm_out_grad_dae_loss = 0       # Gradient of the last layer of the normalizer wrt the DAE loss
+        self.x_norm_out_grad_ddpm_loss = 0      # Gradient of the last layer of the normalizer wrt the DDPM loss
+        self.x_norm_out_grad_old = 0            # Previous full gradient of the last layer of the normalizer        
         
         self.minibatch_size_ddpm = minibatch_size_ddpm
         self.frac_vol_diffusion_tta = frac_vol_diffusion_tta
@@ -219,6 +217,7 @@ class TTADAEandDDPM(TTADAE):
                             y_dae_or_atlas.append(y_dae_mb)
                         y_dae_or_atlas = torch.vstack(y_dae_or_atlas)
                         y_dae_or_atlas = y_dae_or_atlas.permute(1, 0, 2, 3).unsqueeze(0) # make NCDHW
+                        y_dae_or_atlas = y_dae_or_atlas[:, :, 0:self.atlas.shape[2]] # To handle dataset repetitions of the atlas
                     y_dae_or_atlas = y_dae_or_atlas.detach().cpu()    
                 else:
                     y_dae_or_atlas = None
@@ -282,12 +281,12 @@ class TTADAEandDDPM(TTADAE):
             # Define parameters related to the DDPM loss for the current step
             # :============================================================:
             # Sample on which specific batches of images to use the DDPM loss for this step
-            b_i_for_diffusion_loss = np.random.choice(
+            b_i_for_ddpm_loss = np.random.choice(
                 range(len(volume_dataloader)), num_batches_for_ddpm_loss, replace=False)
             
             # Reweigh factor for the ddpm loss to take into account how many 
             #  times less it is used than the dae loss or if averaged over entire volume
-            ddpm_reweigh_factor = (1 / len(b_i_for_diffusion_loss)) * \
+            ddpm_reweigh_factor = (1 / len(b_i_for_ddpm_loss)) * \
                 (1 if accumulate_over_volume else len(volume_dataloader))  
 
             warmup_factor = warmup_steps_for_ddpm_loss.pop() \
@@ -295,7 +294,7 @@ class TTADAEandDDPM(TTADAE):
             
             assert 1 >= warmup_factor >= 0, 'Warmup factor must be between 0 and 1'
                         
-            ddpm_reweigh_factor = warmup_factor * ddpm_reweigh_factor
+            ddpm_reweigh_factor *= warmup_factor 
             
             # Define which volumes to use for the DDPM sample guidance (if any at all)
             # :============================================================:
@@ -323,6 +322,7 @@ class TTADAEandDDPM(TTADAE):
             if accumulate_over_volume:
                 self.x_norm_out_grad_dae_loss = 0
                 self.x_norm_out_grad_ddpm_loss = 0
+                self.x_norm_out_grad_old = 0
                 self.optimizer.zero_grad()
 
             if const_aug_per_volume:
@@ -335,6 +335,7 @@ class TTADAEandDDPM(TTADAE):
                 if not accumulate_over_volume:
                     self.x_norm_out_grad_dae_loss = 0
                     self.x_norm_out_grad_ddpm_loss = 0
+                    self.x_norm_out_grad_old = 0
                     self.optimizer.zero_grad()
 
                 x = x.to(device).float()
@@ -361,11 +362,12 @@ class TTADAEandDDPM(TTADAE):
                     dae_loss.backward(retain_graph=True)
                     
                     # Get the gradient for the last layer of the normalizer
-                    self.x_norm_out_grad_dae_loss += self.norm.layers[-1].weight.grad.detach().cpu()
+                    self.x_norm_out_grad_dae_loss += self.norm.layers[-1].weight.grad.detach().cpu() - self.x_norm_out_grad_old 
+                    self.x_norm_out_grad_old = self.x_norm_out_grad_old + self.x_norm_out_grad_dae_loss
                     
-                 # DDPM loss: Calculate gradients from the noise estimation loss
+                # DDPM loss: Calculate gradients from the noise estimation loss
                 # :============================================================:
-                calculate_ddpm_loss_gradients = b_i in b_i_for_diffusion_loss and \
+                calculate_ddpm_loss_gradients = b_i in b_i_for_ddpm_loss and \
                     self.ddpm_loss_beta > 0 and self.use_ddpm_loss
                     
                 if calculate_ddpm_loss_gradients:
@@ -398,7 +400,7 @@ class TTADAEandDDPM(TTADAE):
                     ddpm_loss = self.calculate_ddpm_gradients(
                         img,
                         x_cond,
-                        ddpm_reweight_factor=ddpm_reweigh_factor * self.ddpm_loss_adaptive_beta,
+                        ddpm_reweigh_factor=ddpm_reweigh_factor,
                         max_int_norm_imgs=running_max,
                         min_int_norm_imgs=running_min
                     )
@@ -425,7 +427,7 @@ class TTADAEandDDPM(TTADAE):
                     ddpm_guidance_loss.backward()
                                     
                 if not accumulate_over_volume:
-                    if self.use_ddpm_loss: self.update_ddpm_loss_adaptive_beta(index, step)
+                    if self.use_ddpm_loss and self.dae_loss_alpha > 0: self.update_ddpm_loss_adaptive_beta(index, step)
                     self.optimizer.step()              
 
                 with torch.no_grad():
@@ -442,7 +444,7 @@ class TTADAEandDDPM(TTADAE):
             running_min = m * running_min + (1 - m) * step_min  
 
             if accumulate_over_volume:
-                if self.use_ddpm_loss: self.update_ddpm_loss_adaptive_beta(index, step)
+                if self.use_ddpm_loss and self.dae_loss_alpha > 0: self.update_ddpm_loss_adaptive_beta(index, step)
                 self.optimizer.step()
 
             step_dae_loss = (step_dae_loss / n_samples) if n_samples > 0 else 0
@@ -490,7 +492,7 @@ class TTADAEandDDPM(TTADAE):
         self,
         img,
         seg,
-        ddpm_reweight_factor: float = 1,
+        ddpm_reweigh_factor: float = 1,
         min_int_norm_imgs: float = 0,
         max_int_norm_imgs: float = 1,
         min_max_tolerance: float = 2e-1
@@ -521,26 +523,28 @@ class TTADAEandDDPM(TTADAE):
         ddpm_loss_value = 0
         minibatch_size = self.minibatch_size_ddpm
         num_minibatches = np.ceil(img.shape[0] / minibatch_size)
-        ddpm_reweight_factor = ddpm_reweight_factor * (1 / num_minibatches)  
+        ddpm_reweigh_factor = ddpm_reweigh_factor * (1 / num_minibatches)  
         
-        # Multiply the reweight factor by the beta and adaptive beta
-        ddpm_reweight_factor *= self.ddpm_loss_beta * self.ddpm_loss_adaptive_beta
+        # Multiply the reweight factor by the loss' beta and the adaptive beta
+        ddpm_reweigh_factor *= self.ddpm_loss_beta * self.ddpm_loss_adaptive_beta 
         
         for i in range(0, img.shape[0], minibatch_size):
             img_batch = img[i: i + minibatch_size]
             seg_batch = seg[i: i + minibatch_size]
-            ddpm_loss = ddpm_reweight_factor * self.ddpm(img_batch, seg_batch)
+            ddpm_loss = ddpm_reweigh_factor * self.ddpm(img_batch, seg_batch)
             
             # Do backward retaining the graph except for the last step
             if i + minibatch_size < img.shape[0]:
                 ddpm_loss.backward(retain_graph=True)
             else:
-                ddpm_loss.backward()
+                ddpm_loss.backward(retain_graph=True)
             
             ddpm_loss_value += ddpm_loss.detach()
                 
         self.x_norm_out_grad_ddpm_loss += self.norm.layers[-1].weight.grad.detach().cpu() - \
-            self.x_norm_out_grad_dae_loss
+            self.x_norm_out_grad_old 
+        
+        self.x_norm_out_grad_old = self.x_norm_out_grad_old + self.x_norm_out_grad_ddpm_loss
                             
         return ddpm_loss_value
     
@@ -555,6 +559,11 @@ class TTADAEandDDPM(TTADAE):
     def reset_initial_state(self, state_dict: dict) -> None:
         super().reset_initial_state(state_dict)
         
+        self.ddpm_loss_adaptive_beta = 1.0
+        self.x_norm_out_grad_dae_loss = 0
+        self.x_norm_out_grad_ddpm_loss = 0
+        self.x_norm_out_grad_old = 0
+        
         self.use_ddpm_loss = self.use_ddpm_after_dice is None and \
             self.use_ddpm_after_step is None
                 
@@ -564,9 +573,9 @@ class TTADAEandDDPM(TTADAE):
     def update_ddpm_loss_adaptive_beta(self, index, step):
         norm_x_norm_out_grad_dae_loss = torch.norm(self.x_norm_out_grad_dae_loss)
         norm_x_norm_out_grad_ddpm_loss = torch.norm(self.x_norm_out_grad_ddpm_loss)
-        λ = torch.norm(norm_x_norm_out_grad_dae_loss) / (torch.norm(norm_x_norm_out_grad_ddpm_loss) + 1e-4)
+        λ = norm_x_norm_out_grad_dae_loss / (norm_x_norm_out_grad_ddpm_loss + 1e-7)
         λ = torch.clamp(λ, 0, 1e4).detach()
-        self.ddpm_loss_adaptive_beta = 0.8 * λ
+        self.ddpm_loss_adaptive_beta *= 0.8 * λ 
         
         if self.wandb_log:
             wandb.log({

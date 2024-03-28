@@ -59,9 +59,7 @@ def check_btw_minus_1_plus_1(*args: torch.Tensor):
 class CDDPMTrainer(Trainer):
 
     """
-       TODO:
-        - Check there are no mistakes in -1 to 1 normalization of the labels due to
-            the label tensor usually being uint8     
+
     """
     def __init__(
         self,
@@ -298,7 +296,6 @@ class CDDPMTrainer(Trainer):
                 for metric_name, metric_func in self.metrics_to_log.items():
                     metric_cum[metric_name] += metric_func(generated_img, img_gt).item()
                     
-                
         all_images = torch.cat(samples_imgs, dim = 0)
 
         all_images_fn = f'{prefix}-sample-m{milestone}-step-{self.step}-img_gt_seg_gt_gen_img.png'

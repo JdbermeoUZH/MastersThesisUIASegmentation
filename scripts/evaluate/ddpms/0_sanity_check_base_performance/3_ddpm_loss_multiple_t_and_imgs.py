@@ -18,19 +18,20 @@ sys.path.append(os.path.normpath(os.path.join(
     os.path.dirname(__file__), '..', '..', '..', '..')))
 
 from tta_uia_segmentation.src.dataset.dataset_in_memory_for_ddpm import get_datasets
-
+from tta_uia_segmentation.src.models.io import load_norm_from_configs_and_cpt
+from tta_uia_segmentation.src.utils.io import load_config
 from utils import load_ddpm_from_configs_and_cpt
 
 
 # Default args
 # :===============================================================:
-out_dir                 = '/scratch_net/biwidl319/jbermeo/results/ddpm/sanity_checks/'
+out_dir                 = '/scratch_net/biwidl319/jbermeo/results/wmh/ddpm/'
 exp_name                = 'default_exp_name'
-params_fp               = '/scratch_net/biwidl319/jbermeo/logs/brain/ddpm/not_one_hot_64_base_filters_with_aug_except_noise/params.yaml'
-cpt_fp                  = '/scratch_net/biwidl319/jbermeo/logs/brain/ddpm/not_one_hot_64_base_filters_with_aug_except_noise/model-9.pt'
+params_fp               = '/scratch_net/biwidl319/jbermeo/logs/wmh/ddpm/normalized_imgs/no_bg_supp_3x3_conv/3_19/batch_size_128_cond_by_concat_multi_gpu/params.yaml'
+cpt_fp                  = '/scratch_net/biwidl319/jbermeo/logs/wmh/ddpm/normalized_imgs/no_bg_supp_3x3_conv/3_19/batch_size_128_cond_by_concat_multi_gpu/model-19.pt'
 batch_size              = 4   
 frac_sample_range       = (0.0, 1.0)
-dataset                 = 'hcp_t2'
+dataset                 = 'umc'
 seed                    = 1234 
 device                  = 'cpu' if not  torch.cuda.is_available() else 'cuda'
 split                   = 'train'
@@ -84,14 +85,27 @@ if __name__ == '__main__':
     run_params = yaml.safe_load(open(args.params_fp, 'r'))
     dataset_params = run_params['dataset'][args.dataset]
     training_params = run_params['training']['ddpm']
-        
+    
+    # Load the normalization model 
+    norm_dir = training_params['norm_dir']
+    params_norm = load_config(os.path.join(training_params['norm_dir'], 'params.yaml'))
+
+    model_params_norm = params_norm['model']['normalization_2D']
+    train_params_norm = params_norm['training']
+    
+    norm = load_norm_from_configs_and_cpt(
+        model_params_norm=model_params_norm,
+        cpt_fp=os.path.join(norm_dir, train_params_norm['checkpoint_best']),
+        device=device    
+    )     
+    
     # Load the data
     # :===============================================================:
     (dataset,) = get_datasets(
-        norm            = None,
+        norm            = norm,
         paths           = dataset_params['paths_processed'],
-        paths_original  = dataset_params['paths_original'],
-        paths_normalized_h5 = dataset_params['paths_normalized_with_nn'],
+        paths_original  = dataset_params['paths_original'], 
+        paths_normalized_h5 = None,
         splits          = [args.split],
         image_size      = training_params['image_size'],
         resolution_proc = dataset_params['resolution_proc'],
@@ -115,6 +129,7 @@ if __name__ == '__main__':
     ddpm = load_ddpm_from_configs_and_cpt(
         train_ddpm_cfg=run_params['training']['ddpm'],
         model_ddpm_cfg=run_params['model']['ddpm_unet'],
+        n_classes=dataset_params['n_classes'],  
         cpt_fp=args.cpt_fp, 
         device=device
         )
@@ -133,7 +148,7 @@ if __name__ == '__main__':
         img, _ = dataset[dataset.vol_and_z_idx_to_idx(vol_idx, slice_idx)]    
         img = img.to(device)
         
-        # Iterate over volumes and calculate the denoising performanc     
+        # Iterate over volumes and calculate the denoising performance     
         # Get the mismatching images
         # :===============================================================:
         mismatch_ds = dataset.get_related_images(

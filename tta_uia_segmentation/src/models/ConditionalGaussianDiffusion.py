@@ -72,6 +72,14 @@ class ConditionalGaussianDiffusion(GaussianDiffusion):
         img = self.normalize(img)
         cond_img = self.normalize(cond_img.type(torch.int8))  
         
+        if img.max() > 1 or img.min() < -1:
+            print('Warning: img is not normalized between -1 and 1'
+                  f'max_value: {img.max()}, min_value: {img.min()}')
+        
+        if cond_img.max() > 1 or cond_img.min() < -1:
+            print('Warning: cond_img is not normalized between -1 and 1'
+                  f'torch.unique(cond_img): {torch.unique(cond_img)}')
+        
         return self.p_losses_conditioned_on_img(img, t, cond_img, *args, **kwargs)      
     
     @torch.inference_mode()

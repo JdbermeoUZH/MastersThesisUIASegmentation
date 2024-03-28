@@ -407,7 +407,7 @@ if __name__ == '__main__':
             logdir = logdir,
         )
         
-        dice_scores_wrt_gt[num_steps] = dice_scores[i, :].mean().item() 
+        dice_scores_wrt_gt[num_steps] = dice_scores[i, 1:].mean().item() 
         
         dice_per_vol[i] = dice_scores_wrt_gt
         
@@ -415,7 +415,7 @@ if __name__ == '__main__':
         dice_per_vol_df = pd.DataFrame(dice_per_vol).add_prefix('vol_')
         dice_per_vol_df.to_csv(os.path.join(
             logdir, 
-            f'dice_scores_{dataset}_per_step_'
+            f'dice_scores_fg_{dataset}_per_step_'
             f'start_vol_{start_idx}_stop_vol_{stop_idx}.csv')
         )
                 
