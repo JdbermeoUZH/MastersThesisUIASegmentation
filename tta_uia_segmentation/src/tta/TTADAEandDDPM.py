@@ -61,6 +61,7 @@ class TTADAEandDDPM(TTADAE):
         
         self.dae_loss_alpha = dae_loss_alpha
         self.ddpm_loss_beta = ddpm_loss_beta
+        self.ddpm_loss_adaptive_beta_init = ddpm_loss_adaptive_beta_init
         self.ddpm_loss_adaptive_beta = ddpm_loss_adaptive_beta_init
         self.ddpm_sample_guidance_eta = ddpm_sample_guidance_eta
         
@@ -359,7 +360,7 @@ class TTADAEandDDPM(TTADAE):
                     if accumulate_over_volume:
                         dae_loss = dae_loss / len(volume_dataloader)
         
-                    dae_loss.backward(retain_graph=True)
+                    dae_loss.backward()
                     
                     # Get the gradient for the last layer of the normalizer
                     self.x_norm_out_grad_dae_loss += self.norm.layers[-1].weight.grad.detach().cpu() - self.x_norm_out_grad_old 
@@ -537,7 +538,7 @@ class TTADAEandDDPM(TTADAE):
             if i + minibatch_size < img.shape[0]:
                 ddpm_loss.backward(retain_graph=True)
             else:
-                ddpm_loss.backward(retain_graph=True)
+                ddpm_loss.backward()
             
             ddpm_loss_value += ddpm_loss.detach()
                 
@@ -559,7 +560,7 @@ class TTADAEandDDPM(TTADAE):
     def reset_initial_state(self, state_dict: dict) -> None:
         super().reset_initial_state(state_dict)
         
-        self.ddpm_loss_adaptive_beta = 1.0
+        self.ddpm_loss_adaptive_beta = self.ddpm_loss_adaptive_beta_init
         self.x_norm_out_grad_dae_loss = 0
         self.x_norm_out_grad_ddpm_loss = 0
         self.x_norm_out_grad_old = 0
@@ -574,8 +575,9 @@ class TTADAEandDDPM(TTADAE):
         norm_x_norm_out_grad_dae_loss = torch.norm(self.x_norm_out_grad_dae_loss)
         norm_x_norm_out_grad_ddpm_loss = torch.norm(self.x_norm_out_grad_ddpm_loss)
         λ = norm_x_norm_out_grad_dae_loss / (norm_x_norm_out_grad_ddpm_loss + 1e-7)
+        λ *= self.ddpm_loss_adaptive_beta # To remove the effect the previous beta had on the ddpm loss
         λ = torch.clamp(λ, 0, 1e4).detach()
-        self.ddpm_loss_adaptive_beta *= 0.8 * λ 
+        self.ddpm_loss_adaptive_beta = 0.8 * λ 
         
         if self.wandb_log:
             wandb.log({

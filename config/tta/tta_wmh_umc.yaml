@@ -92,7 +92,7 @@ dae_and_ddpm:
   min_t_diffusion_tta: 0
   max_t_diffusion_tta: 999
   sampling_timesteps: 100
-  min_max_int_norm_imgs: [-0.6761907935142517, 1.2947211265563965]
+  min_max_int_norm_imgs: [0.32381030917167664, 1.2784711122512817]
   use_x_norm_for_ddpm_loss: True
   use_y_pred_for_ddpm_loss: True
   use_x_cond_gt: False    # Only true for debugging

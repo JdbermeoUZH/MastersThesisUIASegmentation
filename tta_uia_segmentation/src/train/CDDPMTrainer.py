@@ -281,7 +281,7 @@ class CDDPMTrainer(Trainer):
             assert seg_gt.max() == 1, 'seg_gt should be one-hot encoded'
             assert seg_gt.min() == 0, 'seg_gt should be one-hot encoded'
             n_classes = seg_gt.shape[1]
-            seg_gt = onehot_to_class(seg_gt)
+            seg_gt = onehot_to_class(seg_gt.type(torch.int8))
             seg_gt = seg_gt / (n_classes - 1)
             assert seg_gt.shape[1] == 1, 'seg_gt should be single channel'
             
@@ -300,7 +300,7 @@ class CDDPMTrainer(Trainer):
 
         all_images_fn = f'{prefix}-sample-m{milestone}-step-{self.step}-img_gt_seg_gt_gen_img.png'
         utils.save_image(all_images, str(self.results_folder / all_images_fn), 
-                        nrow = int(math.sqrt(self.num_viz_samples)))
+                         nrow = int(math.sqrt(self.num_viz_samples)))
         
         # Log metrics and images in wandb
         if self.wandb_log:
