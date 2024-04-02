@@ -24,7 +24,7 @@ sys.path.append(os.path.normpath(os.path.join(
 from tta_uia_segmentation.src.tta import TTADAEandDDPM
 from tta_uia_segmentation.src.dataset.dataset_in_memory import get_datasets
 from tta_uia_segmentation.src.models.io import (
-    load_cddpm_from_configs_and_cpt,
+    load_icddpm_from_configs_and_cpt,
     load_norm_and_seg_from_configs_and_cpt,
     load_dae_and_atlas_from_configs_and_cpt
 )
@@ -250,15 +250,14 @@ if __name__ == '__main__':
         device = device,
     )
 
-    # DDPM
-    ddpm = load_cddpm_from_configs_and_cpt(
+    # objects of the iDDPM
+    ddpm = load_icddpm_from_configs_and_cpt(
         train_ddpm_cfg           = train_params_ddpm,
         model_ddpm_cfg           = model_params_ddpm,
         n_classes                = n_classes,
+        image_channels           = dataset_config[dataset]['image_channels'],
         cpt_fp                   = os.path.join(ddpm_dir, tta_config[tta_mode]['cpt_fn']),
-        img_size                 = dataset_config[dataset]['dim'][-1],
         device                   = device,
-        sampling_timesteps       = tta_config[tta_mode]['sampling_timesteps'],
     )
    
     # Define the TTADAE object that does the test time adapatation
@@ -280,8 +279,6 @@ if __name__ == '__main__':
     # DDPM-TTA params    
     minibatch_size_ddpm         = tta_config[tta_mode]['minibatch_size_ddpm']
     frac_vol_diffusion_tta      = tta_config[tta_mode]['frac_vol_diffusion_tta']
-    min_t_diffusion_tta         = tta_config[tta_mode]['min_t_diffusion_tta']
-    max_t_diffusion_tta         = tta_config[tta_mode]['max_t_diffusion_tta']
     sampling_timesteps          = tta_config[tta_mode]['sampling_timesteps']
     min_max_int_norm_imgs       = tta_config[tta_mode]['min_max_int_norm_imgs']
     use_x_norm_for_ddpm_loss    = tta_config[tta_mode]['use_x_norm_for_ddpm_loss']
@@ -311,8 +308,6 @@ if __name__ == '__main__':
         ddpm_loss_beta          = ddpm_loss_beta,
         minibatch_size_ddpm     = minibatch_size_ddpm,
         frac_vol_diffusion_tta  = frac_vol_diffusion_tta,
-        min_t_diffusion_tta     = min_t_diffusion_tta,
-        max_t_diffusion_tta     = max_t_diffusion_tta,
         ddpm_sample_guidance_eta=ddpm_sample_guidance_eta,
         sampling_timesteps      = sampling_timesteps,
         wandb_log               = wandb_log,

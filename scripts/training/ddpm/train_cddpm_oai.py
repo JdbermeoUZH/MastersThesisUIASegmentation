@@ -12,7 +12,6 @@ from improved_diffusion import dist_util, logger
 from improved_diffusion.resample import create_named_schedule_sampler
 from improved_diffusion.script_util import (
     create_gaussian_diffusion,
-    create_gaussian_diffusion,
     args_to_dict,
     add_dict_to_argparser,
 )
@@ -25,7 +24,8 @@ from tta_uia_segmentation.src.dataset.dataset_in_memory_for_ddpm import get_data
 from tta_uia_segmentation.src.train import OAICDDPMTrainer
 from tta_uia_segmentation.src.utils.io import (
     load_config, rewrite_config_arguments, dump_config, print_config)
-from tta_uia_segmentation.src.models.UNetModelOAI import create_model_conditioned_on_seg_mask
+from tta_uia_segmentation.src.models.ConditionalGaussianDiffusionOAI import diffusion_defaults
+from tta_uia_segmentation.src.models.UNetModelOAI import create_model_conditioned_on_seg_mask, model_defaults
 #from tta_uia_segmentation.src.models.ConditionalGaussianDiffusionOAI import create_gaussian_diffusion
 from tta_uia_segmentation.src.models.io import load_norm_from_configs_and_cpt
 from tta_uia_segmentation.src.utils.logging import setup_wandb
@@ -351,29 +351,6 @@ def get_default_params_original_script() -> dict:
     defaults.update(diffusion_defaults())
     return defaults
 
-
-def model_defaults():
-    """
-    Defaults for image training.
-    """
-    return dict(
-        num_heads_upsample=-1,
-        attention_resolutions="16,8",
-        use_checkpoint=False,
-        use_scale_shift_norm=True,
-    )
-
-
-def diffusion_defaults():
-    """
-    Defaults for image training.
-    """
-    return dict(
-        sigma_small=False,
-        predict_xstart=False,
-        rescale_timesteps=True,
-        rescale_learned_sigmas=True,
-    )
 
 if __name__ == "__main__":
     main()

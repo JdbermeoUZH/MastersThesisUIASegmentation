@@ -5,6 +5,18 @@ import torch
 from improved_diffusion.unet import UNetModel
 
 
+def model_defaults():
+    """
+    Defaults for image training.
+    """
+    return dict(
+        num_heads_upsample=-1,
+        attention_resolutions="16,8",
+        use_checkpoint=False,
+        use_scale_shift_norm=True,
+    )
+    
+
 def create_model_conditioned_on_seg_mask(
     image_size,
     image_channels: int,
