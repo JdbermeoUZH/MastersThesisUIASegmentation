@@ -1,6 +1,8 @@
 import os
-from typing import Optional, Union
 from tqdm import tqdm
+from collections import defaultdict
+from typing import Optional, Union
+
 
 import wandb
 import torch
@@ -21,6 +23,15 @@ from tta_uia_segmentation.src.dataset import DatasetInMemory, utils as du
 #ssim = SSIM(data_range=1.0, channel=1, spatial_dims=3)
 #ssim_loss = lambda x, y: 0.5 * (1 - ssim(x, y))
 ssim_loss  = SSIM3DLoss(window_size=11, reduction='mean', max_val=1.0)
+
+
+def subtract_gradients_dicts(gradients_dict_1: dict, gradients_dict_2: dict) -> dict:
+        gradients_diff = {}
+        for param_name in gradients_dict_1.keys():
+            gradients_diff[param_name] = gradients_dict_1[param_name] - gradients_dict_2[param_name]
+        
+        return gradients_diff    
+
 
 class TTADAEandDDPM(TTADAE):
     """
@@ -65,9 +76,9 @@ class TTADAEandDDPM(TTADAE):
         self.ddpm_loss_adaptive_beta = ddpm_loss_adaptive_beta_init
         self.ddpm_sample_guidance_eta = ddpm_sample_guidance_eta
         
-        self.x_norm_out_grad_dae_loss = 0       # Gradient of the last layer of the normalizer wrt the DAE loss
-        self.x_norm_out_grad_ddpm_loss = 0      # Gradient of the last layer of the normalizer wrt the DDPM loss
-        self.x_norm_out_grad_old = 0            # Previous full gradient of the last layer of the normalizer        
+        self.x_norm_grads_dae_loss = 0       # Gradient of the last layer of the normalizer wrt the DAE loss
+        self.x_norm_grads_ddpm_loss = 0      # Gradient of the last layer of the normalizer wrt the DDPM loss
+        self.x_norm_grads = 0            # Previous full gradient of the last layer of the normalizer        
         
         self.minibatch_size_ddpm = minibatch_size_ddpm
         self.frac_vol_diffusion_tta = frac_vol_diffusion_tta
@@ -321,10 +332,9 @@ class TTADAEandDDPM(TTADAE):
             volume_dataset.dataset.set_augmentation(True)
 
             if accumulate_over_volume:
-                self.x_norm_out_grad_dae_loss = 0
-                self.x_norm_out_grad_ddpm_loss = 0
-                self.x_norm_out_grad_old = 0
                 self.optimizer.zero_grad()
+                self.x_norm_grads_dae_loss = defaultdict(int)
+                self.x_norm_grads_ddpm_loss = defaultdict(int)
 
             if const_aug_per_volume:
                 volume_dataset.dataset.set_seed(get_seed())
@@ -334,10 +344,9 @@ class TTADAEandDDPM(TTADAE):
             for b_i, ((x, y_gt,_,_, bg_mask), (y_pl,), (x_sampled,)) in enumerate(zip(volume_dataloader, label_dataloader, sampled_vol_dl)):
                             
                 if not accumulate_over_volume:
-                    self.x_norm_out_grad_dae_loss = 0
-                    self.x_norm_out_grad_ddpm_loss = 0
-                    self.x_norm_out_grad_old = 0
                     self.optimizer.zero_grad()
+                    self.x_norm_grads_dae_loss = defaultdict(int)
+                    self.x_norm_grads_ddpm_loss = defaultdict(int)
 
                 x = x.to(device).float()
                 y_pl = y_pl.to(device)
@@ -363,8 +372,8 @@ class TTADAEandDDPM(TTADAE):
                     dae_loss.backward()
                     
                     # Get the gradient for the last layer of the normalizer
-                    self.x_norm_out_grad_dae_loss += self.norm.layers[-1].weight.grad.detach().cpu() - self.x_norm_out_grad_old 
-                    self.x_norm_out_grad_old = self.x_norm_out_grad_old + self.x_norm_out_grad_dae_loss
+                    self.x_norm_grads = self._get_gradients_x_norm()
+                    self.x_norm_grads_dae_loss = subtract_gradients_dicts(self.x_norm_grads, self.x_norm_grads_ddpm_loss) 
                     
                 # DDPM loss: Calculate gradients from the noise estimation loss
                 # :============================================================:
@@ -398,7 +407,7 @@ class TTADAEandDDPM(TTADAE):
                         # Uses the pseudo label for the DDPM loss
                         x_cond = y_pl
                     
-                    ddpm_loss = self.calculate_ddpm_gradients(
+                    ddpm_loss = self._calculate_ddpm_gradients(
                         img,
                         x_cond,
                         ddpm_reweigh_factor=ddpm_reweigh_factor,
@@ -428,14 +437,18 @@ class TTADAEandDDPM(TTADAE):
                     ddpm_guidance_loss.backward()
                                     
                 if not accumulate_over_volume:
-                    if self.use_ddpm_loss and self.dae_loss_alpha > 0: self.update_ddpm_loss_adaptive_beta(index, step)
-                    self.optimizer.step()              
+                    self._take_optimize_step(index, step)              
 
                 with torch.no_grad():
                     step_dae_loss += (dae_loss.detach() * x.shape[0]).item() \
-                        if self.dae_loss_alpha > 0 else 0               
-                    step_ddpm_loss += (ddpm_loss.detach() * x.shape[0]).item() \
-                        if calculate_ddpm_loss_gradients else 0 
+                        if self.dae_loss_alpha > 0 else 0             
+                          
+                    mini_batch_ddpm_loss = ddpm_loss.detach() * x.shape[0] \
+                        if calculate_ddpm_loss_gradients else 0
+                    mini_batch_ddpm_loss *= self.ddpm_loss_adaptive_beta if not accumulate_over_volume else 1
+                    
+                    step_ddpm_loss += mini_batch_ddpm_loss 
+                    
                     step_ddpm_guidance_loss += (ddpm_guidance_loss.detach() * x.shape[0]).item() \
                         if self.use_ddpm_sample_guidance else 0
                                               
@@ -445,12 +458,15 @@ class TTADAEandDDPM(TTADAE):
             running_min = m * running_min + (1 - m) * step_min  
 
             if accumulate_over_volume:
-                if self.use_ddpm_loss and self.dae_loss_alpha > 0: self.update_ddpm_loss_adaptive_beta(index, step)
-                self.optimizer.step()
+                self._take_optimize_step(index, step)
 
             step_dae_loss = (step_dae_loss / n_samples) if n_samples > 0 else 0
+            
             step_ddpm_loss = (step_ddpm_loss / n_samples_diffusion) if n_samples_diffusion > 0 else 0
+            step_ddpm_loss *= self.ddpm_loss_adaptive_beta if accumulate_over_volume else 1
+            
             step_ddpm_guidance_loss = (step_ddpm_guidance_loss / n_samples) if n_samples > 0 else 0
+            
             step_tta_loss = step_dae_loss + step_ddpm_loss + step_ddpm_guidance_loss
             
             self.tta_losses.append(step_tta_loss)
@@ -489,7 +505,7 @@ class TTADAEandDDPM(TTADAE):
 
         return self.norm_dict, self.metrics_best, dice_scores
     
-    def calculate_ddpm_gradients(
+    def _calculate_ddpm_gradients(
         self,
         img,
         seg,
@@ -526,8 +542,8 @@ class TTADAEandDDPM(TTADAE):
         num_minibatches = np.ceil(img.shape[0] / minibatch_size)
         ddpm_reweigh_factor = ddpm_reweigh_factor * (1 / num_minibatches)  
         
-        # Multiply the reweight factor by the loss' beta and the adaptive beta
-        ddpm_reweigh_factor *= self.ddpm_loss_beta * self.ddpm_loss_adaptive_beta 
+        # Multiply the reweight factor by the loss' beta 
+        ddpm_reweigh_factor *= self.ddpm_loss_beta  
         
         for i in range(0, img.shape[0], minibatch_size):
             img_batch = img[i: i + minibatch_size]
@@ -542,12 +558,28 @@ class TTADAEandDDPM(TTADAE):
             
             ddpm_loss_value += ddpm_loss.detach()
                 
-        self.x_norm_out_grad_ddpm_loss += self.norm.layers[-1].weight.grad.detach().cpu() - \
-            self.x_norm_out_grad_old 
-        
-        self.x_norm_out_grad_old = self.x_norm_out_grad_old + self.x_norm_out_grad_ddpm_loss
-                            
+        self.x_norm_grads = self._get_gradients_x_norm()
+        self.x_norm_grads_ddpm_loss = subtract_gradients_dicts(self.x_norm_grads, self.x_norm_grads_dae_loss)
+                                    
         return ddpm_loss_value
+    
+    def _take_optimize_step(self, index, step):
+        if self.use_ddpm_loss and self.dae_loss_alpha > 0: 
+            # Calculate adaptive beta for the DDPM loss
+            self._update_ddpm_loss_adaptive_beta(index, step)
+                    
+            # Replace all gradients in x_norm for grad_dae + beta * grad_ddpm
+            assert self.x_norm_grads_dae_loss.keys() == self.x_norm_grads_ddpm_loss.keys(), \
+                'Gradients for the DAE and DDPM losses must have the same keys'
+                
+            for name, param in self.norm.named_parameters():
+                if param.grad is not None:
+                    param.grad = self.x_norm_grads_dae_loss[name] + \
+                        self.ddpm_loss_adaptive_beta * self.x_norm_grads_ddpm_loss[name]
+                    
+        # Take optimizer step
+        self.optimizer.step()
+
     
     def _define_custom_wandb_metrics(self, ):
         wandb.define_metric(f'tta_step')
@@ -561,21 +593,30 @@ class TTADAEandDDPM(TTADAE):
         super().reset_initial_state(state_dict)
         
         self.ddpm_loss_adaptive_beta = self.ddpm_loss_adaptive_beta_init
-        self.x_norm_out_grad_dae_loss = 0
-        self.x_norm_out_grad_ddpm_loss = 0
-        self.x_norm_out_grad_old = 0
+        self.x_norm_grads_dae_loss = 0
+        self.x_norm_grads_ddpm_loss = 0
+        self.x_norm_grads = 0
         
         self.use_ddpm_loss = self.use_ddpm_after_dice is None and \
             self.use_ddpm_after_step is None
                 
         self.use_ddpm_sample_guidance = self.ddpm_sample_guidance_eta is not None and \
             self.ddpm_sample_guidance_eta > 0
+    
+    def _get_gradients_x_norm(self) -> dict:
+        gradients_dict = {}
+        for name, param in self.norm.named_parameters():
+            if param.grad is not None:
+                gradients_dict[name] = param.grad.clone().detach()  # Store gradients and detach to avoid memory leaks
+                
+        return gradients_dict
         
-    def update_ddpm_loss_adaptive_beta(self, index, step):
-        norm_x_norm_out_grad_dae_loss = torch.norm(self.x_norm_out_grad_dae_loss)
-        norm_x_norm_out_grad_ddpm_loss = torch.norm(self.x_norm_out_grad_ddpm_loss)
+    def _update_ddpm_loss_adaptive_beta(self, index, step):
+        # Get the name of the last layer
+        last_layer_name = [name for name, _ in self.norm.named_parameters() if 'weight' in name][-1]
+        norm_x_norm_out_grad_dae_loss = torch.norm(self.x_norm_grads_dae_loss[last_layer_name])
+        norm_x_norm_out_grad_ddpm_loss = torch.norm(self.x_norm_grads_ddpm_loss[last_layer_name])
         λ = norm_x_norm_out_grad_dae_loss / (norm_x_norm_out_grad_ddpm_loss + 1e-7)
-        λ *= self.ddpm_loss_adaptive_beta # To remove the effect the previous beta had on the ddpm loss
         λ = torch.clamp(λ, 0, 1e4).detach()
         self.ddpm_loss_adaptive_beta = 0.8 * λ 
         

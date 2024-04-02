@@ -83,6 +83,8 @@ def preprocess_cmd_args() -> argparse.Namespace:
     parser.add_argument('--seg_with_bg_supp', type=parse_bool, help='Whether to use background suppression for segmentation. Default: True')
     
     # DDPM params
+    parser.add_argument('--ddpm_dir', type=str, help='Path to directory where DDPM checkpoints are saved')
+    parser.add_argument('--cpt_fn', type=str, help='Name of checkpoint file to load for DDPM')
     parser.add_argument('--min_t_diffusion_tta', type=int, help='Minimum value for diffusion time. Default: 0')
     parser.add_argument('--max_t_diffusion_tta', type=int, help='Maximum value for diffusion time. Default: 1000')       
     parser.add_argument('--use_y_pred_for_ddpm_loss', type=parse_bool, help='Whether to use predicted segmentation as conditional for DDPM. Default: True')
