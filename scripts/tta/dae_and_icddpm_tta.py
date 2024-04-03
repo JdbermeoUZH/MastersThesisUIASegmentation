@@ -169,8 +169,8 @@ if __name__ == '__main__':
     train_params_seg        = params_seg['training']
     
     params_ddpm             = load_config(os.path.join(ddpm_dir, 'params.yaml'))
-    model_params_ddpm       = params_ddpm['model']['ddpm_unet']
-    train_params_ddpm       = params_ddpm['training']['ddpm']
+    model_params_ddpm       = params_ddpm['model']['ddpm_unet_oai']
+    train_params_ddpm       = params_ddpm['training']['ddpm_oai']
     
     params                  = { 
                                'datset': dataset_config,
@@ -251,14 +251,19 @@ if __name__ == '__main__':
     )
 
     # objects of the iDDPM
+    image_channels              = dataset_config[dataset]['image_channels']
+    sampling_timesteps          = tta_config[tta_mode]['sampling_timesteps']
+
     ddpm = load_icddpm_from_configs_and_cpt(
         train_ddpm_cfg           = train_params_ddpm,
         model_ddpm_cfg           = model_params_ddpm,
         n_classes                = n_classes,
-        image_channels           = dataset_config[dataset]['image_channels'],
+        image_channels           = image_channels,
         cpt_fp                   = os.path.join(ddpm_dir, tta_config[tta_mode]['cpt_fn']),
+        sampling_timesteps       = sampling_timesteps,
         device                   = device,
     )
+    print('DDPM model loaded')
    
     # Define the TTADAE object that does the test time adapatation
     # :=========================================================================:    
@@ -279,9 +284,7 @@ if __name__ == '__main__':
     # DDPM-TTA params    
     minibatch_size_ddpm         = tta_config[tta_mode]['minibatch_size_ddpm']
     frac_vol_diffusion_tta      = tta_config[tta_mode]['frac_vol_diffusion_tta']
-    sampling_timesteps          = tta_config[tta_mode]['sampling_timesteps']
     min_max_int_norm_imgs       = tta_config[tta_mode]['min_max_int_norm_imgs']
-    use_x_norm_for_ddpm_loss    = tta_config[tta_mode]['use_x_norm_for_ddpm_loss']
     use_y_pred_for_ddpm_loss    = tta_config[tta_mode]['use_y_pred_for_ddpm_loss']
     use_x_cond_gt               = tta_config[tta_mode]['use_x_cond_gt']
     use_ddpm_after_step         = tta_config[tta_mode]['use_ddpm_after_step']
@@ -312,7 +315,6 @@ if __name__ == '__main__':
         sampling_timesteps      = sampling_timesteps,
         wandb_log               = wandb_log,
         min_max_int_norm_imgs   = min_max_int_norm_imgs,
-        use_x_norm_for_ddpm_loss=use_x_norm_for_ddpm_loss,
         use_y_pred_for_ddpm_loss=use_y_pred_for_ddpm_loss,
         use_x_cond_gt           = use_x_cond_gt,
         use_ddpm_after_step     = use_ddpm_after_step,

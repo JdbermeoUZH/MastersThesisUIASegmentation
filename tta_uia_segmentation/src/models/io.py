@@ -21,6 +21,7 @@ def load_icddpm_from_configs_and_cpt(
     n_classes: int,
     image_channels: int,
     cpt_fp: str,
+    sampling_timesteps: str,
     device: torch.device,
 ) -> tuple[ConditionalUnet, SpacedDiffusion, nn.Module]:
     
@@ -40,14 +41,17 @@ def load_icddpm_from_configs_and_cpt(
     # Load parameterers of the Unet model
     unet_model.load_state_dict(torch.load(cpt_fp, map_location=device))
 
+    timestep_respacing = str(sampling_timesteps) if sampling_timesteps is not None\
+        else train_ddpm_cfg['timestep_respacing']
+
     diffusion = create_gaussian_diffusion(
         steps=train_ddpm_cfg['diffusion_steps'],
         learn_sigma=train_ddpm_cfg['learn_sigma'],
         noise_schedule=train_ddpm_cfg['noise_schedule'],
         use_kl=train_ddpm_cfg['use_kl'],
-        timestep_respacing=train_ddpm_cfg['timestep_respacing'],
+        timestep_respacing=timestep_respacing,
         **diffusion_defaults()
-    ).to(device)
+    )
     
     # Define a schedule sampler
     schedule_sampler = train_ddpm_cfg['schedule_sampler']

@@ -128,6 +128,7 @@ abide_stanford:
       val: ~/datasets/abide/stanford/data_T1_original_depth_132_from_10_to_15.hdf5
 
 nuhs:
+  image_channels: 1
   n_classes: 2
   resolution_proc: [1, 1, 3]  # in-plane resolution of processed dataset
   dim: [48, 256, 256]  # DHW (= zxy)

@@ -342,20 +342,19 @@ class TTADAEandDDPM(TTADAE):
             # To avoid memory issues, we compute x_norm twice to separate the gradient
             #  computation for the DAE and DDPM losses. 
             for b_i, ((x, y_gt,_,_, bg_mask), (y_pl,), (x_sampled,)) in enumerate(zip(volume_dataloader, label_dataloader, sampled_vol_dl)):
-                            
+                x_norm = None        
                 if not accumulate_over_volume:
                     self.optimizer.zero_grad()
                     self.x_norm_grads_dae_loss = defaultdict(int)
                     self.x_norm_grads_ddpm_loss = defaultdict(int)
 
-                x = x.to(device).float()
-                y_pl = y_pl.to(device)
-                               
+                x = x.to(device).float()                               
                 n_samples += x.shape[0]
                 
                 # DAE loss: Calculate gradients from the segmentation task on the pseudo label  
                 # :===============================================================:  
                 if self.dae_loss_alpha > 0:
+                    y_pl = y_pl.to(device)
                     x_norm = self.norm(x)
                     
                     _, mask, _ = self.forward_pass_seg(
@@ -377,38 +376,46 @@ class TTADAEandDDPM(TTADAE):
                     
                 # DDPM loss: Calculate gradients from the noise estimation loss
                 # :============================================================:
+                
                 calculate_ddpm_loss_gradients = b_i in b_i_for_ddpm_loss and \
                     self.ddpm_loss_beta > 0 and self.use_ddpm_loss
                     
                 if calculate_ddpm_loss_gradients:
                     n_samples_diffusion += x.shape[0] 
                     
-                    x_norm = self.norm(x)
-                    
-                    img = x_norm if self.use_x_norm_for_ddpm_loss else x
-                    
                     # Keep track of the max and min in the current step
-                    step_max = max(step_max, img.max().item())
-                    step_min = min(step_min, img.min().item())
+                    if x_norm is None:
+                        x_norm = self.norm(x) 
+                    step_max = max(step_max, x_norm.max().item())
+                    step_min = min(step_min, x_norm.min().item()) 
+                    del x_norm
                     
+                    # Fix x_cond depending on the configuration
                     if self.use_x_cond_gt:
                         # Only for debugging
-                        y_gt = y_gt.to(device)
-                        x_cond = y_gt
+                        x_cond = y_gt.to(device)
                         
-                    elif self.use_y_pred_for_ddpm_loss:
-                        # Use predicted segmentation mask for the DDPM loss
-                        _, x_cond, _ = self.forward_pass_seg(
-                            x_norm=x_norm, bg_mask=bg_mask, 
-                            bg_suppression_opts=self.bg_suppression_opts_tta, 
-                            device=device
-                        )
+                    elif not self.use_y_pred_for_ddpm_loss:
+                        x_cond = y_pl.to(device)
+                        
+                        # Upsample the segmentation mask to the same size as the input image, if neccessary
+                        rescale_factor = np.array(x.shape) / np.array(x_cond.shape)
+                        rescale_factor = tuple(rescale_factor[[0, 2, 3]])       # Volume is DCHW
+                        should_rescale = not all([f == 1. for f in rescale_factor])
+                        
+                        if should_rescale:
+                            x_cond = x_cond.permute(1, 0, 2, 3).unsqueeze(0)
+                            x_cond = F.interpolate(x_cond, scale_factor=rescale_factor, mode='trilinear')
+                            x_cond = (x_cond > 0.5).float()                
+                            x_cond = x_cond.squeeze(0).permute(1, 0, 2, 3)
+
+                    # Or leave it undefined and the predicted segmentation mask for each minibatch of x
+                    #  will be calculated and used within _calculate_ddpm_gradients()
                     else:
-                        # Uses the pseudo label for the DDPM loss
-                        x_cond = y_pl
-                    
+                        x_cond = None
+                                        
                     ddpm_loss = self._calculate_ddpm_gradients(
-                        img,
+                        x,
                         x_cond,
                         ddpm_reweigh_factor=ddpm_reweigh_factor,
                         max_int_norm_imgs=running_max,
@@ -507,54 +514,53 @@ class TTADAEandDDPM(TTADAE):
     
     def _calculate_ddpm_gradients(
         self,
-        img,
-        seg,
+        x: torch.Tensor,
+        device: str,
+        x_cond: Optional[torch.Tensor] = None,
+        bg_mask: Optional[torch.Tensor] = None,
         ddpm_reweigh_factor: float = 1,
         min_int_norm_imgs: float = 0,
         max_int_norm_imgs: float = 1,
         min_max_tolerance: float = 2e-1
         ) -> torch.Tensor:
-        
-        # Normalize the input image between 0 and 1, (required by the DDPM)
-        img = du.normalize_min_max(
-            img,
-            min=min_int_norm_imgs, 
-            max=max_int_norm_imgs
-            )
-        
-        if img.max() > 1 + min_max_tolerance or img.min() < 0 - min_max_tolerance:
-            print(f'WARNING: img.max()={img.max()}, img.min()={img.min()}')
-        
-        # Upsample the segmentation mask to the same size as the input image, if neccessary
-        rescale_factor = np.array(img.shape) / np.array(seg.shape)
-        rescale_factor = tuple(rescale_factor[[0, 2, 3]])       # Volume is DCHW
-        should_rescale = not all([f == 1. for f in rescale_factor])
-        
-        if should_rescale:
-            seg = seg.permute(1, 0, 2, 3).unsqueeze(0)
-            seg = F.interpolate(seg, scale_factor=rescale_factor, mode='trilinear')
-            seg = (seg > 0.5).float()                
-            seg = seg.squeeze(0).permute(1, 0, 2, 3)
                 
         # The DDPM is memory intensive, accumulate gradients over minibatches
         ddpm_loss_value = 0
         minibatch_size = self.minibatch_size_ddpm
-        num_minibatches = np.ceil(img.shape[0] / minibatch_size)
+        num_minibatches = np.ceil(x.shape[0] / minibatch_size)
         ddpm_reweigh_factor = ddpm_reweigh_factor * (1 / num_minibatches)  
         
         # Multiply the reweight factor by the loss' beta 
         ddpm_reweigh_factor *= self.ddpm_loss_beta  
         
-        for i in range(0, img.shape[0], minibatch_size):
-            img_batch = img[i: i + minibatch_size]
-            seg_batch = seg[i: i + minibatch_size]
-            ddpm_loss = ddpm_reweigh_factor * self.ddpm(img_batch, seg_batch)
+        for i in range(0, x.shape[0], minibatch_size):
+            x_minibatch = x[i: i + minibatch_size]
             
-            # Do backward retaining the graph except for the last step
-            if i + minibatch_size < img.shape[0]:
-                ddpm_loss.backward(retain_graph=True)
+            x_norm_mb = self.norm(x_minibatch)
+            
+            if x_cond is None:
+                # Use predicted segmentation mask for the DDPM loss
+                _, x_cond_mb, _ = self.forward_pass_seg(
+                    x_norm=x_norm_mb, bg_mask=bg_mask, 
+                    bg_suppression_opts=self.bg_suppression_opts_tta, 
+                    device=device
+                )
             else:
-                ddpm_loss.backward()
+                x_cond_mb = x_cond[i: i + minibatch_size]
+                    
+            # Normalize the input image between 0 and 1, (required by the DDPM)
+            x_norm_mb = du.normalize_min_max(
+                x_norm_mb,
+                min=min_int_norm_imgs, 
+                max=max_int_norm_imgs
+                )
+            
+            if x_norm_mb.max() > 1 + min_max_tolerance or x_norm_mb.min() < 0 - min_max_tolerance:
+                print(f'WARNING: x_norm_mb.max()={x_norm_mb.max()}, x_norm_mb.min()={x_norm_mb.min()}')
+            
+            # Calculate the DDPM loss and backpropagate
+            ddpm_loss = ddpm_reweigh_factor * self.ddpm(x_norm_mb, x_cond_mb)
+            ddpm_loss.backward()
             
             ddpm_loss_value += ddpm_loss.detach()
                 

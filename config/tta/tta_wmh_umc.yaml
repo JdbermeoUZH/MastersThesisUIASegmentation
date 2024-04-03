@@ -73,7 +73,7 @@ dae:
 
 dae_and_ddpm:
   wandb_project: mt-tta-wmh
-  logdir: /scratch_net/biwidl319/jbermeo/logs/wmh/tta/dae_and_cddpm/3_22/
+  logdir: /scratch_net/biwidl319/jbermeo/logs/wmh/tta/dae_and_cddpm/tests/04_02
   dae_dir: /scratch_net/biwidl319/jbermeo/data/models/wmh/dae/umc
   ddpm_dir: /scratch_net/biwidl319/jbermeo/logs/wmh/ddpm/normalized_imgs/no_bg_supp_3x3_conv/3_19/batch_size_128_cond_by_concat_multi_gpu
   cpt_fn: 'model-19.pt' 
@@ -93,7 +93,6 @@ dae_and_ddpm:
   max_t_diffusion_tta: 999
   sampling_timesteps: 100
   min_max_int_norm_imgs: [0.32381030917167664, 1.2784711122512817]
-  use_x_norm_for_ddpm_loss: True
   use_y_pred_for_ddpm_loss: True
   use_x_cond_gt: False    # Only true for debugging
 
