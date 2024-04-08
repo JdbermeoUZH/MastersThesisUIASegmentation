@@ -72,7 +72,7 @@ def load_cddpm_from_configs_and_cpt(
     cpt_fp: str,
     img_size: int,
     device: torch.device,
-    sampling_timesteps: Optional[int]) -> ConditionalGaussianDiffusion:
+    sampling_timesteps: Optional[int] = None) -> ConditionalGaussianDiffusion:
 
     timesteps           = train_ddpm_cfg['timesteps']
     sampling_timesteps  = train_ddpm_cfg['sampling_timesteps'] \
@@ -99,6 +99,7 @@ def load_cddpm_from_configs_and_cpt(
     ema_update_every = 10
     ema_decay = 0.995
     ddpm_ema = EMA(ddpm, beta = ema_decay, update_every = ema_update_every)
+    ddpm_ema = ddpm_ema.to(device)
     ddpm_ema.load_state_dict(cpt['ema'])
     
     return ddpm_ema.model

@@ -88,7 +88,8 @@ def preprocess_cmd_args() -> argparse.Namespace:
     parser.add_argument('--min_t_diffusion_tta', type=int, help='Minimum value for diffusion time. Default: 0')
     parser.add_argument('--max_t_diffusion_tta', type=int, help='Maximum value for diffusion time. Default: 1000')       
     parser.add_argument('--use_y_pred_for_ddpm_loss', type=parse_bool, help='Whether to use predicted segmentation as conditional for DDPM. Default: True')
-    parser.add_argument('--use_x_cond_gt', type=parse_bool, help='Whether to use ground truth segmetnation as conditional for DDPM. ONLY FOR DEBUGGING. Default: False')
+    parser.add_argument('--use_y_gt_for_ddpm_loss', type=parse_bool, help='Whether to use ground truth segmetnation as conditional for DDPM. ONLY FOR DEBUGGING. Default: False')
+    parser.add_argument('--detach_x_norm_from_ddpm_loss', type=parse_bool, help='Whether to detach x_norm from DDPM loss. Default: False')
     parser.add_argument('--minibatch_size_ddpm', type=int, help='Minibatch size for DDPM. Default: 2')
     
     # DAE and Atlas params
@@ -119,7 +120,14 @@ def preprocess_cmd_args() -> argparse.Namespace:
     parser.add_argument('--bg_supression_type', choices=['fixed_value', 'random_value', 'none', None], help='Type of background suppression to use. Default: none')
     args = parser.parse_args()
     
+    _check_args(args)
+    
     return args
+
+
+def _check_args(args: argparse.Namespace) -> None:
+    if args.use_y_gt_for_ddpm_loss and args.use_y_pred_for_ddpm_loss:
+        raise ValueError('Cannot use both y_gt and y_pred for DDPM loss')
 
 
 def get_configuration_arguments() -> tuple[dict, dict]:
@@ -284,9 +292,8 @@ if __name__ == '__main__':
     max_t_diffusion_tta         = tta_config[tta_mode]['max_t_diffusion_tta']
     sampling_timesteps          = tta_config[tta_mode]['sampling_timesteps']
     min_max_int_norm_imgs       = tta_config[tta_mode]['min_max_int_norm_imgs']
-    use_x_norm_for_ddpm_loss    = tta_config[tta_mode]['use_x_norm_for_ddpm_loss']
     use_y_pred_for_ddpm_loss    = tta_config[tta_mode]['use_y_pred_for_ddpm_loss']
-    use_x_cond_gt               = tta_config[tta_mode]['use_x_cond_gt']
+    use_y_gt_for_ddpm_loss      = tta_config[tta_mode]['use_y_gt_for_ddpm_loss']
     use_ddpm_after_step         = tta_config[tta_mode]['use_ddpm_after_step']
     use_ddpm_after_dice         = tta_config[tta_mode]['use_ddpm_after_dice']
     warmup_steps_for_ddpm_loss  = tta_config[tta_mode]['warmup_steps_for_ddpm_loss']
@@ -317,9 +324,8 @@ if __name__ == '__main__':
         sampling_timesteps      = sampling_timesteps,
         wandb_log               = wandb_log,
         min_max_int_norm_imgs   = min_max_int_norm_imgs,
-        use_x_norm_for_ddpm_loss=use_x_norm_for_ddpm_loss,
         use_y_pred_for_ddpm_loss=use_y_pred_for_ddpm_loss,
-        use_x_cond_gt           = use_x_cond_gt,
+        use_y_gt_for_ddpm_loss  = use_y_gt_for_ddpm_loss,
         use_ddpm_after_step     = use_ddpm_after_step,
         use_ddpm_after_dice     = use_ddpm_after_dice,
         warmup_steps_for_ddpm_loss=warmup_steps_for_ddpm_loss,

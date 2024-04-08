@@ -6,12 +6,12 @@ import torch
 import numpy as np
 from typing import Union
 from torch.utils.data import Subset, Dataset, DataLoader
-from torchmetrics.functional.classification import dice
 
 from tta_uia_segmentation.src.dataset.dataset_in_memory import DatasetInMemory
 from tta_uia_segmentation.src.dataset.augmentation import apply_data_augmentation
 import tta_uia_segmentation.src.dataset.utils as du
 from tta_uia_segmentation.src.utils.utils import get_seed
+from tta_uia_segmentation.src.utils.loss import dice_score
 
 
 
@@ -184,6 +184,7 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
     def _find_min_max_in_normalized_imgs(self):
         if self.normalized_img_path is not None:    
             with h5py.File(self.normalized_img_path, 'r') as data:
+                print('DELETE ME')
                 images = data['images'][:]
                 images_min = images.min()
                 images_max = images.max()
@@ -197,6 +198,7 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
             for img, _ in sample_dataset:
                 img = img.to(self.norm_device)
                 img = self.norm(img)
+                
                 current_max, current_min = img.max(), img.min()
                 if current_min < self.images_min:
                     images_min = current_min
@@ -272,13 +274,21 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
         idxs_sample_filtered = []
 
         _, seg_orig = self[self.vol_and_z_idx_to_idx(vol_idx, z_idx)]
-        seg_orig = (seg_orig * (self.n_classes - 1)).int()
-        for z_idx in idxs_sample:
-            img_idx = self.vol_and_z_idx_to_idx(vol_idx, z_idx)
+        seg_orig = seg_orig[None, ...]
+        if not self.one_hot_encode and seg_orig.max() < 1.0:
+            seg_orig = (seg_orig * (self.n_classes - 1)).int()
+        
+        for z in idxs_sample:
+            img_idx = self.vol_and_z_idx_to_idx(vol_idx, z)
             _, seg_i = self[img_idx]
-            seg_i = (seg_i * (self.n_classes - 1)).int()
+            seg_i = seg_i[None, ...]
             
-            if dice(seg_i, seg_orig, ignore_index=0).item() > max_dice_score_threshold:
+            if not self.one_hot_encode and seg_i.max() < 1.0:
+                seg_i = (seg_i * (self.n_classes - 1)).int()
+            
+            _, dice_fg = dice_score(seg_i, seg_orig, reduction='mean')
+            
+            if dice_fg > max_dice_score_threshold:
                 continue
             
             idxs_sample_filtered.append(img_idx)
@@ -300,20 +310,33 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
         high_z_lim = min(self.dim_proc[0] - 1, z_idx + int(max_dist_z_frac * self.dim_proc[0]))
         
         # Sample positions in the range [low_z_lim, high_z_lim] 
+        if high_z_lim - low_z_lim < n:
+            n = high_z_lim - low_z_lim
+            print(f'WARNING: Not enough slices to sample, sampling {n} slices instead')
+         
         idxs_sample = random.sample(range(low_z_lim, high_z_lim), n)
         
         # Exclude all indexes that have a dice score that is too low
         idxs_sample_filtered = []
 
         _, seg_orig = self[self.vol_and_z_idx_to_idx(vol_idx, z_idx)]
-        seg_orig = (seg_orig * (self.n_classes - 1)).int()
-        for z_idx in idxs_sample:
-            img_idx = self.vol_and_z_idx_to_idx(vol_idx, z_idx)
+        seg_orig = seg_orig[None, ...]
+        
+        if not self.one_hot_encode and seg_orig.max() < 1.0:
+            seg_orig = (seg_orig * (self.n_classes - 1)).int()
+        
+        for z in idxs_sample:
+            img_idx = self.vol_and_z_idx_to_idx(vol_idx, z)
             _, seg_i = self[img_idx]
-            seg_i = (seg_i * (self.n_classes - 1)).int()
+            seg_i = seg_i[None, ...]
             
-            if dice(seg_i, seg_orig) < min_dice_score_threshold:
-                print('Dice score too low to use sample: ', dice(seg_i, seg_orig, ignore_index=0))
+            if not self.one_hot_encode and seg_i.max() < 1.0:
+                seg_i = (seg_i * (self.n_classes - 1)).int()
+            
+            _, dice_fg = dice_score(seg_i, seg_orig, reduction='mean')
+            
+            if dice_fg < min_dice_score_threshold:
+                print('Dice score too low to use sample: ', dice_fg)
                 continue
             
             idxs_sample_filtered.append(img_idx)
@@ -328,6 +351,10 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
         max_dist_z_frac: float = 0.2,
         min_dice_score_threshold: float = 0.55,
     ) -> list[int]:
+        """
+        TODO
+            - Repeat sampling with other volumes if not enough slices are sampled
+        """
         # Define the range of z indexes to sample from
         low_z_lim = max(0, z_idx - int(max_dist_z_frac * self.dim_proc[0]))
         high_z_lim = min(self.dim_proc[0] - 1, z_idx + int(max_dist_z_frac * self.dim_proc[0]))
@@ -341,20 +368,27 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
         n_slices_per_volume = {vol_idx: n_slices for vol_idx, n_slices in zip(vol_idxs_to_sample, n_slices_per_volume)}
         
         _, seg_orig = self[self.vol_and_z_idx_to_idx(vol_idx, z_idx)]
-        seg_orig = (seg_orig * (self.n_classes - 1)).int()
+        seg_orig = seg_orig[None, ...]
+        if not self.one_hot_encode and seg_orig.max() < 1.0: 
+            seg_orig = (seg_orig * (self.n_classes - 1)).int()
+        
         idxs_sample_filtered = []
         for vol_idx, n_slices in n_slices_per_volume.items():
             if n_slices == 0:
                 continue
             
             sampled = 0 
-            for z_idx in range(low_z_lim, high_z_lim + 1):
-                img_idx = self.vol_and_z_idx_to_idx(vol_idx, z_idx)
+            for z in range(low_z_lim, high_z_lim + 1):
+                print(f'z: {z}')
+                img_idx = self.vol_and_z_idx_to_idx(vol_idx, z)
                 _, seg_i = self[img_idx]
-                seg_i = (seg_i * (self.n_classes - 1)).int()
+                seg_i = seg_i[None, ...]
                 
-                if dice(seg_i, seg_orig, ignore_index=0) < min_dice_score_threshold:
-                    #print('Dice score too low to use sample: ', dice(seg_i, seg_orig, ignore_index=0))
+                if not self.one_hot_encode and seg_i.max() < 1.0:
+                    seg_i = (seg_i * (self.n_classes - 1)).int()
+                
+                _, dice_fg = dice_score(seg_i, seg_orig, reduction='mean')
+                if dice_fg < min_dice_score_threshold:
                     continue
                 
                 idxs_sample_filtered.append(img_idx)

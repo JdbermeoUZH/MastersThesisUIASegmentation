@@ -58,9 +58,9 @@ class TTADAEandDDPM(TTADAE):
         max_t_diffusion_tta: int = 999,
         sampling_timesteps: Optional[int] = None,
         min_max_int_norm_imgs: tuple[float, float] = (0, 1),
-        use_x_norm_for_ddpm_loss: bool = True,
+        detach_x_norm_from_ddpm_loss: bool = True,
         use_y_pred_for_ddpm_loss: bool = False,
-        use_x_cond_gt: bool = False,    # Of course use only for debugging
+        use_y_gt_for_ddpm_loss: bool = False,    # Of course use only for debugging
         use_ddpm_after_step: Optional[int] = None,
         use_ddpm_after_dice: Optional[float] = None,
         warmup_steps_for_ddpm_loss: Optional[int] = None,
@@ -90,7 +90,7 @@ class TTADAEandDDPM(TTADAE):
         self.max_int_norm_imgs = min_max_int_norm_imgs[1]
         
         self.use_y_pred_for_ddpm_loss = use_y_pred_for_ddpm_loss   
-        self.use_x_norm_for_ddpm_loss = use_x_norm_for_ddpm_loss 
+        self.detach_x_norm_from_ddpm_loss = detach_x_norm_from_ddpm_loss 
         
         self.sampling_timesteps = sampling_timesteps
         self.ddpm.set_sampling_timesteps(sampling_timesteps)
@@ -100,7 +100,7 @@ class TTADAEandDDPM(TTADAE):
         self.ddpm.requires_grad_(False)
         
         # Attributes used only for debugging
-        self.use_x_cond_gt = use_x_cond_gt
+        self.use_y_gt_for_ddpm_loss = use_y_gt_for_ddpm_loss
         
         # Setup the custom metrics and steps wandb
         if self.wandb_log:
@@ -391,12 +391,12 @@ class TTADAEandDDPM(TTADAE):
                     del x_norm
                     
                     # Fix x_cond depending on the configuration
-                    if self.use_x_cond_gt:
+                    if self.use_y_gt_for_ddpm_loss:
                         # Only for debugging
-                        x_cond = y_gt.to(device)
+                        x_cond = y_gt.type(torch.int8).to(device).typ
                         
                     elif not self.use_y_pred_for_ddpm_loss:
-                        x_cond = y_pl.to(device)
+                        x_cond = y_pl.type(torch.int8).to(device)
                         
                         # Upsample the segmentation mask to the same size as the input image, if neccessary
                         rescale_factor = np.array(x.shape) / np.array(x_cond.shape)
@@ -549,17 +549,22 @@ class TTADAEandDDPM(TTADAE):
                 x_cond_mb = x_cond[i: i + minibatch_size]
                     
             # Normalize the input image between 0 and 1, (required by the DDPM)
-            x_norm_mb = du.normalize_min_max(
-                x_norm_mb,
+            x_norm_mb_ddpm = x_norm_mb if not self.detach_x_norm_from_ddpm_loss else x_norm_mb.detach().clone()
+            
+            x_norm_mb_ddpm = du.normalize_min_max(
+                x_norm_mb_ddpm,
                 min=min_int_norm_imgs, 
                 max=max_int_norm_imgs
                 )
             
-            if x_norm_mb.max() > 1 + min_max_tolerance or x_norm_mb.min() < 0 - min_max_tolerance:
-                print(f'WARNING: x_norm_mb.max()={x_norm_mb.max()}, x_norm_mb.min()={x_norm_mb.min()}')
+            if x_norm_mb_ddpm.max() > 1 + min_max_tolerance or x_norm_mb_ddpm.min() < 0 - min_max_tolerance:
+                print(f'WARNING: x_norm_mb.max()={x_norm_mb_ddpm.max()}, x_norm_mb.min()={x_norm_mb.min()}')
             
             # Calculate the DDPM loss and backpropagate
-            ddpm_loss = ddpm_reweigh_factor * self.ddpm(x_norm_mb, x_cond_mb)
+            ddpm_loss = ddpm_reweigh_factor * self.ddpm(
+                x_norm_mb_ddpm, 
+                x_cond_mb
+                )
             ddpm_loss.backward()
             
             ddpm_loss_value += ddpm_loss.detach()

@@ -18,37 +18,69 @@ sys.path.append(os.path.normpath(os.path.join(
     os.path.dirname(__file__), '..', '..', '..', '..')))
 
 from tta_uia_segmentation.src.dataset.dataset_in_memory_for_ddpm import get_datasets
-from tta_uia_segmentation.src.models.io import load_norm_from_configs_and_cpt
+from tta_uia_segmentation.src.models.io import load_norm_from_configs_and_cpt, load_cddpm_from_configs_and_cpt
 from tta_uia_segmentation.src.utils.io import load_config
-from utils import load_ddpm_from_configs_and_cpt
 
 
 # Default args
 # :===============================================================:
 out_dir                 = '/scratch_net/biwidl319/jbermeo/results/wmh/ddpm/'
-exp_name                = 'default_exp_name'
-params_fp               = '/scratch_net/biwidl319/jbermeo/logs/wmh/ddpm/normalized_imgs/no_bg_supp_3x3_conv/3_19/batch_size_128_cond_by_concat_multi_gpu/params.yaml'
-cpt_fp                  = '/scratch_net/biwidl319/jbermeo/logs/wmh/ddpm/normalized_imgs/no_bg_supp_3x3_conv/3_19/batch_size_128_cond_by_concat_multi_gpu/model-19.pt'
-batch_size              = 4   
-frac_sample_range       = (0.0, 1.0)
-dataset                 = 'umc'
+exp_name                = 'dim_32_mult_1_2_2_2_bs_128_cond_on_concat'
+ddpm_dir                = '/scratch_net/biwidl319/jbermeo/logs/wmh/ddpm/normalized_imgs/no_bg_supp_3x3_conv/3_28/dim_32_mult_1_2_2_2_bs_128_cond_on_concat' 
+cpt_fn                  = 'model-8.pt' #'/scratch_net/biwidl319/jbermeo/logs/wmh/ddpm/normalized_imgs/no_bg_supp_3x3_conv/3_19/batch_size_128_cond_by_concat_multi_gpu/model-19.pt'
+batch_size              = 16   
+frac_sample_range       = (0.25, 0.75) # (0.3, 0.6):= usually has labels, (0.6, 0.9):= usually has no labels
+dataset_sd              = 'umc'
+split_sd                = 'train'
+dataset_td              = 'nuhs' #'nuhs'
+split_td                = 'val'
 seed                    = 1234 
 device                  = 'cpu' if not  torch.cuda.is_available() else 'cuda'
-split                   = 'train'
 mismatch_mode           = 'none' #'same_patient_very_different_labels'  # 'same_patient_very_different_labels', 'same_patient_similar_labels', 'different_patient_similar_labels', 'none'
-n_mismatches            = 6
-num_t_samples_per_img   = 20
-num_iterations          = 500
+n_mismatches            = 10
+num_t_samples_per_img   = 5 # 20
+num_iterations          = 50 # 500
+with_augmentation       = False
+use_td_img              = True
 # :===============================================================:
+
+mismatch_args_per_dataset_type = {
+    'wmh': {
+        'same_patient_very_different_labels': {
+            'min_dist_z_frac': 0.2, 'max_dice_score_threshold': 0.3},
+        'same_patient_similar_labels': {
+            'max_dist_z_frac': 0.1, 'min_dice_score_threshold': 0.5},
+        'different_patient_similar_labels': {
+            'max_dist_z_frac': 0.5, 'min_dice_score_threshold': 0.4}
+    },
+    'brain': {
+        'same_patient_very_different_labels': {
+            'min_dist_z_frac': 0.2, 'max_dice_score_threshold': 0.3},
+        'same_patient_similar_labels': {
+            'max_dist_z_frac': 0.2, 'min_dice_score_threshold': 0.7},
+        'different_patient_similar_labels': {
+            'max_dist_z_frac': 0.2, 'min_dice_score_threshold': 0.55}
+    }
+}
+
+map_dataset_to_dataset_type = {
+    'umc': 'wmh',
+    'nuhs': 'wmh',
+    'vu': 'wmh',
+    'hcp_t1': 'brain',
+    'hcp_t2': 'brain',
+    'abide_caltech': 'brain',
+}
 
 
 def get_cmd_args():
     parser = argparse.ArgumentParser(description="Check how the DDPM loss behaves for different timesteps and shifts at the images or labels.")
+    parse_bool = lambda x: x.lower() in ['true', '1']
     
     parser.add_argument('--out_dir', type=str, default=out_dir, help='Output directory')
     parser.add_argument('--exp_name', type=str, default=exp_name, help='Experiment name')
-    parser.add_argument('--params_fp', type=str, default=params_fp, help='Path to the params file')
-    parser.add_argument('--cpt_fp', type=str, default=cpt_fp, help='Path to the checkpoint file')
+    parser.add_argument('--ddpm_dir', type=str, default=ddpm_dir, help='Path to the params file')
+    parser.add_argument('--cpt_fn', type=str, default=cpt_fn, help='Path to the checkpoint file')
     
     parser.add_argument('--batch_size', type=int, default=batch_size, help='Batch size')
     parser.add_argument('--num_iterations', type=int, default=num_iterations, help='Number of images to sample from the dataset')
@@ -56,13 +88,67 @@ def get_cmd_args():
     parser.add_argument('--num_t_samples_per_img', type=int, default=num_t_samples_per_img, help='Number of timesteps to sample for each image')
     parser.add_argument('--frac_sample_range', type=float, nargs=2, default=frac_sample_range, help='Fraction of the image to sample from')
     parser.add_argument('--mismatch_mode', type=str, default=mismatch_mode, help='Mode for label mismatch', choices=['same_patient_very_different_labels', 'same_patient_similar_labels', 'different_patient_similar_labels', 'none'])
-    
-    parser.add_argument('--dataset', type=str, default=dataset, help='Dataset to use')
-    parser.add_argument('--split', type=str, default=split, help='Split to use', choices=['train', 'val', 'test'])
+    parser.add_argument('--with_augmentation', type=parse_bool, default=with_augmentation, help='Whether to use data augmentation')
+    parser.add_argument('--use_td_img', type=parse_bool, default=use_td_img, help='Whether to use the target domain image')
+    parser.add_argument('--output_dir_suffix', type=str, default='', help='Suffix to add to the output directory')
+      
+    parser.add_argument('--dataset_sd', type=str, default=dataset_sd, help='Source domain dataset to use as baseline')
+    parser.add_argument('--split_sd', type=str, default=split_sd, help='Split to use of the source domain', choices=['train', 'val', 'test'])
+    parser.add_argument('--dataset_td', type=str, default=dataset_td, help='Target domain dataset to compare against')
+    parser.add_argument('--split_td', type=str, default=split_sd, help='Split to use of the target domain', choices=['train', 'val', 'test'])
     parser.add_argument('--seed', type=int, default=seed, help='Seed for reproducibility')
     parser.add_argument('--device', type=str, default=device, help='Device to use')
 
     return parser.parse_args()
+
+
+def plot_losses(
+    baseline_info_df, shift_info_df,
+    baseline_label, shift_label,
+    output_path,
+    title='DDPM Loss vs noise t', 
+    figsize=(15, 5)
+    ):
+    baseline_summary_df = baseline_info_df.describe()
+    shift_summary_df = shift_info_df.describe()
+    
+    plt.figure(figsize=figsize)
+    plt.title(title)
+
+    # Baseline
+    # =========
+    plt.errorbar(
+        x=baseline_summary_df.loc['mean'].index,
+        y=baseline_summary_df.loc['mean'],
+        yerr=baseline_summary_df.loc['std'], 
+        fmt='-o',
+        label=baseline_label
+        )
+    # Plot the mean loss over all t
+    print(f'Mean loss over all t - {baseline_label}: {baseline_summary_df.loc["mean"].mean()}')
+    plt.axhline(y=baseline_summary_df.loc['mean'].mean(),
+            color='b', linestyle='--', label=f'mean loss - {baseline_label}')
+    
+    # Shift
+    # =========
+    plt.errorbar(
+        x=shift_summary_df.loc['mean'].index,
+        y=shift_summary_df.loc['mean'],
+        yerr=shift_summary_df.loc['std'], 
+        fmt='-o',
+        label=shift_label
+        )
+    
+    # Plot the mean loss over all t
+    print(f'Mean loss over all t - {shift_label}: {shift_summary_df.loc["mean"].mean()}')
+    plt.axhline(y=shift_summary_df.loc['mean'].mean(),
+            color='orange', linestyle='--', label=f'mean loss - {shift_label}')
+
+    # Display legends
+    plt.legend()    
+    plt.yscale('log')
+
+    plt.savefig(output_path)
 
 
 if __name__ == '__main__':
@@ -73,22 +159,26 @@ if __name__ == '__main__':
     
     # Create output dir
     out_dir = os.path.join(args.out_dir, args.exp_name, 
-                           args.dataset, args.split,
-                           '4_ddpm_loss_multiple_t_and_imgs',
-                           args.mismatch_mode
+                           f'{args.dataset_sd}_{args.split_sd}',
+                           f'{args.dataset_td}_{args.split_td}',
+                           args.mismatch_mode + args.output_dir_suffix
                            )
     os.makedirs(out_dir, exist_ok=True)
         
     np.random.seed(args.seed)
     random.seed(args.seed)
     
-    run_params = yaml.safe_load(open(args.params_fp, 'r'))
-    dataset_params = run_params['dataset'][args.dataset]
-    training_params = run_params['training']['ddpm']
+    # Load
+    run_params = yaml.safe_load(open(os.path.join(args.ddpm_dir, 'params.yaml'), 'r'))
+    
+    dataset_params_sd = run_params['dataset'][args.dataset_sd]
+    dataset_params_td = run_params['dataset'][args.dataset_td]
+    train_ddpm_cfg = run_params['training']['ddpm']
+    model_ddpm_cfg = run_params['model']['ddpm_unet']
     
     # Load the normalization model 
-    norm_dir = training_params['norm_dir']
-    params_norm = load_config(os.path.join(training_params['norm_dir'], 'params.yaml'))
+    norm_dir = train_ddpm_cfg['norm_dir']
+    params_norm = load_config(os.path.join(train_ddpm_cfg['norm_dir'], 'params.yaml'))
 
     model_params_norm = params_norm['model']['normalization_2D']
     train_params_norm = params_norm['training']
@@ -100,66 +190,115 @@ if __name__ == '__main__':
     )     
     
     # Load the data
-    # :===============================================================:
-    (dataset,) = get_datasets(
+    # :===============================================================:    
+    n_classes           = dataset_params_sd['n_classes']
+
+    (dataset_sd,) = get_datasets(
+        splits          = [args.split_sd],
         norm            = norm,
-        paths           = dataset_params['paths_processed'],
-        paths_original  = dataset_params['paths_original'], 
+        paths           = dataset_params_sd['paths_processed'],
+        paths_original  = dataset_params_sd['paths_original'], 
         paths_normalized_h5 = None,
-        splits          = [args.split],
-        image_size      = training_params['image_size'],
-        resolution_proc = dataset_params['resolution_proc'],
-        dim_proc        = dataset_params['dim'],
-        n_classes       = dataset_params['n_classes'],
-        aug_params      = None,
+        use_original_imgs = train_ddpm_cfg['use_original_imgs'],
+        one_hot_encode  = train_ddpm_cfg['one_hot_encode'],
+        normalize       = train_ddpm_cfg['normalize'],
+        image_size      = train_ddpm_cfg['image_size'],
+        resolution_proc = dataset_params_sd['resolution_proc'],
+        dim_proc        = dataset_params_sd['dim'],
+        n_classes       = dataset_params_sd['n_classes'],
+        aug_params      = train_ddpm_cfg['augmentation'] if args.with_augmentation else None,
         deformation     = None,
         load_original   = True,
-        bg_suppression_opts = None,
-        one_hot_encode  = False,
+        bg_suppression_opts = None
     )
     
-    # Load the model
+    (dataset_td,) = get_datasets(
+        splits          = [args.split_td],
+        norm            = norm,
+        paths           = dataset_params_td['paths_processed'],
+        paths_original  = dataset_params_td['paths_original'], 
+        paths_normalized_h5 = None,
+        use_original_imgs = train_ddpm_cfg['use_original_imgs'],
+        one_hot_encode  = train_ddpm_cfg['one_hot_encode'],
+        normalize       = train_ddpm_cfg['normalize'],
+        image_size      = train_ddpm_cfg['image_size'],
+        resolution_proc = dataset_params_td['resolution_proc'],
+        dim_proc        = dataset_params_td['dim'],
+        n_classes       = dataset_params_td['n_classes'],
+        aug_params      = train_ddpm_cfg['augmentation'] if args.with_augmentation else None,
+        deformation     = None,
+        load_original   = True,
+        bg_suppression_opts = None
+    )
+    
+    img_sd = dataset_sd[128][0]
+    img_td = dataset_td[128][0]
+    
+    
+    # Load trained ddpm
     # :===============================================================:
-    train_config = run_params['training']['ddpm']
-
-    timesteps           = train_config['timesteps']
-    sampling_timesteps  = train_config['sampling_timesteps']
-
-    # Load trained ddpm 
-    ddpm = load_ddpm_from_configs_and_cpt(
-        train_ddpm_cfg=run_params['training']['ddpm'],
-        model_ddpm_cfg=run_params['model']['ddpm_unet'],
-        n_classes=dataset_params['n_classes'],  
-        cpt_fp=args.cpt_fp, 
+    timesteps           = train_ddpm_cfg['timesteps']
+    img_size            = dataset_sd.image_size[-1]
+    
+    ddpm = load_cddpm_from_configs_and_cpt(
+        train_ddpm_cfg=train_ddpm_cfg,
+        model_ddpm_cfg=model_ddpm_cfg,
+        n_classes=n_classes,  
+        cpt_fp=os.path.join(args.ddpm_dir, args.cpt_fn),
+        img_size=img_size,
         device=device
         )
+    ddpm.eval()
+    
+    # Get the relevant mismatch args
+    if args.mismatch_mode != 'none':
+        dataset_type = map_dataset_to_dataset_type[args.dataset_td if args.use_td_img else args.dataset_sd]
+        mismatch_args = mismatch_args_per_dataset_type[dataset_type]
+        mismatch_args = mismatch_args[args.mismatch_mode]
+    else:
+        mismatch_args = {}
     
     # Start the evaluation
     # :===============================================================:
     noise_timesteps = np.linspace(0, timesteps - 1, args.num_t_samples_per_img, dtype=int)
-    metrics_per_t = defaultdict(list)
-            
+    metrics_per_t_sd = defaultdict(list)
+    metrics_per_t_td = defaultdict(list)
+    
+    vol_depth = dataset_sd.dim_proc[0]     
+    no_mismaches_found_count = 0   
+    
     for i in tqdm(range(args.num_iterations)):
         # Sample random image from a random volume in a given range
-        img_size = dataset.image_size[-1]   # DHW
-        vol_idx = random.randint(0, dataset.num_vols - 1)
-        slice_idx = random.randint(int(args.frac_sample_range[0] * img_size),
-                                   min(int(args.frac_sample_range[1] * img_size), img_size - 1))
-        img, _ = dataset[dataset.vol_and_z_idx_to_idx(vol_idx, slice_idx)]    
-        img = img.to(device)
+        vol_idx = random.randint(0, dataset_sd.num_vols - 1)
+        slice_idx = random.randint(int(args.frac_sample_range[0] * vol_depth),
+                                   min(int(args.frac_sample_range[1] * vol_depth), vol_depth - 1))
         
+        img_sd, seg_sd = dataset_sd[dataset_sd.vol_and_z_idx_to_idx(vol_idx, slice_idx)]    
+        img_sd = img_sd.to(device)
+        seg_sd = seg_sd.to(device)
+        
+        img_td, seg_td = dataset_td[dataset_td.vol_and_z_idx_to_idx(vol_idx, slice_idx)]
+        img_td = img_td.to(device)
+        seg_td = seg_td.to(device)
+        plt.imsave('img_sd.png', img_sd.squeeze().cpu().numpy(), cmap='gray')
+        plt.imsave('img_td.png', img_td.squeeze().cpu().numpy(), cmap='gray')
+        breakpoint()
         # Iterate over volumes and calculate the denoising performance     
-        # Get the mismatching images
+        #   on the source and target domains
         # :===============================================================:
-        mismatch_ds = dataset.get_related_images(
+        mismatch_dataset = dataset_td if args.use_td_img else dataset_sd
+        
+        mismatch_ds = mismatch_dataset.get_related_images(
             vol_idx=vol_idx,
             z_idx=slice_idx,
             mode=args.mismatch_mode,
-            n=args.n_mismatches
+            n=args.n_mismatches,
+            **mismatch_args
         )
         
-        if len(mismatch_ds) == 0:
+        if len(mismatch_ds) == 0 and args.mismatch_mode != 'none':
             print('Warning: No mismatching images found')
+            no_mismaches_found_count += 1
             continue
         
         mismatch_dl = DataLoader(
@@ -171,42 +310,59 @@ if __name__ == '__main__':
         # Evaluate the linear denoising for each t
         # :===============================================================:
         for t in noise_timesteps:
-            ddpm_loss_sample = 0
+
+            # Calculate loss in source domain            
+            with torch.no_grad():
+                ddpm_loss_sample_sd = ddpm.p_losses_conditioned_on_img(
+                    ddpm.normalize(img_sd.unsqueeze(0)),
+                    torch.full((1,), t, device=device).long(),
+                    ddpm.normalize(seg_sd.unsqueeze(0))
+                )
+            metrics_per_t_sd[t].append(ddpm_loss_sample_sd.item())
+            
+            # Calculate loss in target domain and/or label mismatches
+            ddpm_loss_sample_td = 0
             
             for _, seg_mismatch in mismatch_dl:    
                 seg_mismatch = seg_mismatch.to(device)
                 b = seg_mismatch.shape[0]
                 
-                img_b = img.repeat(b, 1, 1, 1)
+                img_mismatch = img_td if args.use_td_img else img_sd
+                img_mismatch_b = img_mismatch.repeat(b, 1, 1, 1)
                 
                 # Calculate the ddpm_loss
+                breakpoint()
                 t_tch = torch.full((b,), t, device=device).long()
-                img_b = ddpm.normalize(img_b)
+                img_mismatch_b = ddpm.normalize(img_mismatch_b)
                 seg_mismatch = ddpm.normalize(seg_mismatch)
-                
-                ddpm_loss_sample += (1 / len(mismatch_dl)) * ddpm.p_losses_conditioned_on_img(img_b, t_tch, seg_mismatch)
+
+                with torch.no_grad():                
+                    ddpm_loss_sample_td += (1 / len(mismatch_dl)) * \
+                        ddpm.p_losses_conditioned_on_img(img_mismatch_b, t_tch, seg_mismatch)
             
-            metrics_per_t[t].append(ddpm_loss_sample.item())
-            
+            metrics_per_t_td[t].append(ddpm_loss_sample_td.item())
+    
+    print(f'No mismatches found: {no_mismaches_found_count}, '
+          f'that is {no_mismaches_found_count/args.num_iterations:.2%} iterations')
+    
     # Save the results
     # :===============================================================:
-    loss_per_t_df = pd.DataFrame(metrics_per_t)
-    loss_per_t_df.to_csv(os.path.join(out_dir, f'loss_per_t_{args.mismatch_mode}.csv'))
+    loss_per_t_sd_df = pd.DataFrame(metrics_per_t_sd)
+    loss_per_t_sd_df.to_csv(os.path.join(out_dir, f'loss_per_t_sd_{args.mismatch_mode}.csv'))
+    
+    loss_per_t_td_df = pd.DataFrame(metrics_per_t_td)
+    loss_per_t_td_df.to_csv(os.path.join(out_dir, f'loss_per_t_td_{args.mismatch_mode}.csv'))
     
     # Save plot
-    fig, ax = plt.subplots()
-    summary_metrics_df = loss_per_t_df.describe()
-    plt.errorbar(
-            x=summary_metrics_df.loc['mean'].index,
-            y=summary_metrics_df.loc['mean'],
-            yerr=summary_metrics_df.loc['std'], 
-            fmt='-o',
-            label='last_ti_value'
-            )
-    plt.yscale('log')
+    shift_label = args.dataset_td if args.use_td_img else args.dataset_sd
+    shift_label += f'_{args.split_td}' + f"_mismatch_{args.mismatch_mode}" \
+        if args.mismatch_mode != 'none' else ''
     
-    # Plot the mean of the best_t0_value with confidence interval
-    plt.axhline(y=summary_metrics_df.loc['mean'].mean(),
-                color='r', linestyle='--', label='mean loss')
-
-    plt.savefig(os.path.join(out_dir, f'loss_per_t_{args.mismatch_mode}.png'))
+    plot_losses(
+        loss_per_t_sd_df, loss_per_t_td_df,
+        baseline_label=f'{args.dataset_sd}_{args.split_sd}', 
+        shift_label=shift_label,
+        output_path=os.path.join(out_dir, f'loss_per_t_{args.mismatch_mode}.png')
+    )
+    
+    print('Done!')

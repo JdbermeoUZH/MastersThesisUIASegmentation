@@ -70,7 +70,7 @@ class ConditionalGaussianDiffusion(GaussianDiffusion):
         max_t = default(max_t, self.num_timesteps)
         t = torch.randint(min_t, max_t, (b,), device=device).long()
         img = self.normalize(img)
-        cond_img = self.normalize(cond_img.type(torch.int8))  
+        cond_img = self.normalize(cond_img)  
         
         if img.max() > 1 or img.min() < -1:
             print('Warning: img is not normalized between -1 and 1'
