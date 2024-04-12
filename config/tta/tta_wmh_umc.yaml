@@ -72,7 +72,7 @@ dae:
 
 
 dae_and_ddpm:
-  wandb_project: mt-tta-wmh
+  wandb_project: mt-tta-wmh-regularize_x_and_x_norm
   logdir: /scratch_net/biwidl319/jbermeo/logs/wmh/tta/dae_and_cddpm/tests/04_02
   dae_dir: /scratch_net/biwidl319/jbermeo/data/models/wmh/dae/umc
   ddpm_dir: /scratch_net/biwidl319/jbermeo/logs/wmh/ddpm/normalized_imgs/no_bg_supp_3x3_conv/3_19/batch_size_128_cond_by_concat_multi_gpu
@@ -80,9 +80,12 @@ dae_and_ddpm:
 
   seg_with_bg_supp: False
 
+  x_norm_regularization_loss: null
+
   ddpm_loss_beta: 1.0
   dae_loss_alpha: 1.0
   ddpm_sample_guidance_eta: 0.0
+  x_norm_regularization_loss_gamma: 0.0
 
   use_ddpm_after_step: null # 500
   use_ddpm_after_dice: 0.5 # 0.5

@@ -74,6 +74,8 @@ def preprocess_cmd_args() -> argparse.Namespace:
     parser.add_argument('--ddpm_loss_beta', type=float, help='Weight for DDPM loss. Default: 1.0')
     parser.add_argument('--dae_loss_alpha', type=float, help='Weight for DAE loss. Default: 1.0')
     parser.add_argument('--ddpm_sample_guidance_eta', type=float, help='Eta for DDPM sampling guidance. Default: None')
+    parser.add_argument('--x_norm_regularization_loss', type=str, help='Type of x_norm regularization loss. Default: None', choices=['sift', 'zncc', 'mi', None])
+    parser.add_argument('--x_norm_regularization_loss_gamma', type=float, help='Gamma for x_norm regularization loss. Default: 1.0')
     parser.add_argument('--frac_vol_diffusion_tta', type=float, help='Fraction of volume to diffuse. Default: 0.5')
     parser.add_argument('--use_ddpm_after_step', type=int, help='Use DDPM after x steps. Default: None')
     parser.add_argument('--use_ddpm_after_dice', type=float, help='Use DDPM after dice is below x. Default: None')
@@ -275,15 +277,17 @@ if __name__ == '__main__':
     dae_loss_alpha              = tta_config[tta_mode]['dae_loss_alpha']
     ddpm_loss_beta              = tta_config[tta_mode]['ddpm_loss_beta']
     ddpm_sample_guidance_eta    = tta_config[tta_mode]['ddpm_sample_guidance_eta']
-
+    x_norm_regularization_gamma = tta_config[tta_mode]['x_norm_regularization_loss_gamma']
     seg_with_bg_supp            = tta_config[tta_mode]['seg_with_bg_supp']
+
+    x_norm_regularization_loss  = tta_config[tta_mode]['x_norm_regularization_loss']
 
     # DAE-TTA params
     alpha                       = tta_config[tta_mode]['alpha']
     beta                        = tta_config[tta_mode]['beta']
     rescale_factor              = train_params_dae['dae']['rescale_factor']
     bg_suppression_opts_tta     = tta_config[tta_mode]['bg_suppression_opts']
-    use_atlas_only_for_init    = tta_config[tta_mode]['use_atlas_only_for_init']
+    use_atlas_only_for_init     = tta_config[tta_mode]['use_atlas_only_for_init']
     
     # DDPM-TTA params    
     minibatch_size_ddpm         = tta_config[tta_mode]['minibatch_size_ddpm']
@@ -294,6 +298,7 @@ if __name__ == '__main__':
     min_max_int_norm_imgs       = tta_config[tta_mode]['min_max_int_norm_imgs']
     use_y_pred_for_ddpm_loss    = tta_config[tta_mode]['use_y_pred_for_ddpm_loss']
     use_y_gt_for_ddpm_loss      = tta_config[tta_mode]['use_y_gt_for_ddpm_loss']
+    detach_x_norm_from_ddpm_loss= tta_config[tta_mode]['detach_x_norm_from_ddpm_loss']
     use_ddpm_after_step         = tta_config[tta_mode]['use_ddpm_after_step']
     use_ddpm_after_dice         = tta_config[tta_mode]['use_ddpm_after_dice']
     warmup_steps_for_ddpm_loss  = tta_config[tta_mode]['warmup_steps_for_ddpm_loss']
@@ -303,33 +308,35 @@ if __name__ == '__main__':
         seg                     = seg,
         dae                     = dae,
         atlas                   = atlas,
-        n_classes               = n_classes,
         ddpm                    = ddpm,          
-        loss_func               = DiceLoss(),
+        n_classes               = n_classes,
         learning_rate           = learning_rate,
+        seg_with_bg_supp        = seg_with_bg_supp,
         dae_loss_alpha          = dae_loss_alpha,
         alpha                   = alpha,
         beta                    = beta,
-        use_atlas_only_for_init=use_atlas_only_for_init,
-        seg_with_bg_supp        = seg_with_bg_supp,
+        use_atlas_only_for_init = use_atlas_only_for_init,
         rescale_factor          = rescale_factor,
-        bg_suppression_opts     = bg_suppression_opts,
-        bg_suppression_opts_tta = bg_suppression_opts_tta,    
         ddpm_loss_beta          = ddpm_loss_beta,
         minibatch_size_ddpm     = minibatch_size_ddpm,
         frac_vol_diffusion_tta  = frac_vol_diffusion_tta,
         min_t_diffusion_tta     = min_t_diffusion_tta,
         max_t_diffusion_tta     = max_t_diffusion_tta,
-        ddpm_sample_guidance_eta=ddpm_sample_guidance_eta,
-        sampling_timesteps      = sampling_timesteps,
-        wandb_log               = wandb_log,
         min_max_int_norm_imgs   = min_max_int_norm_imgs,
         use_y_pred_for_ddpm_loss=use_y_pred_for_ddpm_loss,
         use_y_gt_for_ddpm_loss  = use_y_gt_for_ddpm_loss,
+        detach_x_norm_from_ddpm_loss=detach_x_norm_from_ddpm_loss,
         use_ddpm_after_step     = use_ddpm_after_step,
         use_ddpm_after_dice     = use_ddpm_after_dice,
         warmup_steps_for_ddpm_loss=warmup_steps_for_ddpm_loss,
+        ddpm_sample_guidance_eta=ddpm_sample_guidance_eta,
+        sampling_timesteps      = sampling_timesteps,
+        x_norm_regularization_loss_gamma = x_norm_regularization_gamma,
+        x_norm_regularization_loss = x_norm_regularization_loss,
+        wandb_log               = wandb_log,
         device                  = device,
+        bg_suppression_opts     = bg_suppression_opts,
+        bg_suppression_opts_tta = bg_suppression_opts_tta,    
     )
     
     # Do TTA with a DAE

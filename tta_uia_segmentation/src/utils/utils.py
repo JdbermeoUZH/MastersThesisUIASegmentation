@@ -49,6 +49,10 @@ def get_seed():
     seed = random.randint(0, 2**64 - 1)  # Random 64 bit integer
     return seed
 
+def from_dict_or_default(dict_, key, d):
+    if key in dict_:
+        return dict_[key]
+    return d
 
 def seed_everything(seed:int=0) -> None:
     """
