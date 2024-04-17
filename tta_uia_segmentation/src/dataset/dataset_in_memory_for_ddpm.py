@@ -146,6 +146,7 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
                                   scale=1)
             if self.one_hot_encode:
                 labels = du.class_to_onehot(labels, self.n_classes, class_dim=0)
+                labels = labels.type(torch.int8)
             else:
                 labels = du.normalize(type='min_max', data=labels, 
                                       min=0, max=self.n_classes - 1, 
@@ -153,7 +154,7 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
         
         elif self.one_hot_encode:
             labels = du.class_to_onehot(labels, self.n_classes, class_dim=0) 
-        
+            labels = labels.type(torch.int8)
         else:
             raise ValueError('Only min_max normalization is supported at the moment.')
 

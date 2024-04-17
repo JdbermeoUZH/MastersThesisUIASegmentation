@@ -1,3 +1,4 @@
+import random
 from tqdm import tqdm
 
 import torch
@@ -16,8 +17,14 @@ class ConditionalGaussianDiffusion(GaussianDiffusion):
     
     def __init__(
         self,
+        also_uncondtional: bool = False,
+        uncoditional_rate: float = 0.2,
         *args, **kwargs):
         super().__init__(*args, **kwargs)
+        
+        assert uncoditional_rate >= 0 and uncoditional_rate <= 1, 'uncoditional_rate must be between 0 and 1'
+        self.also_uncondtional = also_uncondtional
+        self.uncoditional_rate = uncoditional_rate
         
         assert self.model.self_condition, 'Unet model must be defined in self condition mode' 
                 
@@ -61,6 +68,7 @@ class ConditionalGaussianDiffusion(GaussianDiffusion):
     def forward(self, img, cond_img, min_t=None, max_t=None, *args, **kwargs):
         b, c, h, w, device, img_size, = *img.shape, img.device, self.image_size
         img_size = img_size[0] if isinstance(img_size, tuple) else img_size
+        
         assert h == img_size and w == img_size, f'height and width of image must be {img_size}, \
             but got {h} and {w} respectively'
             
@@ -79,6 +87,13 @@ class ConditionalGaussianDiffusion(GaussianDiffusion):
         if cond_img.max() > 1 or cond_img.min() < -1:
             print('Warning: cond_img is not normalized between -1 and 1'
                   f'torch.unique(cond_img): {torch.unique(cond_img)}')
+            
+        if self.also_uncondtional:
+            assert cond_img.shape[1] > 1, 'cond_img must be one hot encoded'
+            
+            # Select randomly whether it will be a conditional or forward pass
+            if random.random() < self.uncoditional_rate:
+                cond_img = cond_img * 0
         
         return self.p_losses_conditioned_on_img(img, t, cond_img, *args, **kwargs)      
     

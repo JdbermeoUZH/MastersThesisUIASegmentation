@@ -82,8 +82,8 @@ dae_and_ddpm:
 
   x_norm_regularization_loss: null
 
-  ddpm_loss_beta: 1.0
   dae_loss_alpha: 1.0
+  ddpm_loss_beta: 1.0
   ddpm_sample_guidance_eta: 0.0
   x_norm_regularization_loss_gamma: 0.0
 

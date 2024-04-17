@@ -95,6 +95,7 @@ ddpm:
   image_size:                   [1, 256, 256]
   rescale_factor:               [1, 1, 1]
   condition_by_mult:            True
+  
 
   learning_rate:                8e-5      # 1e-4 in the constructor
   train_num_steps:              20000     # 50000 for batch_size 16, or 10,000 for batch_size 128

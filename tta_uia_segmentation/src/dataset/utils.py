@@ -19,13 +19,13 @@ def onehot_to_class(onehot, class_dim=1, keepdim=True):
     return onehot.argmax(dim=class_dim, keepdim=keepdim)
 
 
-def normalize_quantile(data, min_p=0, max_p=1.0):
+def normalize_quantile(data, min_p=0, max_p=1.0, clip: bool = True):
     min = torch.quantile(data, min_p)
     max = torch.quantile(data, max_p)
-    return normalize_min_max(data, min, max)
+    return normalize_min_max(data, min, max, clip=clip)
 
 
-def normalize_min_max(data, min=None, max=None, scale: float = 1):
+def normalize_min_max(data, min=None, max=None, scale: float = 1, clip: bool = True):
     if min is None:
         min = torch.min(data)
     if max is None:
@@ -35,7 +35,9 @@ def normalize_min_max(data, min=None, max=None, scale: float = 1):
         data = torch.zeros_like(data)
     else:
         data = (data - min) / (max - min)
-    data = torch.clip(data, 0, 1)
+    
+    if clip:
+        data = torch.clip(data, 0, 1)
     data = scale * data
     
     if scale == 255:

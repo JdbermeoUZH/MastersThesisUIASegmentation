@@ -4,7 +4,7 @@ import argparse
 #---------- Default args
 synthseg_dir_def            = '/scratch_net/biwidl319/jbermeo/SynthSeg/'
 input_dir_def               = '/scratch_net/biwidl319/jbermeo/data/wmh_miccai'
-output_dir_def              = '/scratch_net/biwidl319/jbermeo/data/preprocessed/wmh'
+output_dir_def              = '/scratch_net/biwidl319/jbermeo/data/preprocessed/synthseg_predictions/on_peprocessed_vols/wmh'
 #----------
 
 
@@ -28,7 +28,7 @@ if __name__ == '__main__':
     
     for split in splits:
         print('Split:', split)
-        input_dir = os.path.join(args.input_dir, args.dataset, f'original_vols_as_nifti_files/{split}/imgs')
+        input_dir = os.path.join(args.input_dir, args.dataset, split, 'imgs')
         output_dir = os.path.join(args.output_dir, args.dataset, split)
         os.makedirs(output_dir, exist_ok=True)
         

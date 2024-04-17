@@ -284,7 +284,7 @@ class TTADAEandDDPM(TTADAE):
 
             # Update Pseudo label, with DAE or Atlas, depending on which has a better agreement
             # :===============================================================:
-            if step % update_dae_output_every == 0:
+            if step % update_dae_output_every == 0 and self.dae_loss_alpha > 0 and not self.use_y_pred_for_ddpm_loss:
                 # Only update the pseudo label if it has not been calculated yet or
                 #  if the beta is less than 1.0
 
@@ -313,6 +313,11 @@ class TTADAEandDDPM(TTADAE):
                         num_workers=num_workers,
                         drop_last=False,
                     )
+                    
+            elif self.dae_loss_alpha == 0 and self.use_y_pred_for_ddpm_loss:
+                # If we are not using the pl from the DAE or atlas for the DAE loss or to condition the DDPM
+                #   then pack the list with null values
+                label_dataloader = [[None]] * len(volume_dataloader)
                     
             # Define parameters related to the DDPM loss for the current step
             # :============================================================:
