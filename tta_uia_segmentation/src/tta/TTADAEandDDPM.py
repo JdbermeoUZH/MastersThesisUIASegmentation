@@ -65,6 +65,7 @@ class TTADAEandDDPM(TTADAE):
         ddpm: ConditionalGaussianDiffusion,
         dae_loss_alpha: float = 0.5,
         ddpm_loss_beta: float = 1.0,
+        unconditional_ddpm_loss_weight: float = 1.0,
         ddpm_loss_adaptive_beta_init: float = 1.0,
         ddpm_sample_guidance_eta: float = 0.0,
         x_norm_regularization_loss_gamma: float = 1.0,
@@ -92,6 +93,7 @@ class TTADAEandDDPM(TTADAE):
         
         self.dae_loss_alpha = dae_loss_alpha
         self.ddpm_loss_beta = ddpm_loss_beta
+        self.unconditional_ddpm_loss_weight = unconditional_ddpm_loss_weight
         self.ddpm_loss_adaptive_beta_init = ddpm_loss_adaptive_beta_init
         self.ddpm_loss_adaptive_beta = ddpm_loss_adaptive_beta_init
         self.ddpm_sample_guidance_eta = ddpm_sample_guidance_eta
@@ -325,11 +327,12 @@ class TTADAEandDDPM(TTADAE):
             b_i_for_ddpm_loss = np.random.choice(
                 range(len(volume_dataloader)), num_batches_for_ddpm_loss, replace=False)
             
-            # Reweigh factor for the ddpm loss to take into account how many 
+            # Calculate a reweigh factor for the ddpm loss to take into account how many 
             #  times less it is used than the dae loss or if averaged over entire volume
             ddpm_reweigh_factor = (1 / len(b_i_for_ddpm_loss)) * \
                 (1 if accumulate_over_volume else len(volume_dataloader))  
 
+            # Reweigh the factor in case a warmup is used for the loss
             warmup_factor = warmup_steps_for_ddpm_loss.pop() \
                 if len(warmup_steps_for_ddpm_loss) > 0 and self.use_ddpm_loss else 1
             
@@ -432,7 +435,7 @@ class TTADAEandDDPM(TTADAE):
                         x_cond = y_gt.type(torch.int8).to(device)
                         
                     elif not self.use_y_pred_for_ddpm_loss:
-                        x_cond = y_pl.type(torch.int8).to(device)
+                        x_cond = y_pl.to(device)
                         
                         # Upsample the segmentation mask to the same size as the input image, if neccessary
                         rescale_factor = np.array(x.shape) / np.array(x_cond.shape)
@@ -451,14 +454,28 @@ class TTADAEandDDPM(TTADAE):
                         x_cond = None
                         
                     x_norm_grads_old = self._get_gradients_x_norm()
-                                        
+                    
+                    # Calculate gradients wrt conditional DDPM. This represents log p(x|y)
                     ddpm_loss = self._calculate_ddpm_gradients(
                         x,
                         x_cond,
-                        ddpm_reweigh_factor=ddpm_reweigh_factor,
+                        ddpm_reweigh_factor=self.ddpm_loss_beta * ddpm_reweigh_factor,
                         max_int_norm_imgs=running_max,
-                        min_int_norm_imgs=running_min
+                        min_int_norm_imgs=running_min,
+                        use_unconditional_ddpm=False
                     )
+                    
+                    
+                    # Calculate gradients wrt unconditional DDPM. This represents log 1/p(x), which means we subtract it 
+                    if self.unconditional_ddpm_loss_weight > 0:
+                        ddpm_loss = self._calculate_ddpm_gradients(
+                            x,
+                            x_cond,
+                            ddpm_reweigh_factor= -1 * self.unconditional_ddpm_loss_weight * ddpm_reweigh_factor,
+                            max_int_norm_imgs=running_max,
+                            min_int_norm_imgs=running_min,
+                            use_unconditional_ddpm=True
+                        )
                     
                     x_norm_grads_new = self._get_gradients_x_norm()
                     self.x_norm_grads_ddpm_loss = add_gradients_dicts(
@@ -585,33 +602,54 @@ class TTADAEandDDPM(TTADAE):
         ddpm_reweigh_factor: float = 1,
         min_int_norm_imgs: float = 0,
         max_int_norm_imgs: float = 1,
+        use_unconditional_ddpm: bool = False,
         min_max_tolerance: float = 2e-1
         ) -> torch.Tensor:
+        """
+        
+        Assumes x_cond is one hot encoded
+        
+        Args:
+            x (torch.Tensor): _description_
+            device (str): _description_
+            x_cond (Optional[torch.Tensor], optional): _description_. Defaults to None.
+            bg_mask (Optional[torch.Tensor], optional): _description_. Defaults to None.
+            ddpm_reweigh_factor (float, optional): _description_. Defaults to 1.
+            min_int_norm_imgs (float, optional): _description_. Defaults to 0.
+            max_int_norm_imgs (float, optional): _description_. Defaults to 1.
+            use_unconditional_ddpm (bool, optional): _description_. Defaults to False.
+            min_max_tolerance (float, optional): _description_. Defaults to 2e-1.
+
+        Returns:
+            torch.Tensor: _description_
+        """
                 
         # The DDPM is memory intensive, accumulate gradients over minibatches
         ddpm_loss_value = 0
         minibatch_size = self.minibatch_size_ddpm
         num_minibatches = np.ceil(x.shape[0] / minibatch_size)
         ddpm_reweigh_factor = ddpm_reweigh_factor * (1 / num_minibatches)  
-        
-        # Multiply the reweight factor by the loss' beta 
-        ddpm_reweigh_factor *= self.ddpm_loss_beta  
-        
+                
         for i in range(0, x.shape[0], minibatch_size):
             x_minibatch = x[i: i + minibatch_size]
             
             x_norm_mb = self.norm(x_minibatch)
             
-            if x_cond is None:
-                # Use predicted segmentation mask for the DDPM loss
-                _, x_cond_mb, _ = self.forward_pass_seg(
-                    x_norm=x_norm_mb, bg_mask=bg_mask, 
-                    bg_suppression_opts=self.bg_suppression_opts_tta, 
-                    device=device
-                )
+            if use_unconditional_ddpm:
+                x_cond_shape = (x_norm_mb.shape[0], self.n_classes, *x_norm_mb.shape[2:])
+                x_cond_mb = torch.zeros_like(x_cond_shape)
+                
             else:
-                x_cond_mb = x_cond[i: i + minibatch_size]
-                    
+                if x_cond is None:
+                    # Use predicted segmentation mask for the DDPM loss
+                    _, x_cond_mb, _ = self.forward_pass_seg(
+                        x_norm=x_norm_mb, bg_mask=bg_mask, 
+                        bg_suppression_opts=self.bg_suppression_opts_tta, 
+                        device=device
+                    )
+                else:
+                    x_cond_mb = x_cond[i: i + minibatch_size]
+
             # Normalize the input image between 0 and 1, (required by the DDPM)
             x_norm_mb_ddpm = x_norm_mb if not self.detach_x_norm_from_ddpm_loss else x_norm_mb.detach().clone()
             

@@ -89,10 +89,12 @@ def load_cddpm_from_configs_and_cpt(
     ).to(device)
 
     ddpm = ConditionalGaussianDiffusion(
-        model,
+        model=model,
         image_size = img_size,
         timesteps = timesteps,    # Range of steps in diffusion process
-        sampling_timesteps = sampling_timesteps 
+        sampling_timesteps = sampling_timesteps,
+        also_unconditional = train_ddpm_cfg['also_unconditional'],
+        unconditional_rate = train_ddpm_cfg['unconditional_rate'], 
     ).to(device)
     
     cpt = torch.load(cpt_fp, map_location=device)

@@ -37,7 +37,8 @@ class ConditionalUnet(Unet):
         attn_heads = 4,
         full_attn = None,    # defaults to full attention only for inner most layer
         flash_attn = False,
-        condition_by_concat: bool = True
+        condition_by_concat: bool = True,
+        also_unconditional: bool = False,
         
     ):
         super(Unet, self).__init__()
@@ -58,8 +59,9 @@ class ConditionalUnet(Unet):
                 self.condition_by_concat = True
 
             # If not conditioning will happen via multiplication
+            #  if also_unconditional, then add one extra channel for the conditional mode
             else: 
-                input_channels = n_classes
+                input_channels = n_classes if not also_unconditional else n_classes + 1
                 self.condition_by_mult = True
         
         else:

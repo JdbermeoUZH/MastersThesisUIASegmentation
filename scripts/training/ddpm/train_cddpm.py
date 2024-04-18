@@ -65,7 +65,7 @@ def preprocess_cmd_args() -> argparse.Namespace:
     # Training loop
     # -------------:
     parser.add_argument('--objective', type=str, help='Objective to use for training. Default: gaussian')
-    parser.add_argument('--also_uncondtional', type=parse_bool, help='Whether to also train an unconditional model. Default: False')
+    parser.add_argument('--also_unconditional', type=parse_bool, help='Whether to also train an unconditional model. Default: False')
     parser.add_argument('--batch_size', type=int, help='Batch size for training. Default: 4')
     parser.add_argument('--gradient_accumulate_every', type=int, help='Number of steps to accumulate gradients over. Default: 1')
     parser.add_argument('--train_num_steps', type=int, help='Total number of training steps. Default: 50000') 
@@ -252,7 +252,8 @@ if __name__ == '__main__':
         n_classes=n_classes,   
         flash_attn=True,
         image_channels=channels, 
-        condition_by_concat= not condition_by_mult
+        condition_by_concat=not condition_by_mult,
+        also_unconditional=also_unconditional,
     )
     
     diffusion = ConditionalGaussianDiffusion(
@@ -263,6 +264,7 @@ if __name__ == '__main__':
         sampling_timesteps=sampling_timesteps,
         also_unconditional=also_unconditional,
         unconditional_rate=unconditional_rate,
+        condition_by_concat=not condition_by_mult,
     )
 
     # Execute the training loop

@@ -19,6 +19,7 @@ class ConditionalGaussianDiffusion(GaussianDiffusion):
         self,
         also_unconditional: bool = False,
         unconditional_rate: float = 0.2,
+        condition_by_concat: bool = True,
         *args, **kwargs):
         
         super().__init__(*args, **kwargs)
@@ -26,6 +27,7 @@ class ConditionalGaussianDiffusion(GaussianDiffusion):
         assert unconditional_rate >= 0 and unconditional_rate <= 1, 'uncoditional_rate must be between 0 and 1'
         self.also_unconditional = also_unconditional
         self.uncoditional_rate = unconditional_rate
+        self.condition_by_concat = condition_by_concat
         
         assert self.model.self_condition, 'Unet model must be defined in self condition mode' 
                 
@@ -75,6 +77,11 @@ class ConditionalGaussianDiffusion(GaussianDiffusion):
             
         assert cond_img.shape[-2:] == img.shape[-2:], 'cond_img and img must have the same shape in H and W'
         
+        if self.also_unconditional and not self.condition_by_concat:
+            # Add an unconditional channel of zeros to the one hot encoded cond_img
+            #  if conditioning by multiplication
+            cond_img = torch.cat([cond_img, torch.zeros(b, 1, h, w, device = cond_img.device)], dim = 1)
+        
         min_t = default(min_t, 0)
         max_t = default(max_t, self.num_timesteps)
         t = torch.randint(min_t, max_t, (b,), device=device).long()
@@ -94,7 +101,12 @@ class ConditionalGaussianDiffusion(GaussianDiffusion):
             
             # Select randomly whether it will be a conditional or forward pass
             if random.random() < self.uncoditional_rate:
-                cond_img = cond_img * 0
+                if self.condition_by_concat:
+                    cond_img = cond_img * 0
+                else:
+                    # Project the image only to the unconditional channel
+                    cond_img[:, :-1] = 0
+                    cond_img[:, -1] = 1
         
         return self.p_losses_conditioned_on_img(img, t, cond_img, *args, **kwargs)      
     

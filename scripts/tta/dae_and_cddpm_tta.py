@@ -276,6 +276,7 @@ if __name__ == '__main__':
     learning_rate               = tta_config[tta_mode]['learning_rate']
     dae_loss_alpha              = tta_config[tta_mode]['dae_loss_alpha']
     ddpm_loss_beta              = tta_config[tta_mode]['ddpm_loss_beta']
+    unconditional_ddpm_loss_weight = tta_config[tta_mode]['unconditional_ddpm_loss_weight']
     ddpm_sample_guidance_eta    = tta_config[tta_mode]['ddpm_sample_guidance_eta']
     x_norm_regularization_gamma = tta_config[tta_mode]['x_norm_regularization_loss_gamma']
     seg_with_bg_supp            = tta_config[tta_mode]['seg_with_bg_supp']
@@ -318,6 +319,7 @@ if __name__ == '__main__':
         use_atlas_only_for_init = use_atlas_only_for_init,
         rescale_factor          = rescale_factor,
         ddpm_loss_beta          = ddpm_loss_beta,
+        unconditional_ddpm_loss_weight = unconditional_ddpm_loss_weight,
         minibatch_size_ddpm     = minibatch_size_ddpm,
         frac_vol_diffusion_tta  = frac_vol_diffusion_tta,
         min_t_diffusion_tta     = min_t_diffusion_tta,

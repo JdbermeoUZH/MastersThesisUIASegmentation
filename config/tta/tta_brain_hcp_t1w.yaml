@@ -16,7 +16,6 @@ num_workers: 0
 device: cuda
 seed: 0
 
-
 bg_suppression_opts:
   type: none  # possible values: none, fixed_value, random_value
   bg_value: -0.5
@@ -25,6 +24,7 @@ bg_suppression_opts:
   mask_source: thresholding  # possible values: thresholding, ground_truth
   thresholding: otsu  # possible values: isodata, li, mean, minimum, otsu, triangle, yen
   hole_filling: True
+
 
 dae:
   wandb_project: mt-tta-brain # mt-tta-brain-hcp_t2
@@ -82,8 +82,9 @@ dae_and_ddpm:
   seg_with_bg_supp: False
   x_norm_regularization_loss: null
 
-  ddpm_loss_beta: 1.0
   dae_loss_alpha: 1.0
+  ddpm_loss_beta: 1.0
+  unconditional_ddpm_loss_weight: 1.0
   ddpm_sample_guidance_eta: 0.0
   x_norm_regularization_loss_gamma: 0.0
 
