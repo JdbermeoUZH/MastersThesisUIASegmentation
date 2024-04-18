@@ -96,6 +96,8 @@ ddpm:
   image_size:                   [1, 256, 256]
   rescale_factor:               [1, 1, 1]
   condition_by_mult:            False
+  also_unconditional:           False
+  unconditional_rate:           0.2
 
   objective:                    pred_v   # default is pred_v
   learning_rate:                8e-5      # 1e-4 in the constructor

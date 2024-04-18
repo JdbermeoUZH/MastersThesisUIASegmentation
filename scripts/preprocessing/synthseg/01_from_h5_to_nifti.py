@@ -115,7 +115,7 @@ if __name__ == '__main__':
             nib.save(img_nii, os.path.join(out_dir_imgs, f'vol_{i}.nii.gz'))
             
             # save label as nifti file
-            label_nii = nib.Nifti1Image(label.astype(np.uint8), np.eye(4))
+            label_nii = nib.Nifti1Image(label.astype(np.uint8), affine)
             label_nii.header.set_zooms(pix_size)
             nib.save(label_nii, os.path.join(out_dir_labels, f'vol_{i}_label.nii.gz'))
     

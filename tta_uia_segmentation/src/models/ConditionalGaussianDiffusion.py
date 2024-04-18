@@ -17,14 +17,15 @@ class ConditionalGaussianDiffusion(GaussianDiffusion):
     
     def __init__(
         self,
-        also_uncondtional: bool = False,
-        uncoditional_rate: float = 0.2,
+        also_unconditional: bool = False,
+        unconditional_rate: float = 0.2,
         *args, **kwargs):
+        
         super().__init__(*args, **kwargs)
         
-        assert uncoditional_rate >= 0 and uncoditional_rate <= 1, 'uncoditional_rate must be between 0 and 1'
-        self.also_uncondtional = also_uncondtional
-        self.uncoditional_rate = uncoditional_rate
+        assert unconditional_rate >= 0 and unconditional_rate <= 1, 'uncoditional_rate must be between 0 and 1'
+        self.also_unconditional = also_unconditional
+        self.uncoditional_rate = unconditional_rate
         
         assert self.model.self_condition, 'Unet model must be defined in self condition mode' 
                 
@@ -88,7 +89,7 @@ class ConditionalGaussianDiffusion(GaussianDiffusion):
             print('Warning: cond_img is not normalized between -1 and 1'
                   f'torch.unique(cond_img): {torch.unique(cond_img)}')
             
-        if self.also_uncondtional:
+        if self.also_unconditional:
             assert cond_img.shape[1] > 1, 'cond_img must be one hot encoded'
             
             # Select randomly whether it will be a conditional or forward pass

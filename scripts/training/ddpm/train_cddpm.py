@@ -65,10 +65,12 @@ def preprocess_cmd_args() -> argparse.Namespace:
     # Training loop
     # -------------:
     parser.add_argument('--objective', type=str, help='Objective to use for training. Default: gaussian')
+    parser.add_argument('--also_uncondtional', type=parse_bool, help='Whether to also train an unconditional model. Default: False')
     parser.add_argument('--batch_size', type=int, help='Batch size for training. Default: 4')
     parser.add_argument('--gradient_accumulate_every', type=int, help='Number of steps to accumulate gradients over. Default: 1')
-    parser.add_argument('--train_num_steps', type=int, help='Total number of training steps. Default: 1000000') 
+    parser.add_argument('--train_num_steps', type=int, help='Total number of training steps. Default: 50000') 
     parser.add_argument('--learning_rate', type=float, help='Learning rate for optimizer. Default: 1e-4')
+    parser.add_argument('--uncoditional_rate', type=float, help='Rate at which to forward pass unconditionally. Default: 0.2')
     parser.add_argument('--num_workers', type=int, help='Number of workers for dataloader. Default: 0')
     parser.add_argument('--seed', type=int, help='Seed for random number generators. Default: 0')   
     parser.add_argument('--device', type=str, help='Device to use for training. Default cuda', )
@@ -124,6 +126,7 @@ def get_last_milestone(logdir: str) -> int:
     assert last_milestone != -1, "Could not find the last milestone"
     
     return last_milestone
+
 
 if __name__ == '__main__':
 
@@ -238,6 +241,8 @@ if __name__ == '__main__':
     timesteps           = train_config[train_type]['timesteps']
     sampling_timesteps  = train_config[train_type]['sampling_timesteps']
     condition_by_mult   = train_config[train_type]['condition_by_mult']
+    also_unconditional  = train_config[train_type]['also_unconditional']
+    unconditional_rate  = train_config[train_type]['unconditional_rate']
     
     if accelerator.is_main_process: print(f'Using Device {device}')
     # Model definition
@@ -251,16 +256,19 @@ if __name__ == '__main__':
     )
     
     diffusion = ConditionalGaussianDiffusion(
-        model,
+        model=model,
         image_size=train_config[train_type]['image_size'][-1],
         objective=objective,
         timesteps=timesteps,
-        sampling_timesteps = sampling_timesteps 
+        sampling_timesteps=sampling_timesteps,
+        also_unconditional=also_unconditional,
+        unconditional_rate=unconditional_rate,
     )
 
     # Execute the training loop
     # :=========================================================================:
     if accelerator.is_main_process: print('Defining trainer: training loop, optimizer and loss')
+    
     batch_size                  = train_config[train_type]['batch_size']
     gradient_accumulate_every   = train_config[train_type]['gradient_accumulate_every']
     save_and_sample_every       = train_config[train_type]['save_and_sample_every']

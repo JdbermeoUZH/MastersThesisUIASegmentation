@@ -98,7 +98,7 @@ if __name__ == '__main__':
                 vol, 
                 voxel_size=voxel_size, 
                 out_shape=out_shape, 
-                order = 0, cval=0, orientation='LPS'
+                order = 0, cval=0, orientation='RPS'
             ).get_fdata()
             
             # Remap the labels
