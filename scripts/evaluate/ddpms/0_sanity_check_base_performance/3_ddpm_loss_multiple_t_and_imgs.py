@@ -64,8 +64,11 @@ mismatch_args_per_dataset_type = {
 
 map_dataset_to_dataset_type = {
     'umc': 'wmh',
+    'umc_w_synthseg_labels': 'wmh',
     'nuhs': 'wmh',
+    'nuhs_w_synthseg_labels': 'wmh',
     'vu': 'wmh',
+    'vu_w_synthseg_labels': 'wmh',
     'hcp_t1': 'brain',
     'hcp_t2': 'brain',
     'abide_caltech': 'brain',
@@ -367,5 +370,10 @@ if __name__ == '__main__':
         shift_label=td_label,
         output_path=os.path.join(out_dir, f'loss_per_t_{args.mismatch_mode}.png')
     )
+    
+    # Save average losses to a text file
+    with open(os.path.join(out_dir, f'average_losses_{args.mismatch_mode}.txt'), 'w') as f:
+        f.write(f'Average loss over all timesteps - {sd_label}: {loss_per_t_sd_df.mean().mean()}\n')
+        f.write(f'Average loss over all timesteps - {td_label}: {loss_per_t_td_df.mean().mean()}')
     
     print('Done!')

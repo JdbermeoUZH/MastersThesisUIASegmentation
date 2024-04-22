@@ -54,7 +54,6 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
         self,
         norm: Optional[torch.nn.Module],
         use_original_imgs: bool = False,
-        concatenate_along_channel: bool = False,
         normalize: str = 'min_max',
         one_hot_encode: bool = True, 
         intensity_value_range: Optional[tuple[float, float]] = None,
@@ -63,6 +62,7 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
         paths_normalized_h5: Optional[dict[str, str]] = None,
         shard: int = 0,
         num_shards: int = 1,
+        always_search_for_min_max: bool = False,
         *args,
         **kwargs,
     ):
@@ -84,11 +84,13 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
         
         self.normalized_img_path = paths_normalized_h5[self.split] if paths_normalized_h5 is not None else None
         
-        self.concatenate_along_channel = concatenate_along_channel
         self.normalize = normalize
         self.norm_neg_one_to_one = norm_neg_one_to_one
         self.one_hot_encode = one_hot_encode
         self.num_vols = int(self.images.shape[0] / self.dim_proc[0]) if self.image_size[0] == 1 else self.images.shape[0]
+        
+        self.always_search_for_min_max = always_search_for_min_max
+        self.images_min, self.images_max = np.inf, -np.inf
         
         if intensity_value_range is not None:
             self.images_min, self.images_max = intensity_value_range
@@ -96,6 +98,8 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
             self.images_min, self.images_max = self._find_min_max_in_original_imgs()
         else:
             self.images_min, self.images_max = self._find_min_max_in_normalized_imgs()
+            
+        assert self.images_min != np.inf and self.images_max != -np.inf, 'Could not determine min and max values of normalized images'
         
         print(f'Min and max values of normalized images: {self.images_min}, {self.images_max}')
         
@@ -134,40 +138,36 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
                 
         # Update the min and max values of the images, in case a larger value is observed
         img_max, img_min = images.max(), images.min()   
-        if img_min < self.images_min:
-            self.images_min = img_min
-        if img_max > self.images_max:
-            self.images_max = img_max
+        if self.always_search_for_min_max:
+            if img_min < self.images_min:
+                self.images_min = img_min
+            if img_max > self.images_max:
+                self.images_max = img_max
 
         # Normalize image and label map to [0, 1]
         if self.normalize == 'min_max':
             images = du.normalize(type='min_max', data=images,
                                   max=self.images_max, min=self.images_min,
                                   scale=1)
-            if self.one_hot_encode:
-                labels = du.class_to_onehot(labels, self.n_classes, class_dim=0)
-                labels = labels.type(torch.int8)
-            else:
+            if not self.one_hot_encode:
                 labels = du.normalize(type='min_max', data=labels, 
                                       min=0, max=self.n_classes - 1, 
                                       scale=1)
-        
-        elif self.one_hot_encode:
-            labels = du.class_to_onehot(labels, self.n_classes, class_dim=0) 
-            labels = labels.type(torch.int8)
+        elif self.normalize == 'none':
+            pass
         else:
             raise ValueError('Only min_max normalization is supported at the moment.')
+
+        if self.one_hot_encode:
+            labels = du.class_to_onehot(labels, self.n_classes, class_dim=0) 
+            labels = labels.type(torch.int8)
 
         # Normalize image to [-1, 1], if specified
         if self.norm_neg_one_to_one:
             images = du.normalize_to_neg_one_to_one(images)
             labels = du.normalize_to_neg_one_to_one(labels.type(torch.int8))
         
-        if self.concatenate_along_channel:
-            return torch.concatenate([images, labels], axis=0).float()
-        
-        else:
-            return images, labels    
+        return images, labels    
     
     def sample_slices(self, sample_size: int, range_: tuple[float, float] = (0.2, 0.8)) -> Dataset:
         
@@ -179,37 +179,47 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
         sampled_slices = [np.random.randint(idx_start * min_slice_idx, (idx_start + 1) * max_slice_idx, n_slices) 
                           for idx_start, n_slices in enumerate(n_slices_per_volume)]
         sampled_slices = list(np.concatenate(sampled_slices))
-    
+        
         return Subset(self, sampled_slices)
     
-    def _find_min_max_in_normalized_imgs(self):
+    def _find_min_max_in_normalized_imgs(self) -> tuple[float, float]:
+        img_min, img_max = np.inf, -np.inf
+        
         if self.normalized_img_path is not None:    
             with h5py.File(self.normalized_img_path, 'r') as data:
-                print('DELETE ME')
                 images = data['images'][:]
                 images_min = images.min()
                 images_max = images.max()
         
         elif self.norm is not None:
+            normalize_old = self.normalize
+            self.normalize = 'none'
+            
             print('Determining min and max values of normalized images from a sample of the dataset')
-            self.images_min, self.images_max = np.inf, -np.inf
+            
             sample_dataset = self.sample_slices(min(256, self.__len__()))
             sample_dataset = DataLoader(sample_dataset, batch_size=4, num_workers=2)
+            
+            assert len(sample_dataset) > 0, 'Sample dataset is empty'
             
             for img, _ in sample_dataset:
                 img = img.to(self.norm_device)
                 img = self.norm(img)
                 
                 current_max, current_min = img.max(), img.min()
-                if current_min < self.images_min:
+                if current_min < img_min:
                     images_min = current_min
-                if current_max > self.images_max:
+                if current_max > img_max:
                     images_max = current_max
-                
+            
+            self.normalize = normalize_old
+            
         else: 
             raise ValueError('No normalization model or normalized images were given, '
                              'thus the min and max values of normalized images cannot be determined')
             
+        assert images_min != np.inf and images_max != -np.inf, 'Could not determine min and max values of normalized images'    
+        
         return images_min, images_max 
 
     def _find_min_max_in_original_imgs(self):
