@@ -40,8 +40,7 @@ mismatch_mode           = 'none' #'same_patient_very_different_labels'  # 'same_
 n_mismatches            = 10
 num_t_samples_per_img   = 5 # 20
 num_iterations          = 50 # 500
-with_augmentation       = False
-use_td_img              = True
+with_augmentation       = True
 # :===============================================================:
 
 mismatch_args_per_dataset_type = {
@@ -73,6 +72,11 @@ map_dataset_to_dataset_type = {
 }
 
 
+def check_btw_0_1(*args: torch.Tensor, margin_error = 1e-2):
+    for tensor in args:
+        assert tensor.min() >= 0 - margin_error and tensor.max() <= 1 + margin_error, 'tensor values should be between 0 and 1'    
+
+
 def get_cmd_args():
     parser = argparse.ArgumentParser(description="Check how the DDPM loss behaves for different timesteps and shifts at the images or labels.")
     parse_bool = lambda x: x.lower() in ['true', '1']
@@ -89,7 +93,6 @@ def get_cmd_args():
     parser.add_argument('--frac_sample_range', type=float, nargs=2, default=frac_sample_range, help='Fraction of the image to sample from')
     parser.add_argument('--mismatch_mode', type=str, default=mismatch_mode, help='Mode for label mismatch', choices=['same_patient_very_different_labels', 'same_patient_similar_labels', 'different_patient_similar_labels', 'none'])
     parser.add_argument('--with_augmentation', type=parse_bool, default=with_augmentation, help='Whether to use data augmentation')
-    parser.add_argument('--use_td_img', type=parse_bool, default=use_td_img, help='Whether to use the target domain image')
     parser.add_argument('--output_dir_suffix', type=str, default='', help='Suffix to add to the output directory')
       
     parser.add_argument('--dataset_sd', type=str, default=dataset_sd, help='Source domain dataset to use as baseline')
@@ -230,11 +233,7 @@ if __name__ == '__main__':
         load_original   = True,
         bg_suppression_opts = None
     )
-    
-    img_sd = dataset_sd[128][0]
-    img_td = dataset_td[128][0]
-    
-    
+       
     # Load trained ddpm
     # :===============================================================:
     timesteps           = train_ddpm_cfg['timesteps']
@@ -252,7 +251,7 @@ if __name__ == '__main__':
     
     # Get the relevant mismatch args
     if args.mismatch_mode != 'none':
-        dataset_type = map_dataset_to_dataset_type[args.dataset_td if args.use_td_img else args.dataset_sd]
+        dataset_type = map_dataset_to_dataset_type[args.dataset_td]
         mismatch_args = mismatch_args_per_dataset_type[dataset_type]
         mismatch_args = mismatch_args[args.mismatch_mode]
     else:
@@ -269,27 +268,29 @@ if __name__ == '__main__':
     
     for i in tqdm(range(args.num_iterations)):
         # Sample random image from a random volume in a given range
-        vol_idx = random.randint(0, dataset_sd.num_vols - 1)
+        vol_idx_sd = random.randint(0, dataset_sd.num_vols - 1)
+        vol_idx_td = vol_idx_sd if split_sd == split_td and dataset_sd.num_vols == dataset_td.num_vols  \
+            else random.randint(0, dataset_td.num_vols - 1)
         slice_idx = random.randint(int(args.frac_sample_range[0] * vol_depth),
                                    min(int(args.frac_sample_range[1] * vol_depth), vol_depth - 1))
         
-        img_sd, seg_sd = dataset_sd[dataset_sd.vol_and_z_idx_to_idx(vol_idx, slice_idx)]    
+        img_sd, seg_sd = dataset_sd[dataset_sd.vol_and_z_idx_to_idx(vol_idx_sd, slice_idx)]    
         img_sd = img_sd.to(device)
         seg_sd = seg_sd.to(device)
         
-        img_td, seg_td = dataset_td[dataset_td.vol_and_z_idx_to_idx(vol_idx, slice_idx)]
+        img_td, seg_td = dataset_td[dataset_td.vol_and_z_idx_to_idx(vol_idx_td, slice_idx)]
         img_td = img_td.to(device)
         seg_td = seg_td.to(device)
-        plt.imsave('img_sd.png', img_sd.squeeze().cpu().numpy(), cmap='gray')
-        plt.imsave('img_td.png', img_td.squeeze().cpu().numpy(), cmap='gray')
-        breakpoint()
+
+        check_btw_0_1(img_sd, img_td, seg_sd, seg_td)
+        
         # Iterate over volumes and calculate the denoising performance     
         #   on the source and target domains
         # :===============================================================:
-        mismatch_dataset = dataset_td if args.use_td_img else dataset_sd
+        mismatch_dataset = dataset_td
         
         mismatch_ds = mismatch_dataset.get_related_images(
-            vol_idx=vol_idx,
+            vol_idx=vol_idx_td,
             z_idx=slice_idx,
             mode=args.mismatch_mode,
             n=args.n_mismatches,
@@ -327,11 +328,12 @@ if __name__ == '__main__':
                 seg_mismatch = seg_mismatch.to(device)
                 b = seg_mismatch.shape[0]
                 
-                img_mismatch = img_td if args.use_td_img else img_sd
+                img_mismatch = img_td
                 img_mismatch_b = img_mismatch.repeat(b, 1, 1, 1)
                 
+                check_btw_0_1(img_mismatch_b, seg_mismatch)
+                
                 # Calculate the ddpm_loss
-                breakpoint()
                 t_tch = torch.full((b,), t, device=device).long()
                 img_mismatch_b = ddpm.normalize(img_mismatch_b)
                 seg_mismatch = ddpm.normalize(seg_mismatch)
@@ -343,25 +345,26 @@ if __name__ == '__main__':
             metrics_per_t_td[t].append(ddpm_loss_sample_td.item())
     
     print(f'No mismatches found: {no_mismaches_found_count}, '
-          f'that is {no_mismaches_found_count/args.num_iterations:.2%} iterations')
+          f'that is {no_mismaches_found_count/args.num_iterations:.2%} % of iterations')
     
     # Save the results
     # :===============================================================:
     loss_per_t_sd_df = pd.DataFrame(metrics_per_t_sd)
-    loss_per_t_sd_df.to_csv(os.path.join(out_dir, f'loss_per_t_sd_{args.mismatch_mode}.csv'))
-    
     loss_per_t_td_df = pd.DataFrame(metrics_per_t_td)
-    loss_per_t_td_df.to_csv(os.path.join(out_dir, f'loss_per_t_td_{args.mismatch_mode}.csv'))
+     
+    sd_label = f'{args.dataset_sd} _{args.split_sd}'
+    td_label = f'{args.dataset_td} _{args.split_td}'
+    td_label += f"_mismatch_{args.mismatch_mode}" if args.mismatch_mode != 'none' else ''
     
+    # Save csv
+    loss_per_t_sd_df.to_csv(os.path.join(out_dir, f'loss_per_t_sd_{sd_label}.csv'))
+    loss_per_t_td_df.to_csv(os.path.join(out_dir, f'loss_per_t_td_{td_label}.csv'))
+   
     # Save plot
-    shift_label = args.dataset_td if args.use_td_img else args.dataset_sd
-    shift_label += f'_{args.split_td}' + f"_mismatch_{args.mismatch_mode}" \
-        if args.mismatch_mode != 'none' else ''
-    
     plot_losses(
         loss_per_t_sd_df, loss_per_t_td_df,
-        baseline_label=f'{args.dataset_sd}_{args.split_sd}', 
-        shift_label=shift_label,
+        baseline_label=sd_label, 
+        shift_label=td_label,
         output_path=os.path.join(out_dir, f'loss_per_t_{args.mismatch_mode}.png')
     )
     

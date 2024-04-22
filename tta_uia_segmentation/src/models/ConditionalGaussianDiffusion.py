@@ -167,8 +167,27 @@ class ConditionalGaussianDiffusion(GaussianDiffusion):
         return ret
 
     @torch.inference_mode()
-    def sample(self, img_shape: tuple, x_cond: torch.Tensor, return_all_timesteps = False):
+    def sample(self, img_shape: tuple, x_cond: torch.Tensor, return_all_timesteps = False, unconditional_sampling = False):
         sample_fn = self.p_sample_loop if not self.is_ddim_sampling else self.ddim_sample
+        
+        if self.also_unconditional and not self.condition_by_concat:
+            # Add an unconditional channel of zeros to the one hot encoded cond_img
+            #  if conditioning by multiplication and training a model with also unconditional mode
+            b, _, h, w = x_cond.shape
+            x_cond = torch.cat([x_cond, torch.zeros(b, 1, h, w, device=x_cond.device)], dim = 1)
+        
+        if unconditional_sampling:
+            assert self.also_unconditional, 'unconditional_sampling is only available when also_unconditional is True'
+            assert x_cond.shape[1] > 1, 'cond_img must be one hot encoded'
+            
+            # Select randomly whether it will be a conditional or forward pass
+            if self.condition_by_concat:
+                x_cond = x_cond * 0
+            else:
+                # Project the image only to the unconditional channel
+                x_cond[:, :-1] = 0
+                x_cond[:, -1] = 1
+        
         return sample_fn(img_shape, x_cond, return_all_timesteps)
 
     def set_sampling_timesteps(self, sampling_timesteps):

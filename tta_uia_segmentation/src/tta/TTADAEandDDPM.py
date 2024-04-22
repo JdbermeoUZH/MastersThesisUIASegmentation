@@ -653,6 +653,8 @@ class TTADAEandDDPM(TTADAE):
             # Normalize the input image between 0 and 1, (required by the DDPM)
             x_norm_mb_ddpm = x_norm_mb if not self.detach_x_norm_from_ddpm_loss else x_norm_mb.detach().clone()
             
+            print('TODO: Check if the image is not normalized between 0 and 1 and if the ranges match') 
+            breakpoint()
             x_norm_mb_ddpm = du.normalize_min_max(
                 x_norm_mb_ddpm,
                 min=min_int_norm_imgs, 

@@ -107,9 +107,6 @@ class CDDPMTrainer(Trainer):
         is_ddim_sampling = diffusion_model.is_ddim_sampling
 
         # sampling and training hyperparameters
-
-        assert has_int_squareroot(num_viz_samples), \
-            'number of samples to visualize must have an integer square root'
         self.save_and_sample_every = save_and_sample_every
         self.num_validation_samples = num_validation_samples
         self.num_viz_samples = num_viz_samples
@@ -247,8 +244,15 @@ class CDDPMTrainer(Trainer):
                         val_sample_dl = DataLoader(
                             self.val_ds.sample_slices(self.num_validation_samples), 
                             batch_size=self.batch_size, pin_memory=True, num_workers=self.num_workers)
-                        self.evaluate(val_sample_dl, device=device, prefix='val')
+                        self.evaluate(val_sample_dl, device=device, prefix='val', unconditional_sampling=False)
                         
+                        # Evaluate the model on the sample set in unconditional mode if the model is also trained unconditionally
+                        if self.model.also_unconditional:
+                            self.evaluate(train_sample_dl, device=device, prefix='train_unconditional',
+                                          unconditional_sampling=True)
+                            self.evaluate(val_sample_dl, device=device, prefix='val_uncondtional',
+                                          unconditional_sampling=True)
+                            
                         # whether to calculate fid
                         if self.calculate_fid:
                             fid_score = self.fid_scorer.fid_score()
@@ -266,7 +270,7 @@ class CDDPMTrainer(Trainer):
         accelerator.print('training complete')
         
     @torch.inference_mode()
-    def evaluate(self, sample_dl: DataLoader, device, prefix: str = '', ):
+    def evaluate(self, sample_dl: DataLoader, device, prefix: str = '', unconditional_sampling = False):
         samples_imgs = []                 
         milestone = self.step // self.save_and_sample_every
         
@@ -275,7 +279,7 @@ class CDDPMTrainer(Trainer):
         for img_gt, seg_gt in sample_dl:
             img_gt, seg_gt = img_gt.to(device), seg_gt.to(device).type(torch.int8)
             generated_img = self.ema.ema_model.sample(
-                img_shape=img_gt.shape, x_cond=seg_gt)
+                img_shape=img_gt.shape, x_cond=seg_gt, unconditional_sampling=unconditional_sampling)
             
             # Convert seg_gt to single channel to plot it
             assert seg_gt.max() == 1, 'seg_gt should be one-hot encoded'
@@ -286,7 +290,7 @@ class CDDPMTrainer(Trainer):
             assert seg_gt.shape[1] == 1, 'seg_gt should be single channel'
             
             # Store the generated image and the segmentation map side by side
-            if len(samples_imgs) <= self.num_viz_samples:
+            if len(samples_imgs) * sample_dl.batch_size <= self.num_viz_samples:
                 samples_imgs.append(torch.cat([seg_gt, img_gt, generated_img], dim = -1)) 
             
             check_btw_0_1(img_gt, seg_gt, generated_img)
@@ -296,11 +300,11 @@ class CDDPMTrainer(Trainer):
                 for metric_name, metric_func in self.metrics_to_log.items():
                     metric_cum[metric_name] += metric_func(generated_img, img_gt).item()
                     
-        all_images = torch.cat(samples_imgs, dim = 0)
+        all_images = torch.cat(samples_imgs, dim = 0)[0: self.num_viz_samples]
 
         all_images_fn = f'{prefix}-sample-m{milestone}-step-{self.step}-img_gt_seg_gt_gen_img.png'
         utils.save_image(all_images, str(self.results_folder / all_images_fn), 
-                         nrow = int(math.sqrt(self.num_viz_samples)))
+                         nrow = min(5, int(math.sqrt(self.num_viz_samples))))
         
         # Log metrics and images in wandb
         if self.wandb_log:

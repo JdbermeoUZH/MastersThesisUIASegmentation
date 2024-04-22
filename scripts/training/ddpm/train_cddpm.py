@@ -74,6 +74,7 @@ def preprocess_cmd_args() -> argparse.Namespace:
     parser.add_argument('--num_workers', type=int, help='Number of workers for dataloader. Default: 0')
     parser.add_argument('--seed', type=int, help='Seed for random number generators. Default: 0')   
     parser.add_argument('--device', type=str, help='Device to use for training. Default cuda', )
+    parser.add_argument('--amp', type=parse_bool, help='Use automatic mixed precision. Default: True')
     
     # Dataset and its transformations to use for training
     # ---------------------------------------------------:
@@ -280,6 +281,7 @@ if __name__ == '__main__':
     save_and_sample_every       = train_config[train_type]['save_and_sample_every']
     num_validation_samples      = train_config[train_type]['num_validation_samples']
     num_viz_samples             = train_config[train_type]['num_viz_samples']
+    amp                         = train_config[train_type]['amp']
     
     if accelerator.is_main_process:
         print(f'Objective: {objective}')
@@ -287,6 +289,8 @@ if __name__ == '__main__':
         print(f'Effective batch size: {batch_size * gradient_accumulate_every}')
         print(f'num_validation_samples: {num_validation_samples}')
         print(f'num_viz_samples: {num_viz_samples}')
+        print(f'Number of parameters of the model: {sum(p.numel() for p in diffusion.parameters()):,}')
+        print(f'Using AMP: {amp}')
         print(f'Number of parameters of the model: {sum(p.numel() for p in diffusion.parameters()):,}')
         
     trainer = CDDPMTrainer(
@@ -299,15 +303,15 @@ if __name__ == '__main__':
         train_num_steps = train_num_steps,# total training steps
         num_validation_samples=num_validation_samples,          # number of samples to generate for metric evaluation
         num_viz_samples=num_viz_samples,                        # number of samples to generate for visualization
-        gradient_accumulate_every = gradient_accumulate_every,    # gradient accumulation steps
-        ema_decay = 0.995,                # exponential moving average decay
-        amp = True,                       # turn on mixed precision
+        gradient_accumulate_every=gradient_accumulate_every,    # gradient accumulation steps
+        ema_decay=0.995,                  # exponential moving average decay
+        amp=amp,                          # turn on mixed precision
         calculate_fid = False,            # whether to calculate fid during training 
         results_folder=logdir,
         save_and_sample_every = save_and_sample_every,
         wandb_log=wandb_log,
-        accelerator=accelerator
-        )
+        accelerator=accelerator,
+    )
     
     if wandb_log and accelerator.is_main_process:
         #wandb.save(os.path.join(wandb_dir, trainer.get_last_checkpoint_name()), base_path=wandb_dir)
