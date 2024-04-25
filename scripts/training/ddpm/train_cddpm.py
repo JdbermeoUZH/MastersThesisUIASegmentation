@@ -66,11 +66,12 @@ def preprocess_cmd_args() -> argparse.Namespace:
     # -------------:
     parser.add_argument('--objective', type=str, help='Objective to use for training. Default: gaussian')
     parser.add_argument('--also_unconditional', type=parse_bool, help='Whether to also train an unconditional model. Default: False')
+    parser.add_argument('--only_unconditional', type=parse_bool, help='Whether to train only the unconditional model. Default: False')
     parser.add_argument('--batch_size', type=int, help='Batch size for training. Default: 4')
     parser.add_argument('--gradient_accumulate_every', type=int, help='Number of steps to accumulate gradients over. Default: 1')
     parser.add_argument('--train_num_steps', type=int, help='Total number of training steps. Default: 50000') 
     parser.add_argument('--learning_rate', type=float, help='Learning rate for optimizer. Default: 1e-4')
-    parser.add_argument('--uncoditional_rate', type=float, help='Rate at which to forward pass unconditionally. Default: 0.2')
+    parser.add_argument('--unconditional_rate', type=float, help='Rate at which to forward pass unconditionally. Default: 0.2')
     parser.add_argument('--num_workers', type=int, help='Number of workers for dataloader. Default: 0')
     parser.add_argument('--seed', type=int, help='Seed for random number generators. Default: 0')   
     parser.add_argument('--device', type=str, help='Device to use for training. Default cuda', )
@@ -244,8 +245,13 @@ if __name__ == '__main__':
     condition_by_mult   = train_config[train_type]['condition_by_mult']
     also_unconditional  = train_config[train_type]['also_unconditional']
     unconditional_rate  = train_config[train_type]['unconditional_rate']
+    only_unconditional  = train_config[train_type]['only_unconditional']
     
     if accelerator.is_main_process: print(f'Using Device {device}')
+    
+    if only_unconditional:
+        n_classes = None
+
     # Model definition
     model = ConditionalUnet(
         dim=dim,
@@ -266,6 +272,7 @@ if __name__ == '__main__':
         also_unconditional=also_unconditional,
         unconditional_rate=unconditional_rate,
         condition_by_concat=not condition_by_mult,
+        only_unconditional=only_unconditional,
     )
 
     # Execute the training loop

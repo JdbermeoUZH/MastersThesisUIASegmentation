@@ -97,6 +97,7 @@ ddpm:
   rescale_factor:               [1, 1, 1]
   condition_by_mult:            False
   also_unconditional:           False
+  only_unconditional:           False
   unconditional_rate:           0.2
 
   objective:                    pred_v   # default is pred_v
@@ -135,6 +136,38 @@ ddpm:
   bg_suppression_opts:          null
   deformation:                  null
 
+  invalid_img:
+    prob:               0.0
+    bad_contrast:
+      prob:             0.0
+      gamma_min:        0.01
+      gamma_max:        0.2 
+    blurry:
+      prob:             0.0
+      blur_factor:      0.5
+  
+    invalid_labels:
+      prob:             0.0
+      jigsaw_cropping:    
+        prob:           0.0
+        mask_radius:    10
+        mask_squares:   200
+        is_num_masks_fixed:   False
+        is_size_masks_fixed:  False
+      random_pixel_erasure:
+        prob:           0.0
+        erasure_prob:   0.5
+        erasure_size:   10
+      random_label_erasure:
+        prob:           0.0
+        erasure_prob:   0.5
+      random_component_erasure:
+        prob:           0.0
+        erasure_prob:   0.5
+      random_label_mask:
+        prob:           0.0
+        random_noise_p: 0.5
+        random_shapes_p: 0.5
 
 ddpm_oai:
   logdir:                       /scratch_net/biwidl319/jbermeo/logs/brain/ddpm/hcp_t1/oai/normalized_imgs/tests/test_img_logging

@@ -26,13 +26,15 @@ def multilabel_scatter(x, y, c=[], label=[], **kwargs):
         plt.scatter(x[color_mask], y[color_mask], c=c[color_mask], label=lab, **kwargs)
 
 
-def plot_img_seg(img, seg, n_classes=14, img_title='Image', seg_title='Segmentation', figsize=(10, 5)):
+def plot_img_seg(img, seg, n_classes=14, img_title='Image', seg_title='Segmentation', figsize=(10, 5), intensity_range: tuple[float, float] = None):
     if seg.max() < 1.0:
         seg = seg * n_classes
     
     plt.figure(figsize=figsize)
     ax = plt.subplot(1, 2, 1)
-    plt.imshow(img, cmap='gray', interpolation='none', vmin=img.min(), vmax=img.max())
+    v_min = img.min() if intensity_range is None else intensity_range[0]
+    v_max = img.max() if intensity_range is None else intensity_range[1]
+    plt.imshow(img, cmap='gray', interpolation='none', vmin=v_min, vmax=v_max)
     plt.xticks([])
     plt.yticks([])
     plt.title(img_title)

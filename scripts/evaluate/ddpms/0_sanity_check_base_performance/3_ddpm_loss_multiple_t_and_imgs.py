@@ -277,11 +277,11 @@ if __name__ == '__main__':
         slice_idx = random.randint(int(args.frac_sample_range[0] * vol_depth),
                                    min(int(args.frac_sample_range[1] * vol_depth), vol_depth - 1))
         
-        img_sd, seg_sd = dataset_sd[dataset_sd.vol_and_z_idx_to_idx(vol_idx_sd, slice_idx)]    
+        img_sd, seg_sd, _ = dataset_sd[dataset_sd.vol_and_z_idx_to_idx(vol_idx_sd, slice_idx)]    
         img_sd = img_sd.to(device)
         seg_sd = seg_sd.to(device)
         
-        img_td, seg_td = dataset_td[dataset_td.vol_and_z_idx_to_idx(vol_idx_td, slice_idx)]
+        img_td, seg_td, _ = dataset_td[dataset_td.vol_and_z_idx_to_idx(vol_idx_td, slice_idx)]
         img_td = img_td.to(device)
         seg_td = seg_td.to(device)
 
@@ -327,7 +327,7 @@ if __name__ == '__main__':
             # Calculate loss in target domain and/or label mismatches
             ddpm_loss_sample_td = 0
             
-            for _, seg_mismatch in mismatch_dl:    
+            for _, seg_mismatch, _ in mismatch_dl:    
                 seg_mismatch = seg_mismatch.to(device)
                 b = seg_mismatch.shape[0]
                 

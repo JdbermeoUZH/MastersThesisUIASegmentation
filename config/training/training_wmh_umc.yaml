@@ -97,6 +97,7 @@ ddpm:
   rescale_factor:               [1, 1, 1]
   condition_by_mult:            False
   also_unconditional:           False
+  only_unconditional:           False
   unconditional_rate:           0.2
 
   objective:                    pred_v   # default is pred_v

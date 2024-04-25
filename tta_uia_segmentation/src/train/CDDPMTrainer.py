@@ -202,7 +202,7 @@ class CDDPMTrainer(Trainer):
                 total_loss = 0.
 
                 for _ in range(self.gradient_accumulate_every):
-                    img, cond_img = next(self.train_dl)
+                    img, cond_img, pixel_weights = next(self.train_dl)
                     img, cond_img = img.to(device), cond_img.to(device)
 
                     with self.accelerator.autocast():
@@ -276,7 +276,7 @@ class CDDPMTrainer(Trainer):
         
         metric_cum = {metric_name: 0. for metric_name in self.metrics_to_log.keys()}
         
-        for img_gt, seg_gt in sample_dl:
+        for img_gt, seg_gt, pixel_weights in sample_dl:
             img_gt, seg_gt = img_gt.to(device), seg_gt.to(device).type(torch.int8)
             generated_img = self.ema.ema_model.sample(
                 img_shape=img_gt.shape, x_cond=seg_gt, unconditional_sampling=unconditional_sampling)

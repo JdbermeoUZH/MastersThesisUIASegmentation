@@ -43,19 +43,19 @@ class ConditionalUnet(Unet):
     ):
         super(Unet, self).__init__()
 
-        # determine dimensions
-
+        # Determine dimensions
         self.channels = image_channels
-        self.self_condition = False
+        self.condition = False
         self.condition_by_concat = False
         self.condition_by_mult = False
+        self.self_condition = False
 
         if n_classes is not None:
-            self.self_condition = True
+            self.condition = True
 
             # This means the DDPM is conditioned on a segmentation mask
             if condition_by_concat: 
-                input_channels = image_channels + (n_classes if n_classes is not None else 0)
+                input_channels = image_channels + n_classes
                 self.condition_by_concat = True
 
             # If not conditioning will happen via multiplication
@@ -154,13 +154,13 @@ class ConditionalUnet(Unet):
     def forward(self, x, time, x_cond = None):
         assert all([divisible_by(d, self.downsample_factor) for d in x.shape[-2:]]), f'your input dimensions {x.shape[-2:]} need to be divisible by {self.downsample_factor}, given the unet'
 
-        if self.self_condition:
+        if self.condition:
             if self.condition_by_concat:
                 x = torch.cat((x, x_cond), dim = 1)
             elif self.condition_by_mult:
                 x = x * x_cond
             else:
-                raise ValueError('self_condition is True, but condition_by_concat and condition_by_mult are both False')
+                raise ValueError('condition is True, but condition_by_concat and condition_by_mult are both False')
 
         x = self.init_conv(x)
         r = x.clone()
