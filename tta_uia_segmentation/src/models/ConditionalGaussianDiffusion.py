@@ -192,7 +192,7 @@ class ConditionalGaussianDiffusion(GaussianDiffusion):
         sample_fn = self.p_sample_loop if not self.is_ddim_sampling else self.ddim_sample
         
         if not self.only_unconditional:
-            assert img_shape == x_cond.shape, 'img_shape and x_cond must have the same shapes'
+            assert img_shape[-2:] == x_cond.shape[-2:], 'img_shape and x_cond must have the same shapes'
             
             if self.also_unconditional and not self.condition_by_concat:
                 # Add an unconditional channel of zeros to the one hot encoded cond_img

@@ -117,6 +117,7 @@ def apply_data_augmentation(
     noise_mean     = 0.0,
     noise_std      = 0.1,
     rng            = None,
+    intensity_range = (0, 1),
 ):
     assert(images.shape == labels.shape == background_mask.shape)
 
@@ -236,7 +237,7 @@ def apply_data_augmentation(
 
         # brightness augmentation
         c = np.round(uniform_interval_sampling(brightness_min, brightness_max, rng), 2)
-        images_ = images_ + c
+        images_ = np.clip(images_ + c, a_min=intensity_range[0], a_max=intensity_range[1])
 
     # ========
     # noise
