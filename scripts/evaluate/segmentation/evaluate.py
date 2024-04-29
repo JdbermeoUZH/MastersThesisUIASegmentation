@@ -27,7 +27,7 @@ from tta_uia_segmentation.src.utils.visualization import export_images
 
 
 metrics = {
-    'dice': lambda y_pred, y_true: dice_score(y_pred, y_true, soft=False, reduction='none', epsilon=1e-5),
+    'dice': lambda y_pred, y_true: dice_score(y_pred, y_true, soft=False, reduction='none', epsilon=1e-5)
 }
 
 
@@ -38,8 +38,7 @@ def preprocess_cmd_args() -> argparse.Namespace:
     All options specified will overwrite whaterver is specified in the config files.
     
     """
-    parser = argparse.ArgumentParser(description="Test Time Adaption with DAE")
-    parse_bool = lambda s: s.strip().lower() == 'true'
+    parser = argparse.ArgumentParser(description="Measure Segmentation Performance")
     
     parser.add_argument('dataset_config_file', type=str, help='Path to yaml config file with parameters that define the dataset.')
     parser.add_argument('evaluation_config_file', type=str, help='Path to yaml config file with parameters that define the evaluation.')
@@ -57,25 +56,11 @@ def preprocess_cmd_args() -> argparse.Namespace:
     parser.add_argument('--dataset', type=str, help='Name of dataset to use for tta. Default: USZ')
     parser.add_argument('--split', type=str, help='Name of split to use for tta. Default: test')
     parser.add_argument('--n_classes', type=int, help='Number of classes in dataset. Default: 21')
+    parser.add_argument('--classes_of_interest', type=int, nargs='+', help='Classes to consider for evaluation. Default: [0, 1]')
     parser.add_argument('--image_size', type=int, nargs='+', help='Size of images in dataset. Default: [560, 640, 160]')
     parser.add_argument('--resolution_proc', type=float, nargs='+', help='Resolution of images in dataset. Default: [0.3, 0.3, 0.6]')
     parser.add_argument('--rescale_factor', type=float, help='Rescale factor for images in dataset. Default: None')
-    
-    # Augmentations
-    parser.add_argument('--aug_da_ratio', type=float, help='Ratio of images to apply DA to. Default: 0.25')
-    parser.add_argument('--aug_sigma', type=float, help='augmentation. Default: 20') #TODO: specify what this is
-    parser.add_argument('--aug_alpha', type=float, help='augmentation. Default: 1000') #TODO: specify what this is
-    parser.add_argument('--aug_trans_min', type=float, help='Minimum value for translation augmentation. Default: -10')
-    parser.add_argument('--aug_trans_max', type=float, help='Maximum value for translation augmentation. Default: 10')
-    parser.add_argument('--aug_rot_min', type=float, help='Minimum value for rotation augmentation. Default: -10')
-    parser.add_argument('--aug_rot_max', type=float, help='Maximum value for rotation augmentation. Default: 10') 
-    parser.add_argument('--aug_scale_min', type=float, help='Minimum value for zooming augmentation. Default: 0.9') 
-    parser.add_argument('--aug_scale_max', type=float, help='Maximum value for zooming augmentation. Default: 1.1')
-    parser.add_argument('--aug_brightness_min', type=float, help='Minimum value for brightness augmentation. Default: 0.0') 
-    parser.add_argument('--aug_brightness_max', type=float, help='Maximum value for brightness augmentation. Default: 0.0')   
-    parser.add_argument('--aug_noise_mean', type=float, help='Mean value for noise augmentation. Default: 0.0')
-    parser.add_argument('--aug_noise_std', type=float, help='Standard deviation value for noise augmentation. Default: 0.0') 
-    
+        
     args = parser.parse_args()
     
     return args
@@ -210,10 +195,11 @@ if __name__ == '__main__':
     dataset_config, evaluation_config = get_configuration_arguments()
     
     seg_dir                 = evaluation_config['seg_dir']
-    logdir                  = evaluation_config['logdir']
     seed                    = evaluation_config['seed']
     device                  = evaluation_config['device']
-    
+    split                   = evaluation_config['split']
+    logdir                  = os.path.join(evaluation_config['logdir'], split)
+
     assert os.path.exists(seg_dir), f"Path to segmentation directory does not exist: {seg_dir}"
     os.makedirs(logdir, exist_ok=True)
     
@@ -223,22 +209,20 @@ if __name__ == '__main__':
     train_params_seg        = params_seg['training']
     
     params                  = { 
-                               'datset': dataset_config,
+                               'dataset': dataset_config,
                                'model': {'norm': model_params_norm, 'seg': model_params_seg},
                                'training': {'seg': train_params_seg},
                                'evaluation': evaluation_config,
                                }
-        
+    
     dump_config(os.path.join(logdir, 'params.yaml'), params)
-    print_config(params, keys=['datset', 'model', 'training', 'evaluation'])
+    print_config(params, keys=['dataset', 'model', 'training', 'evaluation'])
 
     # Define the dataset that is to be used to evaluate the model
     # :=========================================================================:
-    print('Defining dataset and its datloader that will be used for TTA')
     seed_everything(seed)
     device                  = define_device(device)
     dataset                 = evaluation_config['dataset']
-    split                   = evaluation_config['split']
     n_classes               = dataset_config[dataset]['n_classes']
     paths                   = dataset_config[dataset]['paths_processed']
     paths_original          = dataset_config[dataset]['paths_original']
@@ -246,6 +230,7 @@ if __name__ == '__main__':
     resolution_proc         = dataset_config[dataset]['resolution_proc']
     dim_proc                = dataset_config[dataset]['dim']
     
+    print(f'Loading dataset: {dataset} {split}')
     eval_dataset, = get_datasets(
         paths = paths,
         paths_original = paths_original,
@@ -258,17 +243,15 @@ if __name__ == '__main__':
         deformation = None,
         load_original = True,
         bg_suppression_opts = None,
-    )
-        
-    print('Datasets loaded')
+    )    
+    print('Dataset loaded')
 
     # Load the segmentation model
     # :=========================================================================:
     print('Loading segmentation model')
-    cpt_fp = os.path.join(
-        seg_dir,
-        train_params_seg['checkpoint_best' if evaluation_config['load_best_cpt'] 
-                         else 'checkpoint_last'])
+    checkpoint_name = train_params_seg['checkpoint_best' if evaluation_config['load_best_cpt']
+                                       else 'checkpoint_last']
+    cpt_fp = os.path.join(seg_dir, checkpoint_name)
     
     norm, seg = load_norm_and_seg_from_configs_and_cpt(
         n_classes = n_classes,
@@ -281,6 +264,7 @@ if __name__ == '__main__':
     
     # Evaluate the model
     # :=========================================================================:
+    print(f'Evaluating model')
     batch_size = evaluation_config['batch_size']
     num_workers = evaluation_config['num_workers']
     indices_per_volume = eval_dataset.get_volume_indices() 
@@ -308,6 +292,13 @@ if __name__ == '__main__':
         
     # Save the mean of each metric over the entire volume
     # :=========================================================================:
+    classes_of_interest = evaluation_config['classes_of_interest']
+    
+    out_summary_file = open(os.path.join(logdir, f'metrics_{dataset}_{split}.txt'), 'w')
+    
+    print('Saving metrics')
+    print(f'Classes of interest: {classes_of_interest}')
+    
     for metric_name in metrics.keys():
         
         if metric_name == 'dice':
@@ -321,9 +312,25 @@ if __name__ == '__main__':
             # Save the dataframe to csv
             df.to_csv(os.path.join(logdir, f'dices_{dataset}_{split}.csv'))
             
+            # Dice of the foreground classes
             fg_cols = [col for col in df.columns if col != 0]
-            print(f'Mean dice score over entire {split} set: '
-                  f'{df[fg_cols].mean().item():.3f} +/- {df[fg_cols].std().item():.3f}')
+            mean_dice_fg_str = f'Mean dice score over entire {split} set: ' + \
+                  f'{df[fg_cols].mean(axis=1).mean():.3f} +/- {df[fg_cols].mean(axis=1).std():.3f}'
+            print(mean_dice_fg_str)
+            out_summary_file.write(mean_dice_fg_str + '\n')
+            
+            # Dice of the classes of interest
+            if classes_of_interest is not None:
+                cls_interest_cols = [col for col in df.columns if col in classes_of_interest]
+                mean_dice_cls_interest_str = (f'Mean dice score over entire {split} set for classes of interest: {classes_of_interest}'
+                        f'{df[cls_interest_cols].mean(axis=1).mean():.3f} +/- {df[cls_interest_cols].mean(axis=1).std():.3f}')
+                out_summary_file.write(mean_dice_cls_interest_str + '\n')
+
+    out_summary_file.close()
+            
+            
+            
+            
             
         
     

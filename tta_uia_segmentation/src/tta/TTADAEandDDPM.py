@@ -16,7 +16,7 @@ from tta_uia_segmentation.src.tta.TTADAE import TTADAE
 from tta_uia_segmentation.src.utils.loss import DescriptorRegularizationLoss, DiceLoss
 from tta_uia_segmentation.src.models import ConditionalGaussianDiffusion
 from tta_uia_segmentation.src.utils.io import save_checkpoint, write_to_csv
-from tta_uia_segmentation.src.utils.utils import get_seed
+from tta_uia_segmentation.src.utils.utils import get_seed, stratified_sampling
 from tta_uia_segmentation.src.dataset import DatasetInMemory, utils as du
 
 
@@ -53,9 +53,13 @@ class TTADAEandDDPM(TTADAE):
     """
     TODO:
         - DDPM sample guidance
-            - Sampled volumes are not in the same intensity range and normalized volumes
-            - We should normalize sampled volumes to the same range as the normalized images
-            
+            - Change from sampling with DDIM only x_0 but rather all posterior x_t
+            - Make it part of the DDPM Loss
+        
+        - DDPM Loss
+            - Use the sampled t in both conditional and unconditional DDPM loss
+            - Make sure the the _calculate_ddpm_gradients function breaks the t's into the corect minibatch sizes
+        
         - DAE Loss  
             - Determine if there is a gap between this script and the DAE script
     """
@@ -75,8 +79,8 @@ class TTADAEandDDPM(TTADAE):
         x_norm_kwargs: dict = {},
         minibatch_size_ddpm: int = 2,
         frac_vol_diffusion_tta: float = 1.0,
-        min_t_diffusion_tta: int = 0,
-        max_t_diffusion_tta: int = 999,
+        t_ddpm_range: tuple[float, float] = [0, 1.0],
+        t_sampling_strategy: Literal['uniform', 'stratified', 'one_per_volume'] = 'uniform',
         sampling_timesteps: Optional[int] = None,
         min_max_int_norm_imgs: tuple[float, float] = (0, 1),
         detach_x_norm_from_ddpm_loss: bool = False,
@@ -105,8 +109,9 @@ class TTADAEandDDPM(TTADAE):
         self.minibatch_size_ddpm = minibatch_size_ddpm
         self.frac_vol_diffusion_tta = frac_vol_diffusion_tta
         
-        self.min_t_diffusion_tta = min_t_diffusion_tta
-        self.max_t_diffusion_tta = max_t_diffusion_tta
+        self.min_t_diffusion_tta = np.ceil(t_ddpm_range[0] * (self.ddpm.timesteps - 1))
+        self.max_t_diffusion_tta = np.floor(t_ddpm_range[0] * (self.ddpm.timesteps - 1))
+        self.t_sampling_strategy = t_sampling_strategy
         
         self.min_int_norm_imgs = min_max_int_norm_imgs[0]
         self.max_int_norm_imgs = min_max_int_norm_imgs[1]
@@ -340,6 +345,13 @@ class TTADAEandDDPM(TTADAE):
                         
             ddpm_reweigh_factor *= warmup_factor 
             
+            # Define the values of t that will be used for the DDPM loss
+            t_dl = self._sample_t_for_ddpm_loss(
+                num_samples=batch_size * len(b_i_for_ddpm_loss),
+                batch_size=batch_size,
+                num_workers=num_workers,                            
+            )
+            
             # Define which volumes to use for the DDPM sample guidance (if any at all)
             # :============================================================:
             if self.ddpm_sample_guidance_eta > 0:
@@ -373,7 +385,7 @@ class TTADAEandDDPM(TTADAE):
             if const_aug_per_volume:
                 volume_dataset.dataset.set_seed(get_seed())
             
-            for b_i, ((x, y_gt,_,_, bg_mask), (y_pl,), (x_sampled,)) in enumerate(zip(volume_dataloader, label_dataloader, sampled_vol_dl)):
+            for b_i, ((x, y_gt,_,_, bg_mask), (y_pl,), (x_sampled,), (t,)) in enumerate(zip(volume_dataloader, label_dataloader, sampled_vol_dl, t_dl)):
                 x_norm = None        
                 if not accumulate_over_volume:
                     self.optimizer.zero_grad()
@@ -414,7 +426,7 @@ class TTADAEandDDPM(TTADAE):
                     
                 # DDPM loss: Calculate gradients from the noise estimation loss
                 # :============================================================:
-                
+                # TODO: Add the given t on the conditional and unconditional DDPM loss
                 calculate_ddpm_loss_gradients = b_i in b_i_for_ddpm_loss and \
                     self.ddpm_loss_beta > 0 and self.use_ddpm_loss
                     
@@ -696,7 +708,35 @@ class TTADAEandDDPM(TTADAE):
                     
         # Take optimizer step
         self.optimizer.step()
+        
+    def _sample_t_for_ddpm_loss(self, num_samples: int, batch_size: int, num_workers: int,
+                                num_groups_stratified_sampling: int = 64) -> torch.utils.data.DataLoader:
+        
+        if self.t_sampling_strategy == 'uniform':
+            t_values = torch.randint(self.min_t_diffusion_tta, self.max_t_diffusion_tta, num_samples)
+        
+        elif self.t_sampling_strategy == 'stratified':
+            t_values = stratified_sampling(self.min_t_diffusion_tta, self.max_t_diffusion_tta, 
+                                           num_samples, num_groups_stratified_sampling)
+        
+        elif self.t_sampling_strategy == 'one_per_volume':
+            t_values = torch.full((num_samples,), np.randint(self.min_t_diffusion_tta, self.max_t_diffusion_tta))
 
+        else:
+            raise ValueError('Invalid t_sampling_strategy')
+
+        assert len(t_values) == num_samples, 'Number of samples must match the number of t values'
+        assert t_values.min() >= self.min_t_diffusion_tta and t_values.max() <= self.max_t_diffusion_tta, \
+            't values must be within the range of the DDPM timesteps'
+        assert t_values.shape == (num_samples,), 't values must be a 1D tensor'
+        
+        return DataLoader(
+            TensorDataset(t_values),
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=num_workers,
+            drop_last=False,
+        )        
     
     def _define_custom_wandb_metrics(self, ):
         wandb.define_metric(f'tta_step')
@@ -704,7 +744,7 @@ class TTADAEandDDPM(TTADAE):
         wandb.define_metric(f'ddpm_loss/*', step_metric=f'tta_step')
         wandb.define_metric(f'ddpm_guidance_loss/*', step_metric=f'tta_step')
         wandb.define_metric(f'total_loss/*', step_metric=f'tta_step')   
-        wandb.define_metric(f'dice_score_fg/*', step_metric=f'tta_step')    
+        wandb.define_metric(f'dice_score_fg/*', step_metric=f'tta_step'    
 
     def reset_initial_state(self, state_dict: dict) -> None:
         super().reset_initial_state(state_dict)

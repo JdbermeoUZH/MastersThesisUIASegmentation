@@ -1,5 +1,6 @@
 import os
 import random
+from typing import Union
 
 import torch
 import numpy as np
@@ -177,3 +178,53 @@ def crop_or_pad_slice_to_size(slice, nx, ny):
             slice_cropped[:, x_c:x_c + x, y_c:y_c + y] = slice[:, :, :]
 
     return slice_cropped
+
+
+def distribute_n_in_m_slots(n, m):
+    elements_per_slot = n // m
+    slots_with_extra_element = n % m
+    equitably_dist_list = slots_with_extra_element * [elements_per_slot + 1] + \
+        (m - slots_with_extra_element) * [elements_per_slot]
+    np.random.shuffle(equitably_dist_list)
+
+    return equitably_dist_list
+
+
+def stratified_sampling(a, b, m, n, return_torch: bool = True) -> Union[np.ndarray|torch.Tensor]:
+    """
+    Perform stratified sampling of n integers in a range [a, b] split into m buckets.
+
+    Parameters:
+    a (int): Lower bound of the range (inclusive)
+    b (int): Upper bound of the range (inclusive)
+    m (int): Number of buckets to stratify on
+    n (int): Number of samples to draw
+
+    Returns:
+    samples (np.ndarray|toch.Tensor): Tensor of n stratified samples
+    """
+    assert b > a, "Upper bound must be greater than lower bound"
+    assert m > 0, "Number of buckets must be greater than 0"
+    
+    if n < m:
+        print("Warning: Number of samples is less than number of groups to stratify on")
+    
+    bucket_size = (b - a + 1) // m
+    buckets = np.arange(a, b + 1, bucket_size)
+    buckets = [(buckets[i], buckets[i+1] + 1) for i in range(len(buckets) - 1)]
+    np.random.shuffle(buckets)
+
+    draws = distribute_n_in_m_slots(n, m)
+    draws = [i for i in draws if i > 0]
+
+    sampled_t = []
+    for draw_n in draws:
+        bucket_start, bucket_end = buckets.pop(0)
+        sampled_t.append(
+            np.random.randint(bucket_start, bucket_end, (draw_n,))
+        )
+        
+    if return_torch:
+        return torch.from_numpy(np.concatenate(sampled_t))
+    else:
+        return np.concatenate(sampled_t)

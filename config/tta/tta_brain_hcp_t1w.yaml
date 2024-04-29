@@ -93,8 +93,7 @@ dae_and_ddpm:
   warmup_steps_for_ddpm_loss: 100
   minibatch_size_ddpm: 2
   frac_vol_diffusion_tta: 1.0
-  min_t_diffusion_tta: 0
-  max_t_diffusion_tta: 1000
+  t_ddpm_range: [0.2, 0.98]
   sampling_timesteps: 100
   min_max_int_norm_imgs: [-0.7377170324325562, 0.24169665575027466]
   use_y_pred_for_ddpm_loss: True   # If False, and use_y_gt_for_ddpm_loss is False, then it will use the pseudo label from the DAE

@@ -87,8 +87,7 @@ def preprocess_cmd_args() -> argparse.Namespace:
     # DDPM params
     parser.add_argument('--ddpm_dir', type=str, help='Path to directory where DDPM checkpoints are saved')
     parser.add_argument('--cpt_fn', type=str, help='Name of checkpoint file to load for DDPM')
-    parser.add_argument('--min_t_diffusion_tta', type=int, help='Minimum value for diffusion time. Default: 0')
-    parser.add_argument('--max_t_diffusion_tta', type=int, help='Maximum value for diffusion time. Default: 1000')       
+    parser.add_argument('--t_ddpm_range', type=float, nargs=2, help='Quantile range of t values for DDPM. Default: [0.2, 0.98]')       
     parser.add_argument('--use_y_pred_for_ddpm_loss', type=parse_bool, help='Whether to use predicted segmentation as conditional for DDPM. Default: True')
     parser.add_argument('--use_y_gt_for_ddpm_loss', type=parse_bool, help='Whether to use ground truth segmetnation as conditional for DDPM. ONLY FOR DEBUGGING. Default: False')
     parser.add_argument('--detach_x_norm_from_ddpm_loss', type=parse_bool, help='Whether to detach x_norm from DDPM loss. Default: False')
@@ -293,8 +292,7 @@ if __name__ == '__main__':
     # DDPM-TTA params    
     minibatch_size_ddpm         = tta_config[tta_mode]['minibatch_size_ddpm']
     frac_vol_diffusion_tta      = tta_config[tta_mode]['frac_vol_diffusion_tta']
-    min_t_diffusion_tta         = tta_config[tta_mode]['min_t_diffusion_tta']
-    max_t_diffusion_tta         = tta_config[tta_mode]['max_t_diffusion_tta']
+    t_ddpm_range                = tta_config[tta_mode]['t_ddpm_range']
     sampling_timesteps          = tta_config[tta_mode]['sampling_timesteps']
     min_max_int_norm_imgs       = tta_config[tta_mode]['min_max_int_norm_imgs']
     use_y_pred_for_ddpm_loss    = tta_config[tta_mode]['use_y_pred_for_ddpm_loss']
@@ -322,8 +320,7 @@ if __name__ == '__main__':
         unconditional_ddpm_loss_weight = unconditional_ddpm_loss_weight,
         minibatch_size_ddpm     = minibatch_size_ddpm,
         frac_vol_diffusion_tta  = frac_vol_diffusion_tta,
-        min_t_diffusion_tta     = min_t_diffusion_tta,
-        max_t_diffusion_tta     = max_t_diffusion_tta,
+        t_ddpm_range            = t_ddpm_range,
         min_max_int_norm_imgs   = min_max_int_norm_imgs,
         use_y_pred_for_ddpm_loss=use_y_pred_for_ddpm_loss,
         use_y_gt_for_ddpm_loss  = use_y_gt_for_ddpm_loss,

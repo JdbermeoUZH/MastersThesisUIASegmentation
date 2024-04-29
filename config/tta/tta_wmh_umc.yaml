@@ -34,7 +34,7 @@ dae:
 
   accumulate_over_volume: True
   batch_size: 16
-  dataset_repetition: 1
+  dataset_repetition: 2
   num_steps: 1000  # 500 for brain, 2700 for wmh
   update_dae_output_every: 25
   calculate_dice_every: 25  # 25 for brain, 135 for wmh (nuhs, umc, vu)

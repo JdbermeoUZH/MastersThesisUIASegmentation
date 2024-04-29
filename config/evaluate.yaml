@@ -3,9 +3,10 @@ load_best_cpt: True # If false, loads last checkpoint
 
 dataset:    umc   # brain: hcp_t1, hcp_t2, abide_caltech, abide_stanford; wmh: nuhs, umc, vu
 split:      test       # train, val, test
+classes_of_interest: null # Null, or a list of classes for which to focus to measure the dice score 
 image_size: [1, 256, 256]
 
-logdir:  /scratch_net/biwidl319/jbermeo/logs/wmh/segmentation/umc/no_bg_supp_norm_w_1x1_conv
+logdir:  /scratch_net/biwidl319/jbermeo/results/wmh/umc/no_bg_supp_norm_w_3x3_conv
 
 num_workers: 0
 batch_size: 32

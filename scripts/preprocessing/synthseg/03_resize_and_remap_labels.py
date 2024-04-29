@@ -8,7 +8,6 @@ import argparse
 from collections import defaultdict
 
 import yaml
-import torch
 import h5py
 import numpy as np
 import nibabel as nib
@@ -16,8 +15,7 @@ import nibabel.processing as nibproc
 
 sys.path.append(os.path.join('..', '..', 'tta_uia_segmentation', 'src'))
 
-from tta_uia_segmentation.src.dataset.dataset_in_memory import get_datasets, DatasetInMemory
-from tta_uia_segmentation.src.utils.loss import onehot_to_class
+from tta_uia_segmentation.src.dataset.dataset_in_memory import get_datasets
 
 
 #---------- Default args
@@ -32,6 +30,7 @@ image_size_def              = (1, 256, 256)
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Converts the original volumes from the dataset to nifti files')
     parser.add_argument('dataset', type=str, help='Dataset to use')
+    parser.add_argument('--input_dir', type=str, default=input_dir_def, help='Path to the synthseg predictions'   )
     parser.add_argument('--output_dir', type=str, default=output_dir_def, help='Path to save the nifti files'   )
     parser.add_argument('--dataset_params_fp', type=str, default=dataset_params_fp_def, help='Path to the dataset parameters')
     parser.add_argument('--image_size', type=int, nargs=3, default=image_size_def, help='Image size')
@@ -81,7 +80,7 @@ if __name__ == '__main__':
     for ds_name, ds in ds_dict.items():
         # Load each predicted volume 
         vol_fps = sorted(glob.glob(
-            os.path.join(input_dir_def, args.dataset, ds_name, '*_synthseg.nii.gz'))
+            os.path.join(args.input_dir, args.dataset, ds_name, '*_synthseg.nii.gz'))
         )
         
         voxel_size = ds.resolution_proc #np.array(ds.resolution_proc)[[2, 1, 0]]
