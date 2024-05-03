@@ -109,6 +109,7 @@ ddpm:
   save_and_sample_every:        2500     # 1000 in the constructor 
   num_validation_samples:       100      # Num of images to sample to check performance during training
   num_viz_samples:              50       # Must have an interger square root to store images in a square grid
+  log_val_loss_every:           250  
 
   logdir:                       /scratch_net/biwidl319/jbermeo/logs/brain/ddpm/hcp_t1/normalized_imgs/3x3_norm_filters/4_15/batch_size_128_cond_by_concat
   wandb_project:                mt-ddpm

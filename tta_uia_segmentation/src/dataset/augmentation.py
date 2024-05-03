@@ -157,7 +157,6 @@ def apply_data_augmentation(
             random_shift_z = rng.uniform(trans_min, trans_max)
             random_shifts = [random_shift_z] + random_shifts
             
-
         images_ = shift(images_, shift=(0, *random_shifts), order=1, mode='reflect')
         labels_ = shift(labels_, shift=(0, *random_shifts), order=0, mode='reflect')
         background_mask_ = shift(background_mask_, shift=(0, *random_shifts), order=0, mode='reflect')

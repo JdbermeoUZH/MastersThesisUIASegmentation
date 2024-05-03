@@ -22,6 +22,12 @@ from tta_uia_segmentation.src.models.io import load_norm_from_configs_and_cpt, l
 from tta_uia_segmentation.src.utils.io import load_config, dump_config
 
 
+""" 
+TODO:
+    - Compare not the losses but the difference in scores estimated in the source domain and the target domain setting
+    - Add the measuring of shift for cond - uncond and (1 + w) * cond - w * uncond
+"""
+
 # Default args
 # :===============================================================:
 out_dir                 = '/scratch_net/biwidl319/jbermeo/results/wmh/ddpm/'
@@ -40,7 +46,7 @@ mismatch_mode           = 'none' #'same_patient_very_different_labels'  # 'same_
 n_mismatches            = 10
 num_t_samples_per_img   = 5 # 20
 num_iterations          = 50 # 500
-with_augmentation       = False
+with_augmentation       = True
 weights_cond_free_guidance = [30, 100]
 # :===============================================================:
 
@@ -119,6 +125,7 @@ def plot_losses(
     ):
     baseline_summary_df = baseline_info_df.describe()
     shift_summary_df = shift_info_df.describe()
+    breakpoint()
     
     plt.figure(figsize=figsize)
     plt.title(title)
@@ -271,11 +278,14 @@ if __name__ == '__main__':
     metrics_per_t_sd = {
         'conditional': defaultdict(list),
         'unconditional': defaultdict(list),
+        'conditional_minus_unconditional': defaultdict(list),
+        **{f'conditional_free_guidance_{w}': defaultdict(list) for w in weights_cond_free_guidance},
     } 
     metrics_per_t_td = {
         'conditional': defaultdict(list),
         'unconditional': defaultdict(list),
-
+        'conditional_minus_unconditional': defaultdict(list),
+        **{f'conditional_free_guidance_{w}': defaultdict(list) for w in weights_cond_free_guidance},
     } 
     
     vol_depth = dataset_sd.dim_proc[0]     
@@ -289,6 +299,7 @@ if __name__ == '__main__':
         slice_idx = random.randint(int(args.frac_sample_range[0] * vol_depth),
                                    min(int(args.frac_sample_range[1] * vol_depth), vol_depth - 1))
         
+        # Source Domain images and labels
         img_sd, seg_sd, _ = dataset_sd[dataset_sd.vol_and_z_idx_to_idx(vol_idx_sd, slice_idx)]    
         img_sd = img_sd.to(device)
         seg_sd = seg_sd.to(device)
@@ -298,7 +309,7 @@ if __name__ == '__main__':
         seg_uncond_sd = ddpm._process_x_cond_for_unconditional_sampling(seg_sd)
         
         # Target Domain images and labels
-        img_td, seg_td, _ = dataset_td[dataset_td.vol_and_z_idx_to_idx(vol_idx_td, slice_idx)]
+        img_td, *_ = dataset_td[dataset_td.vol_and_z_idx_to_idx(vol_idx_td, slice_idx)]
         img_td = img_td.to(device)
         
         check_btw_0_1(img_sd, seg_sd, seg_uncond_sd, img_td)
@@ -348,6 +359,12 @@ if __name__ == '__main__':
                 
             metrics_per_t_sd['conditional'][t].append(ddpm_loss_sample_sd_cond.item())
             metrics_per_t_sd['unconditional'][t].append(ddpm_loss_sample_sd_uncond.item())
+            metrics_per_t_sd['conditional_minus_unconditional'][t].append(
+                (ddpm_loss_sample_sd_cond - ddpm_loss_sample_sd_uncond).item())
+            
+            for w in weights_cond_free_guidance:
+                metrics_per_t_sd[f'conditional_free_guidance_{w}'][t].append(
+                    ((1 + w) * ddpm_loss_sample_sd_cond - w * ddpm_loss_sample_sd_uncond).item())
 
             # Calculate loss in target domain and/or label mismatches
             ddpm_loss_sample_td_cond = 0
@@ -380,6 +397,12 @@ if __name__ == '__main__':
                     
             metrics_per_t_td['conditional'][t].append(ddpm_loss_sample_td_cond.item())
             metrics_per_t_td['unconditional'][t].append(ddpm_loss_sample_td_uncond.item())
+            metrics_per_t_td['conditional_minus_unconditional'][t].append(
+                (ddpm_loss_sample_td_cond - ddpm_loss_sample_td_uncond).item())
+            
+            for w in weights_cond_free_guidance:
+                metrics_per_t_td[f'conditional_free_guidance_{w}'][t].append(
+                    ((1 + w) * ddpm_loss_sample_td_cond - w * ddpm_loss_sample_td_uncond).item())
                     
     print(f'No mismatches found: {no_mismaches_found_count}, '
           f'that is {no_mismaches_found_count/args.num_iterations:.2%} % of iterations')

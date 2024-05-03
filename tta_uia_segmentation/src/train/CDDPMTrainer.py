@@ -32,7 +32,8 @@ from tta_uia_segmentation.src.dataset.utils import onehot_to_class
 metrics_to_log_default = {
     'PSNR': peak_signal_noise_ratio,
     'SSIM': structural_similarity_index_measure,
-    'MSSIM': multiscale_structural_similarity_index_measure,
+    'MSSIM': lambda y_gt, y_pred: multiscale_structural_similarity_index_measure(
+        y_pred, y_gt, kernel_size=7),
     'MAE': mean_absolute_error,
 }
 
@@ -75,6 +76,7 @@ class CDDPMTrainer(Trainer):
         ema_update_every = 10,
         ema_decay = 0.995,
         adam_betas = (0.9, 0.99),
+        log_val_loss_every = 250,
         save_and_sample_every = 1000,
         num_validation_samples = 100,
         num_viz_samples = 25,
@@ -106,11 +108,7 @@ class CDDPMTrainer(Trainer):
         self.channels = diffusion_model.channels
         is_ddim_sampling = diffusion_model.is_ddim_sampling
 
-        # sampling and training hyperparameters
-        self.save_and_sample_every = save_and_sample_every
-        self.num_validation_samples = num_validation_samples
-        self.num_viz_samples = num_viz_samples
-
+        # Training hyperparameters
         self.batch_size = train_batch_size
         self.gradient_accumulate_every = gradient_accumulate_every
         assert (train_batch_size * gradient_accumulate_every) >= 16, f'your effective batch size (train_batch_size x gradient_accumulate_every) should be at least 16 or above'
@@ -123,7 +121,6 @@ class CDDPMTrainer(Trainer):
         self.num_workers = num_workers
 
         # dataset and dataloader
-
         self.train_ds = train_dataset
         self.val_ds = val_dataset
         assert len(self.train_ds) >= 100, 'you should have at least 100 images in your folder. at least 10k images recommended'
@@ -143,6 +140,10 @@ class CDDPMTrainer(Trainer):
         self.opt = Adam(diffusion_model.parameters(), lr = train_lr, betas = adam_betas)
 
         # for logging results in a folder periodically
+        self.log_val_loss_every = log_val_loss_every
+        self.save_and_sample_every = save_and_sample_every
+        self.num_validation_samples = num_validation_samples
+        self.num_viz_samples = num_viz_samples
 
         if self.accelerator.is_main_process:
             self.ema = EMA(diffusion_model, beta = ema_decay, update_every = ema_update_every)
@@ -228,6 +229,9 @@ class CDDPMTrainer(Trainer):
                         wandb.log({'total_loss': total_loss}, step = self.step)
                             
                     self.ema.update()
+                    
+                    if self.step != 0 and divisible_by(self.step, self.log_val_loss_every):
+                        self._log_val_loss(device=device)
 
                     if self.step != 0 and divisible_by(self.step, self.save_and_sample_every):
                         self.ema.ema_model.eval()
@@ -264,6 +268,8 @@ class CDDPMTrainer(Trainer):
                             self.save("latest")
                         else:
                             self.save(milestone)
+                        
+                        self.ema.ema_model.train()
 
                 pbar.update(1)
 
@@ -321,7 +327,23 @@ class CDDPMTrainer(Trainer):
                     )}, 
                 step = self.step
                 ) 
+    
+    @torch.no_grad()
+    def _log_val_loss(self, device, max_batches = 10):
+        sample_size = self.gradient_accumulate_every * self.batch_size * min(max_batches, self.num_validation_samples)
+        val_sample_dl = DataLoader(
+            self.val_ds.sample_slices(sample_size), 
+            batch_size=self.batch_size, pin_memory=True, num_workers=self.num_workers)
         
+        total_loss_val = 0.
+        for img, cond_img, pixel_weights in tqdm(val_sample_dl, desc = 'total_loss_val'):
+            img, cond_img = img.to(device), cond_img.to(device)
+            loss = self.model(img, cond_img)
+            total_loss_val += (1 / len(val_sample_dl)) * loss.item()
+
+        if self.wandb_log:
+            wandb.log({'total_loss_val': total_loss_val}, step = self.step)
+    
     def save(self, milestone):
         if not self.accelerator.is_local_main_process:
             return

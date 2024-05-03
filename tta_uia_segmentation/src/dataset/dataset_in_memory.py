@@ -168,8 +168,8 @@ class DatasetInMemory(data.Dataset):
             self.images = F.interpolate(self.images, scale_factor=rescale_factor, mode='trilinear')
             self.labels = F.interpolate(self.labels, scale_factor=rescale_factor, mode='nearest')
 
-            self.images = self.images.squeeze().numpy()
-            self.labels = self.labels.squeeze().numpy()
+            self.images = self.images.squeeze(0).numpy()
+            self.labels = self.labels.squeeze(0).numpy()
 
         assert self.images.shape == self.labels.shape, 'Image and label shape not matching'
 

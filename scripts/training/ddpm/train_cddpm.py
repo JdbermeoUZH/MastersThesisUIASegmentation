@@ -57,6 +57,7 @@ def preprocess_cmd_args() -> argparse.Namespace:
     # Noising parameters
     # ------------------:
     parser.add_argument('--timesteps', type=int, help='Number of timesteps in diffusion process. Default: 1000')
+    parser.add_argument('--log_val_loss_every', type=int, help='Log validation loss every n steps. Default: 250')
     parser.add_argument('--save_and_sample_every', type=int, help='Save and sample every n steps. Default: 1000')
     parser.add_argument('--sampling_timesteps', type=int, help='Number of timesteps to sample from. Default: 1000')
     parser.add_argument('--num_validation_samples', type=int, help='Number of samples to generate for metric evaluation. Default: 1000')
@@ -83,7 +84,7 @@ def preprocess_cmd_args() -> argparse.Namespace:
     parser.add_argument('--n_classes', type=int, help='Number of classes in dataset')
     parser.add_argument('--image_size', type=int, nargs='+', help='Size of images in dataset')
     parser.add_argument('--resolution_proc', type=float, nargs='+', help='Resolution of images in dataset')
-    parser.add_argument('--rescale_factor', type=float, help='Rescale factor for images in dataset')
+    parser.add_argument('--rescale_factor', type=float, nargs='+', help='Rescale factor for images in dataset')
     
     parser.add_argument('--norm_dir', type=str, help='Path to directory where normalization model is saved')
     
@@ -226,6 +227,7 @@ if __name__ == '__main__':
         dim_proc        = dataset_config[dataset]['dim'],
         n_classes       = n_classes,
         aug_params      = train_config[train_type]['augmentation'],
+        rescale_factor  = train_config[train_type]['rescale_factor'],
         bg_suppression_opts = train_config[train_type]['bg_suppression_opts'],
         deformation     = None,
         load_original   = False,
@@ -263,9 +265,11 @@ if __name__ == '__main__':
         also_unconditional=also_unconditional,
     )
     
+    image_size_ddpm = train_config[train_type]['image_size'][-1] * train_config[train_type]['rescale_factor'][-1]
+    print(f'Image size for DDPM: {image_size_ddpm} x {image_size_ddpm}')
     diffusion = ConditionalGaussianDiffusion(
         model=model,
-        image_size=train_config[train_type]['image_size'][-1],
+        image_size=image_size_ddpm,
         objective=objective,
         timesteps=timesteps,
         sampling_timesteps=sampling_timesteps,
@@ -286,6 +290,7 @@ if __name__ == '__main__':
     num_workers                 = train_config[train_type]['num_workers']
     train_num_steps             = train_config[train_type]['train_num_steps']
     save_and_sample_every       = train_config[train_type]['save_and_sample_every']
+    log_val_loss_every          = train_config[train_type]['log_val_loss_every']
     num_validation_samples      = train_config[train_type]['num_validation_samples']
     num_viz_samples             = train_config[train_type]['num_viz_samples']
     amp                         = train_config[train_type]['amp']
@@ -313,9 +318,10 @@ if __name__ == '__main__':
         gradient_accumulate_every=gradient_accumulate_every,    # gradient accumulation steps
         ema_decay=0.995,                  # exponential moving average decay
         amp=amp,                          # turn on mixed precision
-        calculate_fid = False,            # whether to calculate fid during training 
+        calculate_fid=False,            # whether to calculate fid during training 
         results_folder=logdir,
-        save_and_sample_every = save_and_sample_every,
+        save_and_sample_every=save_and_sample_every,
+        log_val_loss_every=log_val_loss_every,
         wandb_log=wandb_log,
         accelerator=accelerator,
     )

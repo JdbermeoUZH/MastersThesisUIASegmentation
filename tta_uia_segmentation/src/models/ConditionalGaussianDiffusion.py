@@ -102,13 +102,8 @@ class ConditionalGaussianDiffusion(GaussianDiffusion):
                     
                 # Choose randomly whether it will be a conditional or unconditional forward pass
                 if random.random() < self.uncoditional_rate:
-                    if self.condition_by_concat:
-                        cond_img = cond_img * 0
-                    else:
-                        # Project the image only to the unconditional channel
-                        cond_img[:, :-1] = 0
-                        cond_img[:, -1] = 1
-                        
+                    cond_img = self._process_x_cond_for_unconditional_sampling(cond_img)
+                    
             cond_img = self.normalize(cond_img)  
             
             if cond_img.max() > 1 or cond_img.min() < -1:
@@ -204,18 +199,22 @@ class ConditionalGaussianDiffusion(GaussianDiffusion):
                 assert self.also_unconditional, 'unconditional_sampling is only available when also_unconditional is True'
                 assert x_cond.shape[1] > 1, 'cond_img must be one hot encoded'
                 
-                # Select randomly whether it will be a conditional or forward pass
-                if self.condition_by_concat:
-                    x_cond = x_cond * 0
-                else:
-                    # Project the image only to the unconditional channel
-                    x_cond[:, :-1] = 0
-                    x_cond[:, -1] = 1
+                x_cond = self._process_x_cond_for_unconditional_sampling(x_cond) 
 
         else:
             x_cond = None
         
         return sample_fn(img_shape, x_cond, return_all_timesteps)
+    
+    def _process_x_cond_for_unconditional_sampling(self, x_cond):
+            if self.condition_by_concat:
+                x_cond = x_cond * 0
+            else:
+                # Project the image only to the unconditional channel
+                x_cond[:, :-1] = 0
+                x_cond[:, -1] = 1
+                
+            return x_cond
 
     def set_sampling_timesteps(self, sampling_timesteps):
         self.sampling_timesteps = sampling_timesteps
