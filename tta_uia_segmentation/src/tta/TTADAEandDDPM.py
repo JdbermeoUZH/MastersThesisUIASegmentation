@@ -406,7 +406,8 @@ class TTADAEandDDPM(TTADAE):
                     x_norm = self.norm(x)
                     
                     _, mask, _ = self.forward_pass_seg(
-                        x, bg_mask, self.bg_suppression_opts_tta, device)
+                        x, bg_mask, self.bg_suppression_opts_tta, device,
+                        update_norm_td_statistics=False)
                     
                     if self.rescale_factor is not None:
                         mask = self.rescale_volume(mask)
@@ -550,7 +551,11 @@ class TTADAEandDDPM(TTADAE):
                                                                         
             if accumulate_over_volume:
                 self._take_optimize_step(index, step)
-
+                
+            # Update the running statistics of the target domain
+            self.norm_td_statistics.update_statistics()
+            
+            # Log losses
             step_dae_loss = (step_dae_loss / n_samples) if n_samples > 0 else 0
             
             step_ddpm_loss = (step_ddpm_loss / n_samples_diffusion) if n_samples_diffusion > 0 else 0
