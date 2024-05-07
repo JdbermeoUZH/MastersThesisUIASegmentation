@@ -45,12 +45,24 @@ def normalize_min_max(data, min=None, max=None, scale: float = 1, clip: bool = T
     
     return data
 
+def normalize_standardize(data, mean=None, std=None):
+    if mean is None:
+        mean = torch.mean(data)
+    if std is None:
+        std = torch.std(data)
+        
+    data = (data - mean) / std
+    
+    return data
+
 
 def normalize(type: str, **kwargs):
     if type == 'min_max':
         return normalize_min_max(**kwargs)
     elif type == 'quantile':
         return normalize_quantile(**kwargs)
+    elif type == 'standardize':
+        return normalize_standardize(**kwargs)
     else:
         raise ValueError(f'Unknown normalization type: {type}')
 

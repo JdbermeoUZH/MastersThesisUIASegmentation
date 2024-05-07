@@ -2,7 +2,7 @@
 #SBATCH --output=../logs/%j_dae_and_ddpm_tta.out
 #SBATCH --cpus-per-task=4
 #SBATCH --gres=gpu:1
-#SBATCH --constraint='titan_xp|geforce_gtx_titan_x'
+#SBATCH --constraint='geforce_gtx_titan_x'
 #SBATCH --account='student'
 
 source /scratch_net/biwidl319/jbermeo/conda/conda/etc/profile.d/conda.sh

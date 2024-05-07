@@ -13,8 +13,7 @@ from matplotlib import pyplot as plt
 
 from tta_uia_segmentation.src.utils.utils import assert_in
 
-##############################
-# Things I know are being used
+
 def load_config(path):
     with open(path, 'r') as file:
         cfg = yaml.load(file, Loader=yaml.FullLoader)
@@ -53,8 +52,6 @@ def print_config(params, keys=None):
         {k: params[k] for k in keys}, 
         indent=4, explicit_start=True, explicit_end=True
     ))   
-##############################
-
     
 
 # Function taken from https://stackoverflow.com/a/43621819

@@ -96,7 +96,7 @@ def load_cddpm_from_configs_and_cpt(
         also_unconditional = train_ddpm_cfg['also_unconditional'],
         unconditional_rate = train_ddpm_cfg['unconditional_rate'], 
     ).to(device)
-    
+
     cpt = torch.load(cpt_fp, map_location=device)
     ema_update_every = 10
     ema_decay = 0.995

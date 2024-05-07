@@ -1,13 +1,14 @@
 import os
 import copy
+from dataclasses import asdict
 from typing import Union, Optional, Any, Literal
 
 import wandb
 import torch
 import numpy as np
+from tdigest import TDigest
 from torch.nn import functional as F
 from torch.utils.data import TensorDataset, ConcatDataset, DataLoader
-
 
 from tta_uia_segmentation.src.models.normalization import background_suppression
 from tta_uia_segmentation.src.utils.io import save_checkpoint, write_to_csv
@@ -15,7 +16,7 @@ from tta_uia_segmentation.src.utils.loss import dice_score, DiceLoss
 from tta_uia_segmentation.src.utils.visualization import export_images
 from tta_uia_segmentation.src.utils.utils import get_seed
 from tta_uia_segmentation.src.dataset import DatasetInMemory
-
+from tta_uia_segmentation.src.dataset.utils import normalize
 
 
 class TTADAE:
@@ -54,6 +55,7 @@ class TTADAE:
         seg: torch.nn.Module,
         dae: torch.nn.Module, 
         atlas: Any,
+        norm_sd_statistics: DomainStatistics,
         n_classes: int, 
         rescale_factor: tuple[int],
         bg_suppression_opts: dict,
@@ -63,6 +65,7 @@ class TTADAE:
         alpha: float = 1.0,
         beta: float = 0.25,
         use_atlas_only_for_init: bool = False,
+        normalization_strategy: Literal['standardize', 'min_max', 'histogram_eq'] = 'standardize',
         seg_with_bg_supp: bool = True,
         wandb_log: bool = False,
         device: str = 'cuda',
@@ -72,8 +75,17 @@ class TTADAE:
         self.seg = seg
         self.dae = dae
         self.atlas = atlas
+        self.norm_sd_statistics = norm_sd_statistics
         
         self.n_classes = n_classes
+        
+        # Strategy for normalizing the image intensities to match those of the source domain
+        self.normalization_strategy = normalization_strategy
+        
+        # Initialize target domain statistics
+        self.norm_td_statistics = DomainStatistics(**asdict(norm_sd_statistics))
+        self.norm_td_statistics.quantile_cal = None
+        self.norm_td_statistics.precalculated_quantiles = None
         
         # Whether the segmentation model uses background suppression of input images
         self.seg_with_bg_supp = seg_with_bg_supp
@@ -249,6 +261,8 @@ class TTADAE:
 
             if accumulate_over_volume:
                 self.optimizer.step()
+            
+            self.norm_td_statistics.update_statistics()
 
             self.tta_losses.append((tta_loss / n_samples).item())
             
@@ -281,6 +295,41 @@ class TTADAE:
         dice_scores = {i * calculate_dice_every: score for i, score in enumerate(self.test_scores)}
 
         return self.norm_dict, self.metrics_best, dice_scores
+    
+    
+    def _normalize_image_intensities_to_sd(self, x_norm: torch.Tensor) -> torch.Tensor:
+        """Normalize image intensities to match the source domain statistics.
+
+        Args:
+            x_norm (torch.Tensor): Normalized image resulting from the normalization model.
+
+        Returns:
+            torch.Tensor: Preprocess normalized image intensities to match statistics of the source domain.
+        """
+        
+        if self.normalization_strategy == 'standardize':
+            x_norm_standardized = normalize(
+                type='standardize', data=x_norm,
+                mean=self.norm_td_statistics.mean, std=self.norm_td_statistics.std
+                )
+            x_norm_norm_to_sd = self.norm_sd_statistics.std * x_norm_standardized + self.norm_sd_statistics.mean
+        
+        elif self.normalization_strategy == 'min_max':
+            x_norm_btw_0_1 = normalize(
+                type='min_max', data=x_norm,
+                min=self.norm_td_statistics.min, max=self.norm_td_statistics.max
+                )
+            x_norm_norm_to_sd = (self.norm_sd_statistics.max - self.norm_sd_statistics.min) * x_norm_btw_0_1  +\
+                self.norm_sd_statistics.min
+                
+        elif self.normalization_strategy == 'histogram_eq':
+            raise NotImplementedError('Histogram equalization is not implemented yet')
+
+        else:
+            raise ValueError(f'Normalization strategy {self.normalization_strategy} is not valid')
+        
+        return x_norm_norm_to_sd
+    
 
     def forward_pass_seg(
         self, 
@@ -293,13 +342,19 @@ class TTADAE:
         
         x_norm = x_norm if x_norm is not None else self.norm(x)
         
+        # Update step statistics for normalization model
+        self.norm_td_statistics.update_step_statistics(x_norm)
+        
+        # Normalize image intensities to match the source domain statistics
+        x_norm_to_sd = self._normalize_image_intensities_to_sd(x_norm)
+        
         if self.seg_with_bg_supp:
             print('DEBUG, delete me: Using background suppression')
             bg_mask = bg_mask.to(device)
-            x_norm_bg_supp = background_suppression(x_norm, bg_mask, bg_suppression_opts)
+            x_norm_bg_supp = background_suppression(x_norm_to_sd, bg_mask, bg_suppression_opts)
             mask, logits = self.seg(x_norm_bg_supp)
         else:
-            mask, logits = self.seg(x_norm)
+            mask, logits = self.seg(x_norm_to_sd)
         
         return x_norm, mask, logits
     

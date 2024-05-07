@@ -209,9 +209,10 @@ def stratified_sampling(a, b, m, n, return_torch: bool = True) -> Union[np.ndarr
     if n < m:
         print("Warning: Number of samples is less than number of groups to stratify on")
     
-    bucket_size = (b - a + 1) // m
+    bucket_size = (b - a) / (m)
     buckets = np.arange(a, b + 1, bucket_size)
-    buckets = [(buckets[i], buckets[i+1] + 1) for i in range(len(buckets) - 1)]
+    buckets = [(np.round(buckets[i]), np.round(buckets[i+1])) 
+               for i in range(len(buckets) - 1)]
     np.random.shuffle(buckets)
 
     draws = distribute_n_in_m_slots(n, m)
@@ -223,8 +224,11 @@ def stratified_sampling(a, b, m, n, return_torch: bool = True) -> Union[np.ndarr
         sampled_t.append(
             np.random.randint(bucket_start, bucket_end, (draw_n,))
         )
-        
+    
+    sample = np.concatenate(sampled_t)
+    np.random.shuffle(sample)
+    
     if return_torch:
-        return torch.from_numpy(np.concatenate(sampled_t))
+        return torch.from_numpy(sample)
     else:
-        return np.concatenate(sampled_t)
+        return sample

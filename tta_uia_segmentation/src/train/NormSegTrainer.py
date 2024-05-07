@@ -1,16 +1,25 @@
 import os
+import json
 from tqdm import tqdm
 from typing import Union, Optional
 
 import wandb
 import torch
 import numpy as np
+from tdigest import TDigest
 from torch.utils.data import DataLoader
 
 from tta_uia_segmentation.src.models import UNet
 from tta_uia_segmentation.src.models.normalization import background_suppression
 from tta_uia_segmentation.src.utils.loss import DiceLoss, dice_score
 from tta_uia_segmentation.src.utils.io import save_checkpoint
+
+
+default_quantile_list = list(np.concatenate([
+    np.array([0.001, 0.01, 0.025, 0.05]),
+    np.arange(.1, 0.9, 0.05),
+    np.array([0.95, 0.975, 0.99, 0.999])
+]))
 
 
 class NormSegTrainer:
@@ -68,7 +77,6 @@ class NormSegTrainer:
         else:
             print('Starting training from scratch.')
             self.best_validation_loss = np.inf
-            self._save_checkpoint(os.path.join(logdir, checkpoint_last))
         
         self.loss_func = loss_func
         
@@ -186,6 +194,11 @@ class NormSegTrainer:
                 }, step=epoch)
                 wandb.save(os.path.join(wandb_dir, checkpoint_last), base_path=wandb_dir)
                 wandb.save(os.path.join(wandb_dir, checkpoint_best), base_path=wandb_dir)
+                
+        # Save the moments and quantiles of the best and last checkpoints
+        for checkpoint_path in [self.get_best_checkpoint_path(), self.get_last_checkpoint_path()]:
+            self._save_normalized_images_moments_and_quantiles(
+                checkpoint_path.replace('.pth', ''), dataloader=train_dataloader, num_epochs=1)
     
     @torch.inference_mode()
     def evaluate(
@@ -251,6 +264,64 @@ class NormSegTrainer:
             optimizer_state_dict=self.optimizer.state_dict(),
             best_validation_loss=self.best_validation_loss,
         )
+        
+    def _save_normalized_images_moments_and_quantiles(self, fp_prefix: str, *args, **kwargs):
+        moments_and_quantiles, digest = self._get_normalized_images_moments_and_quantiles(
+            *args, **kwargs)
+        
+        # Save moments and quantiles
+        filepath = f'{fp_prefix}_moments_and_quantiles.json'
+        json.dump(moments_and_quantiles, open(filepath, 'w'), indent=4)
+        
+        # Save digest object
+        filepath = f'{fp_prefix}_serialized_TDigest_to_calculate_quantiles.json'
+        json.dump(digest.to_dict(), open(filepath, 'w'), indent=4)
+    
+    @torch.inference_mode()
+    def _get_normalized_images_moments_and_quantiles(
+        self,
+        dataloader: DataLoader, 
+        num_epochs: int = 1,
+        quantiles_to_report: list = default_quantile_list,
+        frac_dataset: float = 1.0,
+        ) -> tuple[dict, TDigest]:
+        
+        self.norm.eval()
+        
+        sum_px = 0
+        sum_sq_px = 0
+        n_px = 0
+        digest = TDigest()
+
+        num_batches = len(dataloader)
+        max_batches = int(frac_dataset * num_batches)
+        
+        print('Estimating moments and quantiles of normalized images.')
+        print(f'Using {num_epochs} epochs. Processing {max_batches} batches per epoch.')
+        
+        for _ in range(num_epochs):
+            for i, (x, *_) in tqdm(enumerate(dataloader), total=max_batches):
+                if i >= max_batches:
+                    break
+                x = x.to(self.device).float()
+                x_norm = self.norm(x)
+                
+                n_px += torch.prod(torch.tensor(x.shape))
+                sum_px += x.sum().item()
+                sum_sq_px += (x ** 2).sum().item()
+                digest.batch_update(x_norm.flatten().cpu().numpy())
+                
+        mean = (sum_px / n_px).item()
+        std = np.sqrt(sum_sq_px / n_px - mean ** 2).item()
+        quantiles = {q: digest.percentile(q * 100) for q in quantiles_to_report}
+        
+        moments_and_quantiles = {
+            'mean': mean,
+            'std': std,
+            'quantiles': quantiles
+        }
+        
+        return moments_and_quantiles, digest
     
     def get_last_checkpoint_name(self):
         return self.checkpoint_last

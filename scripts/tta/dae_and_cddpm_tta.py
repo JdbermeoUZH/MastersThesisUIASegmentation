@@ -73,9 +73,11 @@ def preprocess_cmd_args() -> argparse.Namespace:
     
     parser.add_argument('--ddpm_loss_beta', type=float, help='Weight for DDPM loss. Default: 1.0')
     parser.add_argument('--dae_loss_alpha', type=float, help='Weight for DAE loss. Default: 1.0')
+    parser.add_argument('--ddpm_uncond_loss_gamma', type=float, help='Weight for DDPM unconditional loss. Default: 1.0')
+    parser.add_argument('--classifier_free_guidance_weight', type=float, help='Weight for classifier free guidance. Default: None')
     parser.add_argument('--ddpm_sample_guidance_eta', type=float, help='Eta for DDPM sampling guidance. Default: None')
     parser.add_argument('--x_norm_regularization_loss', type=str, help='Type of x_norm regularization loss. Default: None', choices=['sift', 'zncc', 'mi', None])
-    parser.add_argument('--x_norm_regularization_loss_gamma', type=float, help='Gamma for x_norm regularization loss. Default: 1.0')
+    parser.add_argument('--x_norm_regularization_zeta', type=float, help='Gamma for x_norm regularization loss. Default: 1.0')
     parser.add_argument('--frac_vol_diffusion_tta', type=float, help='Fraction of volume to diffuse. Default: 0.5')
     parser.add_argument('--use_ddpm_after_step', type=int, help='Use DDPM after x steps. Default: None')
     parser.add_argument('--use_ddpm_after_dice', type=float, help='Use DDPM after dice is below x. Default: None')
@@ -88,6 +90,7 @@ def preprocess_cmd_args() -> argparse.Namespace:
     parser.add_argument('--ddpm_dir', type=str, help='Path to directory where DDPM checkpoints are saved')
     parser.add_argument('--cpt_fn', type=str, help='Name of checkpoint file to load for DDPM')
     parser.add_argument('--t_ddpm_range', type=float, nargs=2, help='Quantile range of t values for DDPM. Default: [0.2, 0.98]')       
+    parser.add_argument('--t_sampling_strategy', type=str, help='Sampling strategy for t values. Default: uniform')
     parser.add_argument('--use_y_pred_for_ddpm_loss', type=parse_bool, help='Whether to use predicted segmentation as conditional for DDPM. Default: True')
     parser.add_argument('--use_y_gt_for_ddpm_loss', type=parse_bool, help='Whether to use ground truth segmetnation as conditional for DDPM. ONLY FOR DEBUGGING. Default: False')
     parser.add_argument('--detach_x_norm_from_ddpm_loss', type=parse_bool, help='Whether to detach x_norm from DDPM loss. Default: False')
@@ -275,9 +278,11 @@ if __name__ == '__main__':
     learning_rate               = tta_config[tta_mode]['learning_rate']
     dae_loss_alpha              = tta_config[tta_mode]['dae_loss_alpha']
     ddpm_loss_beta              = tta_config[tta_mode]['ddpm_loss_beta']
-    unconditional_ddpm_loss_weight = tta_config[tta_mode]['unconditional_ddpm_loss_weight']
+    ddpm_uncond_loss_gamma      = tta_config[tta_mode]['ddpm_uncond_loss_gamma']
+    classifier_free_guidance_weight = tta_config[tta_mode]['classifier_free_guidance_weight']
+
     ddpm_sample_guidance_eta    = tta_config[tta_mode]['ddpm_sample_guidance_eta']
-    x_norm_regularization_gamma = tta_config[tta_mode]['x_norm_regularization_loss_gamma']
+    x_norm_regularization_zeta  = tta_config[tta_mode]['x_norm_regularization_zeta']
     seg_with_bg_supp            = tta_config[tta_mode]['seg_with_bg_supp']
 
     x_norm_regularization_loss  = tta_config[tta_mode]['x_norm_regularization_loss']
@@ -293,6 +298,7 @@ if __name__ == '__main__':
     minibatch_size_ddpm         = tta_config[tta_mode]['minibatch_size_ddpm']
     frac_vol_diffusion_tta      = tta_config[tta_mode]['frac_vol_diffusion_tta']
     t_ddpm_range                = tta_config[tta_mode]['t_ddpm_range']
+    t_sampling_strategy         = tta_config[tta_mode]['t_sampling_strategy']
     sampling_timesteps          = tta_config[tta_mode]['sampling_timesteps']
     min_max_int_norm_imgs       = tta_config[tta_mode]['min_max_int_norm_imgs']
     use_y_pred_for_ddpm_loss    = tta_config[tta_mode]['use_y_pred_for_ddpm_loss']
@@ -317,10 +323,11 @@ if __name__ == '__main__':
         use_atlas_only_for_init = use_atlas_only_for_init,
         rescale_factor          = rescale_factor,
         ddpm_loss_beta          = ddpm_loss_beta,
-        unconditional_ddpm_loss_weight = unconditional_ddpm_loss_weight,
+        ddpm_uncond_loss_gamma  = ddpm_uncond_loss_gamma,
         minibatch_size_ddpm     = minibatch_size_ddpm,
         frac_vol_diffusion_tta  = frac_vol_diffusion_tta,
         t_ddpm_range            = t_ddpm_range,
+        t_sampling_strategy     = t_sampling_strategy,
         min_max_int_norm_imgs   = min_max_int_norm_imgs,
         use_y_pred_for_ddpm_loss=use_y_pred_for_ddpm_loss,
         use_y_gt_for_ddpm_loss  = use_y_gt_for_ddpm_loss,
@@ -330,7 +337,7 @@ if __name__ == '__main__':
         warmup_steps_for_ddpm_loss=warmup_steps_for_ddpm_loss,
         ddpm_sample_guidance_eta=ddpm_sample_guidance_eta,
         sampling_timesteps      = sampling_timesteps,
-        x_norm_regularization_loss_gamma = x_norm_regularization_gamma,
+        x_norm_regularization_loss_zeta = x_norm_regularization_zeta,
         x_norm_regularization_loss = x_norm_regularization_loss,
         wandb_log               = wandb_log,
         device                  = device,
@@ -378,7 +385,14 @@ if __name__ == '__main__':
         
     if ddpm_sample_guidance_eta is not None and ddpm_sample_guidance_eta > 0:
         print(f'Using DDPM sample guidance with weight: {ddpm_sample_guidance_eta}')
-                
+    
+    if ddpm_uncond_loss_gamma > 0 and ddpm.also_unconditional:
+        if classifier_free_guidance_weight is None:
+            print(f'Using DDPM unconditional loss with weight: {ddpm_uncond_loss_gamma}')
+        else:
+            print(f'Using DDPM unconditional loss with weight: {ddpm_uncond_loss_gamma} '
+                  f'in classifier free guidance mode with weight: {classifier_free_guidance_weight}')
+        
     dice_scores = torch.zeros((len(indices_per_volume), n_classes))
     
     dice_per_vol = {}

@@ -69,11 +69,12 @@ class TTADAEandDDPM(TTADAE):
         ddpm: ConditionalGaussianDiffusion,
         dae_loss_alpha: float = 0.5,
         ddpm_loss_beta: float = 1.0,
-        unconditional_ddpm_loss_weight: float = 1.0,
+        ddpm_uncond_loss_gamma: float = 1.0,
         ddpm_loss_adaptive_beta_init: float = 1.0,
         ddpm_sample_guidance_eta: float = 0.0,
-        x_norm_regularization_loss_gamma: float = 1.0,
+        x_norm_regularization_loss_zeta: float = 1.0,
         dae_loss: Optional[callable] = DiceLoss(),
+        classifier_free_guidance_weight: Optional[float] = None,
         guidance_loss: Optional[callable] = ssim_loss,
         x_norm_regularization_loss: Optional[Literal['sift', 'zncc', 'mi']] = 'sift',
         x_norm_kwargs: dict = {},
@@ -97,7 +98,7 @@ class TTADAEandDDPM(TTADAE):
         
         self.dae_loss_alpha = dae_loss_alpha
         self.ddpm_loss_beta = ddpm_loss_beta
-        self.unconditional_ddpm_loss_weight = unconditional_ddpm_loss_weight
+        self.ddpm_uncond_loss_gamma = ddpm_uncond_loss_gamma
         self.ddpm_loss_adaptive_beta_init = ddpm_loss_adaptive_beta_init
         self.ddpm_loss_adaptive_beta = ddpm_loss_adaptive_beta_init
         self.ddpm_sample_guidance_eta = ddpm_sample_guidance_eta
@@ -109,8 +110,8 @@ class TTADAEandDDPM(TTADAE):
         self.minibatch_size_ddpm = minibatch_size_ddpm
         self.frac_vol_diffusion_tta = frac_vol_diffusion_tta
         
-        self.min_t_diffusion_tta = np.ceil(t_ddpm_range[0] * (self.ddpm.timesteps - 1))
-        self.max_t_diffusion_tta = np.floor(t_ddpm_range[0] * (self.ddpm.timesteps - 1))
+        self.min_t_diffusion_tta = int(np.ceil(t_ddpm_range[0] * (self.ddpm.num_timesteps - 1)))
+        self.max_t_diffusion_tta = int(np.floor(t_ddpm_range[1] * (self.ddpm.num_timesteps - 1)))
         self.t_sampling_strategy = t_sampling_strategy
         
         self.min_int_norm_imgs = min_max_int_norm_imgs[0]
@@ -144,11 +145,20 @@ class TTADAEandDDPM(TTADAE):
         # If a flag is not set, use the DDPM at every step
         self.use_ddpm_loss = use_ddpm_after_dice is None and use_ddpm_after_step is None
         
+        # Modify loss weights if using classifier free guidance
+        if classifier_free_guidance_weight is not None:
+            self.dae_loss_alpha *= (1 + classifier_free_guidance_weight)
+            self.ddpm_loss_beta *= (1 + classifier_free_guidance_weight)            
+                        
+            self.ddpm_uncond_loss_gamma *= classifier_free_guidance_weight
+
+            self.x_norm_regularization_loss_zeta *= (1 + classifier_free_guidance_weight)  
+        
         # x_norm regularization parameters
-        self.x_norm_regularization_loss_gamma = x_norm_regularization_loss_gamma
+        self.x_norm_regularization_loss_zeta = x_norm_regularization_loss_zeta
         self.x_norm_regularization_loss = DescriptorRegularizationLoss(
             type=x_norm_regularization_loss, **x_norm_kwargs
-        ) if self.x_norm_regularization_loss_gamma > 0 else None
+        ) if self.x_norm_regularization_loss_zeta > 0 else None
         
         # DDPM sample guidance parameters
         self.guidance_loss = guidance_loss
@@ -332,8 +342,8 @@ class TTADAEandDDPM(TTADAE):
             b_i_for_ddpm_loss = np.random.choice(
                 range(len(volume_dataloader)), num_batches_for_ddpm_loss, replace=False)
             
-            # Calculate a reweigh factor for the ddpm loss to take into account how many 
-            #  times less it is used than the dae loss or if averaged over entire volume
+            # Calculate a reweigh factor to take into account how many times less it is used
+            #  than the dae loss, or if averaged over entire volume
             ddpm_reweigh_factor = (1 / len(b_i_for_ddpm_loss)) * \
                 (1 if accumulate_over_volume else len(volume_dataloader))  
 
@@ -351,15 +361,14 @@ class TTADAEandDDPM(TTADAE):
                 batch_size=batch_size,
                 num_workers=num_workers,                            
             )
-            
+                        
             # Define which volumes to use for the DDPM sample guidance (if any at all)
             # :============================================================:
             if self.ddpm_sample_guidance_eta > 0:
                 sampled_vol_dl = dae_sampled_vol_dl if self.using_dae_pl else atlas_sampled_vol_dl
             else:
                 sampled_vol_dl = [[None]] * len(volume_dataloader)
-                
-                
+            
             # :===========================================:
             # Adapting to the target distribution
             # :===========================================:
@@ -431,6 +440,7 @@ class TTADAEandDDPM(TTADAE):
                     self.ddpm_loss_beta > 0 and self.use_ddpm_loss
                     
                 if calculate_ddpm_loss_gradients:
+                    t = t.to(device)
                     
                     n_samples_diffusion += x.shape[0] 
                     
@@ -469,21 +479,24 @@ class TTADAEandDDPM(TTADAE):
                     
                     # Calculate gradients wrt conditional DDPM. This represents log p(x|y)
                     ddpm_loss = self._calculate_ddpm_gradients(
-                        x,
-                        x_cond,
+                        x=x,
+                        x_cond=x_cond,
+                        t=t,
+                        device=device,  
                         ddpm_reweigh_factor=self.ddpm_loss_beta * ddpm_reweigh_factor,
                         max_int_norm_imgs=running_max,
                         min_int_norm_imgs=running_min,
                         use_unconditional_ddpm=False
                     )
                     
-                    
                     # Calculate gradients wrt unconditional DDPM. This represents log 1/p(x), which means we subtract it 
-                    if self.unconditional_ddpm_loss_weight > 0:
+                    if self.ddpm_uncond_loss_gamma > 0 and self.ddpm.also_unconditional:
                         ddpm_loss = self._calculate_ddpm_gradients(
-                            x,
-                            x_cond,
-                            ddpm_reweigh_factor= -1 * self.unconditional_ddpm_loss_weight * ddpm_reweigh_factor,
+                            x=x,
+                            x_cond=x_cond,
+                            t=t,
+                            device=device,  
+                            ddpm_reweigh_factor= -1 * self.ddpm_uncond_loss_gamma * ddpm_reweigh_factor,
                             max_int_norm_imgs=running_max,
                             min_int_norm_imgs=running_min,
                             use_unconditional_ddpm=True
@@ -518,12 +531,13 @@ class TTADAEandDDPM(TTADAE):
                     
                 # Regularize the shift between x and x_norm, to ensure information of the image is preserved
                 # :===============================================================:
-                if self.x_norm_regularization_loss_gamma > 0:
+                if self.x_norm_regularization_loss_zeta > 0:
                     x_norm_grads_old = self._get_gradients_x_norm()
                     
                     x_norm = self.norm(x)
-                    x_norm_regularization_loss = self.x_norm_regularization_loss_gamma * \
+                    x_norm_regularization_loss = self.x_norm_regularization_loss_zeta * \
                         self.x_norm_regularization_loss(x_norm, x)
+                        
                     x_norm_regularization_loss.backward()
                     
                     x_norm_grads_new = self._get_gradients_x_norm()
@@ -549,7 +563,7 @@ class TTADAEandDDPM(TTADAE):
                         if self.ddpm_sample_guidance_eta > 0 else 0
                         
                     step_x_norm_reg_loss += (x_norm_regularization_loss.detach() * x.shape[0]).item() \
-                        if self.x_norm_regularization_loss_gamma > 0 else 0
+                        if self.x_norm_regularization_loss_zeta > 0 else 0
                                                                         
             # Update the max and min values with those of the current step
             #  Only affects running max and min if it is to decrease their range
@@ -610,6 +624,7 @@ class TTADAEandDDPM(TTADAE):
         x: torch.Tensor,
         device: str,
         x_cond: Optional[torch.Tensor] = None,
+        t: Optional[torch.Tensor] = None,
         bg_mask: Optional[torch.Tensor] = None,
         ddpm_reweigh_factor: float = 1,
         min_int_norm_imgs: float = 0,
@@ -625,6 +640,7 @@ class TTADAEandDDPM(TTADAE):
             x (torch.Tensor): _description_
             device (str): _description_
             x_cond (Optional[torch.Tensor], optional): _description_. Defaults to None.
+            t (Optional[torch.Tensor], optional): _description_. Defaults to None.
             bg_mask (Optional[torch.Tensor], optional): _description_. Defaults to None.
             ddpm_reweigh_factor (float, optional): _description_. Defaults to 1.
             min_int_norm_imgs (float, optional): _description_. Defaults to 0.
@@ -643,13 +659,13 @@ class TTADAEandDDPM(TTADAE):
         ddpm_reweigh_factor = ddpm_reweigh_factor * (1 / num_minibatches)  
                 
         for i in range(0, x.shape[0], minibatch_size):
-            x_minibatch = x[i: i + minibatch_size]
-            
-            x_norm_mb = self.norm(x_minibatch)
+            t_mb = t[i: i + minibatch_size] if t is not None else None
+            x_norm_mb = self.norm(x[i: i + minibatch_size])
             
             if use_unconditional_ddpm:
-                x_cond_shape = (x_norm_mb.shape[0], self.n_classes, *x_norm_mb.shape[2:])
-                x_cond_mb = torch.zeros_like(x_cond_shape)
+                # TODO: include the actual logic used in training to create unconditional samples
+                x_cond_shape = (x_norm_mb.shape[0], self.n_classes, *x_norm_mb.shape[-2:])
+                x_cond_mb = torch.zeros(x_cond_shape).to(device)
                 
             else:
                 if x_cond is None:
@@ -665,8 +681,6 @@ class TTADAEandDDPM(TTADAE):
             # Normalize the input image between 0 and 1, (required by the DDPM)
             x_norm_mb_ddpm = x_norm_mb if not self.detach_x_norm_from_ddpm_loss else x_norm_mb.detach().clone()
             
-            print('TODO: Check if the image is not normalized between 0 and 1 and if the ranges match') 
-            breakpoint()
             x_norm_mb_ddpm = du.normalize_min_max(
                 x_norm_mb_ddpm,
                 min=min_int_norm_imgs, 
@@ -679,7 +693,10 @@ class TTADAEandDDPM(TTADAE):
             # Calculate the DDPM loss and backpropagate
             ddpm_loss = ddpm_reweigh_factor * self.ddpm(
                 x_norm_mb_ddpm, 
-                x_cond_mb
+                x_cond_mb,
+                t_mb,
+                min_t=self.min_t_diffusion_tta,
+                max_t=self.max_t_diffusion_tta,
             )
             ddpm_loss.backward()
             
@@ -710,17 +727,17 @@ class TTADAEandDDPM(TTADAE):
         self.optimizer.step()
         
     def _sample_t_for_ddpm_loss(self, num_samples: int, batch_size: int, num_workers: int,
-                                num_groups_stratified_sampling: int = 64) -> torch.utils.data.DataLoader:
+                                num_groups_stratified_sampling: int = 32) -> torch.utils.data.DataLoader:
         
         if self.t_sampling_strategy == 'uniform':
-            t_values = torch.randint(self.min_t_diffusion_tta, self.max_t_diffusion_tta, num_samples)
+            t_values = torch.randint(self.min_t_diffusion_tta, self.max_t_diffusion_tta, (num_samples, ))
         
         elif self.t_sampling_strategy == 'stratified':
             t_values = stratified_sampling(self.min_t_diffusion_tta, self.max_t_diffusion_tta, 
-                                           num_samples, num_groups_stratified_sampling)
+                                           num_groups_stratified_sampling, num_samples)
         
         elif self.t_sampling_strategy == 'one_per_volume':
-            t_values = torch.full((num_samples,), np.randint(self.min_t_diffusion_tta, self.max_t_diffusion_tta))
+            t_values = torch.full((num_samples,), np.random.randint(self.min_t_diffusion_tta, self.max_t_diffusion_tta))
 
         else:
             raise ValueError('Invalid t_sampling_strategy')
@@ -729,7 +746,7 @@ class TTADAEandDDPM(TTADAE):
         assert t_values.min() >= self.min_t_diffusion_tta and t_values.max() <= self.max_t_diffusion_tta, \
             't values must be within the range of the DDPM timesteps'
         assert t_values.shape == (num_samples,), 't values must be a 1D tensor'
-        
+
         return DataLoader(
             TensorDataset(t_values),
             batch_size=batch_size,
@@ -744,7 +761,7 @@ class TTADAEandDDPM(TTADAE):
         wandb.define_metric(f'ddpm_loss/*', step_metric=f'tta_step')
         wandb.define_metric(f'ddpm_guidance_loss/*', step_metric=f'tta_step')
         wandb.define_metric(f'total_loss/*', step_metric=f'tta_step')   
-        wandb.define_metric(f'dice_score_fg/*', step_metric=f'tta_step'    
+        wandb.define_metric(f'dice_score_fg/*', step_metric=f'tta_step')    
 
     def reset_initial_state(self, state_dict: dict) -> None:
         super().reset_initial_state(state_dict)
@@ -779,7 +796,7 @@ class TTADAEandDDPM(TTADAE):
             log_dict[f'norm_x_norm_out_grad_ddpm_loss/img_{index:03d}'] = \
                 torch.norm(self.x_norm_grads_ddpm_loss[last_layer_name])
                 
-        if self.x_norm_regularization_loss_gamma > 0:
+        if self.x_norm_regularization_loss_zeta > 0:
             log_dict[f'norm_x_norm_out_grad_xnorm_reg_loss/img_{index:03d}'] = \
                 torch.norm(self.x_norm_grads_x_norm_reg_loss[last_layer_name])        
         

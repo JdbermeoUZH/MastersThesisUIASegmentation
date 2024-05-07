@@ -75,7 +75,9 @@ class ConditionalGaussianDiffusion(GaussianDiffusion):
         loss = loss * extract(self.loss_weight, t, loss.shape)
         return loss.mean()
 
-    def forward(self, img, cond_img, t: int = None, min_t: int = None, max_t: int = None, *args, **kwargs):
+    def forward(self, img, cond_img, t: Optional[torch.Tensor] = None, 
+                min_t: Optional[int] = None, max_t: Optional[int] = None, *args, **kwargs):
+        
         b, c, h, w, device, img_size, = *img.shape, img.device, self.image_size
         
         # Normalize the image to be between -1 and 1 and check it follows necessary constraints
@@ -119,8 +121,8 @@ class ConditionalGaussianDiffusion(GaussianDiffusion):
             t = torch.randint(min_t, max_t, (b,), device=device).long()
         else:
             if min_t is not None and max_t is not None:
-                assert min_t <= t <= max_t, f't must be between {min_t} and {max_t}, but got {t}' 
-                    
+                assert (min_t <= t).all() and (t <= max_t).all(), f't must be between {min_t} and {max_t}, but got {t}' 
+        
         return self.p_losses_conditioned_on_img(img, t, cond_img, *args, **kwargs)      
     
     @torch.inference_mode()
