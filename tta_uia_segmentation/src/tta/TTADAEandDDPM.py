@@ -12,7 +12,7 @@ from kornia.losses import SSIM3DLoss
 from torch.nn import functional as F
 from torch.utils.data import ConcatDataset, DataLoader, TensorDataset
 
-from tta_uia_segmentation.src.tta.TTADAE import TTADAE
+from tta_uia_segmentation.src.tta import TTADAE, DomainStatistics
 from tta_uia_segmentation.src.utils.loss import DescriptorRegularizationLoss, DiceLoss
 from tta_uia_segmentation.src.models import ConditionalGaussianDiffusion
 from tta_uia_segmentation.src.utils.io import save_checkpoint, write_to_csv
@@ -83,7 +83,6 @@ class TTADAEandDDPM(TTADAE):
         t_ddpm_range: tuple[float, float] = [0, 1.0],
         t_sampling_strategy: Literal['uniform', 'stratified', 'one_per_volume'] = 'uniform',
         sampling_timesteps: Optional[int] = None,
-        min_max_int_norm_imgs: tuple[float, float] = (0, 1),
         detach_x_norm_from_ddpm_loss: bool = False,
         use_y_pred_for_ddpm_loss: bool = False,
         use_y_gt_for_ddpm_loss: bool = False,    # Of course use only for debugging
@@ -113,9 +112,6 @@ class TTADAEandDDPM(TTADAE):
         self.min_t_diffusion_tta = int(np.ceil(t_ddpm_range[0] * (self.ddpm.num_timesteps - 1)))
         self.max_t_diffusion_tta = int(np.floor(t_ddpm_range[1] * (self.ddpm.num_timesteps - 1)))
         self.t_sampling_strategy = t_sampling_strategy
-        
-        self.min_int_norm_imgs = min_max_int_norm_imgs[0]
-        self.max_int_norm_imgs = min_max_int_norm_imgs[1]
         
         self.use_y_pred_for_ddpm_loss = use_y_pred_for_ddpm_loss   
         self.detach_x_norm_from_ddpm_loss = detach_x_norm_from_ddpm_loss 
@@ -230,9 +226,7 @@ class TTADAEandDDPM(TTADAE):
                 drop_last=False,
             )
         
-        running_max = self.max_int_norm_imgs
         running_min = self.min_int_norm_imgs
-        m = running_min_max_momentum
         
         # Initialize warmup factor for the DDPM loss term
         if self.warmup_steps_for_ddpm_loss is not None:
@@ -248,9 +242,7 @@ class TTADAEandDDPM(TTADAE):
             
             self.norm.eval()
             volume_dataset.dataset.set_augmentation(False)
-            
-            step_min, step_max = np.inf, -np.inf
-            
+                        
             if self.ddpm_loss_beta > 0 and self.use_ddpm_after_step is not None and not self.use_ddpm_loss:      
                 self.use_ddpm_loss = step >= self.use_ddpm_after_step
                 if self.use_ddpm_loss:
@@ -435,21 +427,12 @@ class TTADAEandDDPM(TTADAE):
                     
                 # DDPM loss: Calculate gradients from the noise estimation loss
                 # :============================================================:
-                # TODO: Add the given t on the conditional and unconditional DDPM loss
                 calculate_ddpm_loss_gradients = b_i in b_i_for_ddpm_loss and \
                     self.ddpm_loss_beta > 0 and self.use_ddpm_loss
                     
                 if calculate_ddpm_loss_gradients:
                     t = t.to(device)
-                    
                     n_samples_diffusion += x.shape[0] 
-                    
-                    # Keep track of the max and min in the current step
-                    if x_norm is None:
-                        x_norm = self.norm(x) 
-                    step_max = max(step_max, x_norm.max().item())
-                    step_min = min(step_min, x_norm.min().item()) 
-                    del x_norm
                     
                     # Fix x_cond depending on the configuration
                     if self.use_y_gt_for_ddpm_loss:
@@ -484,8 +467,8 @@ class TTADAEandDDPM(TTADAE):
                         t=t,
                         device=device,  
                         ddpm_reweigh_factor=self.ddpm_loss_beta * ddpm_reweigh_factor,
-                        max_int_norm_imgs=running_max,
-                        min_int_norm_imgs=running_min,
+                        max_int_norm_imgs=self.norm_td_statistics.max,
+                        min_int_norm_imgs=self.norm_td_statistics.min,
                         use_unconditional_ddpm=False
                     )
                     
@@ -497,8 +480,8 @@ class TTADAEandDDPM(TTADAE):
                             t=t,
                             device=device,  
                             ddpm_reweigh_factor= -1 * self.ddpm_uncond_loss_gamma * ddpm_reweigh_factor,
-                            max_int_norm_imgs=running_max,
-                            min_int_norm_imgs=running_min,
+                            max_int_norm_imgs=self.norm_td_statistics.max,
+                            min_int_norm_imgs=self.norm_td_statistics.min,
                             use_unconditional_ddpm=True
                         )
                     
@@ -565,11 +548,6 @@ class TTADAEandDDPM(TTADAE):
                     step_x_norm_reg_loss += (x_norm_regularization_loss.detach() * x.shape[0]).item() \
                         if self.x_norm_regularization_loss_zeta > 0 else 0
                                                                         
-            # Update the max and min values with those of the current step
-            #  Only affects running max and min if it is to decrease their range
-            running_max = m * running_max + (1 - m) * step_max  
-            running_min = m * running_min + (1 - m) * step_min  
-
             if accumulate_over_volume:
                 self._take_optimize_step(index, step)
 
@@ -662,10 +640,11 @@ class TTADAEandDDPM(TTADAE):
             t_mb = t[i: i + minibatch_size] if t is not None else None
             x_norm_mb = self.norm(x[i: i + minibatch_size])
             
+            # Update the statistics of the target domain in the current step
+            self.norm_td_statistics.update_step_statistics(x_norm_mb) 
+            
             if use_unconditional_ddpm:
-                # TODO: include the actual logic used in training to create unconditional samples
-                x_cond_shape = (x_norm_mb.shape[0], self.n_classes, *x_norm_mb.shape[-2:])
-                x_cond_mb = torch.zeros(x_cond_shape).to(device)
+                x_cond_mb = self.ddpm._generate_unconditional_x_cond(batch_size=minibatch_size, device=device)
                 
             else:
                 if x_cond is None:
@@ -673,7 +652,7 @@ class TTADAEandDDPM(TTADAE):
                     _, x_cond_mb, _ = self.forward_pass_seg(
                         x_norm=x_norm_mb, bg_mask=bg_mask, 
                         bg_suppression_opts=self.bg_suppression_opts_tta, 
-                        device=device
+                        device=device, update_norm_td_statistics=False
                     )
                 else:
                     x_cond_mb = x_cond[i: i + minibatch_size]

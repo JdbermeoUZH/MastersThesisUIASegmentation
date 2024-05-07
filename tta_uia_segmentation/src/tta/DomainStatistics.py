@@ -7,6 +7,10 @@ from tdigest import TDigest
 
 @dataclass
 class DomainStatistics:
+    """
+    TODO:
+     - Add runnng calculation of quantiles with https://gist.github.com/davidbau/00a9b6763a260be8274f6ba22df9a145#file-runningstats-py-L753
+    """
     mean: Optional[torch.Tensor | float] = 0.0
     std: Optional[torch.Tensor | float] = 0.0
     min: Optional[torch.Tensor | float] = torch.inf
@@ -27,15 +31,9 @@ class DomainStatistics:
     def update_step_statistics(self, x: torch.Tensor) -> None:
         self._step_num_px += x.numel()
         self._step_sum += x.sum().item()
-        self._step_sum_sq += (x ** 2).sum().item()
-        
-        x_min = x.min().item()
-        if x_min < self._step_min:
-            self._step_min = x_min
-        
-        x_max = x.max().item()
-        if x_max > self._step_max:
-            self._step_max = x_max
+        self._step_sum_sq += (x ** 2).sum().item()        
+        self._step_min = min(x.min().item(), self._step_min) 
+        self._step_max = max(x.max().item(), self._step_max)
             
     def update_statistics(self) -> None:
         step_mean = self._step_sum / self._step_num_px

@@ -17,7 +17,7 @@ from tta_uia_segmentation.src.utils.visualization import export_images
 from tta_uia_segmentation.src.utils.utils import get_seed
 from tta_uia_segmentation.src.dataset import DatasetInMemory
 from tta_uia_segmentation.src.dataset.utils import normalize
-
+from tta_uia_segmentation.src.tta import DomainStatistics
 
 class TTADAE:
     """
@@ -65,6 +65,7 @@ class TTADAE:
         alpha: float = 1.0,
         beta: float = 0.25,
         use_atlas_only_for_init: bool = False,
+        normalize_img_int_before_seg: bool = False,
         normalization_strategy: Literal['standardize', 'min_max', 'histogram_eq'] = 'standardize',
         seg_with_bg_supp: bool = True,
         wandb_log: bool = False,
@@ -84,6 +85,7 @@ class TTADAE:
         
         # Initialize target domain statistics
         self.norm_td_statistics = DomainStatistics(**asdict(norm_sd_statistics))
+        self.normalize_img_int_before_seg = normalize_img_int_before_seg
         self.norm_td_statistics.quantile_cal = None
         self.norm_td_statistics.precalculated_quantiles = None
         
@@ -338,15 +340,18 @@ class TTADAE:
         bg_suppression_opts: Optional[dict] = None,
         device: Optional[Union[str, torch.device]] = None,
         x_norm: Optional[torch.Tensor] = None,
+        update_norm_td_statistics: bool = False,
         ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         
         x_norm = x_norm if x_norm is not None else self.norm(x)
         
         # Update step statistics for normalization model
-        self.norm_td_statistics.update_step_statistics(x_norm)
+        if update_norm_td_statistics:
+            self.norm_td_statistics.update_step_statistics(x_norm)
         
         # Normalize image intensities to match the source domain statistics
-        x_norm_to_sd = self._normalize_image_intensities_to_sd(x_norm)
+        if self.normalize_img_int_before_seg:
+            x_norm_to_sd = self._normalize_image_intensities_to_sd(x_norm)
         
         if self.seg_with_bg_supp:
             print('DEBUG, delete me: Using background suppression')
@@ -584,6 +589,9 @@ class TTADAE:
         self.use_only_dae_pl = self.alpha == 0 and self.beta == 0
         self.using_dae_pl = False
         self.using_atlas_pl = False
+        
+        # Reset target domain statistics
+        self.norm_td_statistics = DomainStatistics(**asdict(self.norm_sd_statistics))
         
     def load_state_dict_norm(self, state_dict: dict) -> None:
         self.norm.load_state_dict(state_dict)

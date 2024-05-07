@@ -104,7 +104,7 @@ class ConditionalGaussianDiffusion(GaussianDiffusion):
                     
                 # Choose randomly whether it will be a conditional or unconditional forward pass
                 if random.random() < self.uncoditional_rate:
-                    cond_img = self._process_x_cond_for_unconditional_sampling(cond_img)
+                    cond_img = self._generate_unconditional_x_cond(batch_size=cond_img.shape[0], device=cond_img.device)
                     
             cond_img = self.normalize(cond_img)  
             
@@ -191,32 +191,34 @@ class ConditionalGaussianDiffusion(GaussianDiffusion):
         if not self.only_unconditional:
             assert img_shape[-2:] == x_cond.shape[-2:], 'img_shape and x_cond must have the same shapes'
             
-            if self.also_unconditional and not self.condition_by_concat:
-                # Add an unconditional channel of zeros to the one hot encoded cond_img
-                #  if conditioning by multiplication and training a model with also unconditional mode
-                b, _, h, w = x_cond.shape
-                x_cond = torch.cat([x_cond, torch.zeros(b, 1, h, w, device=x_cond.device)], dim = 1)
-            
             if unconditional_sampling:
                 assert self.also_unconditional, 'unconditional_sampling is only available when also_unconditional is True'
                 assert x_cond.shape[1] > 1, 'cond_img must be one hot encoded'
                 
-                x_cond = self._process_x_cond_for_unconditional_sampling(x_cond) 
+                x_cond = self._generate_unconditional_x_cond(batch_size=x_cond.shape[0], device=x_cond.device) 
 
         else:
             x_cond = None
         
         return sample_fn(img_shape, x_cond, return_all_timesteps)
-    
-    def _process_x_cond_for_unconditional_sampling(self, x_cond):
-            if self.condition_by_concat:
-                x_cond = x_cond * 0
-            else:
-                # Project the image only to the unconditional channel
-                x_cond[:, :-1] = 0
+        
+    def _generate_unconditional_x_cond(self, batch_size: int, device: str):
+        if self.also_unconditional:
+            num_x_cond_channels = self.model.input_channels - self.model.channels
+            img_shape = (batch_size, num_x_cond_channels, self.image_size, self.image_size)
+
+            x_cond = torch.zeros(img_shape, device=device)
+            
+            if not self.condition_by_concat:
                 x_cond[:, -1] = 1
-                
-            return x_cond
+            
+        elif self.only_unconditional:
+            x_cond = None
+        
+        else:
+            raise ValueError('DDPM must be in unconditional. Either in `also_unconditional` or `only_unconditional` mode')
+        
+        return x_cond
 
     def set_sampling_timesteps(self, sampling_timesteps):
         self.sampling_timesteps = sampling_timesteps

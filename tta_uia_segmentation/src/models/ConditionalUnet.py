@@ -67,6 +67,8 @@ class ConditionalUnet(Unet):
         else:
             input_channels = image_channels                
         
+        self.input_channels = input_channels
+        
         init_dim = default(init_dim, dim)
         self.init_conv = nn.Conv2d(input_channels, init_dim, 7, padding = 3)
 
