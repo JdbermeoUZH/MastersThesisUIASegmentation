@@ -24,6 +24,32 @@ def onehot_to_class(onehot, class_dim=1, keepdim=True):
 
 
 def dice_score(mask_pred, mask_gt, soft=True, reduction='mean', bg_channel=0, k=1, epsilon=0):
+    """ 
+    Assumes that mask_pred and mask_gt are one-hot encoded.
+    
+    Parameters
+    ----------
+    mask_pred : torch.Tensor
+        Predicted masks.
+    
+    mask_gt : torch.Tensor
+
+    soft : bool
+        If True, mask_pred is assumed to be soft and will be converted to one-hot.
+    
+    reduction : str
+        Reduction method.
+    
+    bg_channel : int
+        Background channel.
+    
+    k : int
+        Exponent.
+    
+    epsilon : float
+        Smoothing factor.
+        
+    """
 
     if not soft:
         n_classes = mask_pred.shape[1]
@@ -52,16 +78,24 @@ def dice_score(mask_pred, mask_gt, soft=True, reduction='mean', bg_channel=0, k=
 
 
 class DiceLoss(nn.Module):
-    def __init__(self):
+    def __init__(self, epsilon = 1e-5):
         super().__init__()
+        self.epsilon = epsilon
 
     def forward(self, mask_pred, mask_gt, **kwargs):
-
-        dice, dice_fg = dice_score(mask_pred, mask_gt, **kwargs)
+        if 'epsilon' in kwargs:
+            epsilon = kwargs.pop('epsilon')
+        else:
+            epsilon = self.epsilon
+            
+        dice, _ = dice_score(
+            mask_pred, mask_gt, epsilon=epsilon,
+            **kwargs
+            )
         loss = 1 - dice
 
         return loss
-    
+
 
 class SIFTDescriptor(SIFTDescriptor):
     def describe_image_sift(self, image):

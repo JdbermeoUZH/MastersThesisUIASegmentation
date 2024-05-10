@@ -33,7 +33,6 @@ from tta_uia_segmentation.src.utils.io import (
     load_config, dump_config, print_config, write_to_csv, rewrite_config_arguments)
 from tta_uia_segmentation.src.utils.utils import seed_everything, define_device
 from tta_uia_segmentation.src.utils.logging import setup_wandb
-from tta_uia_segmentation.src.utils.loss import DiceLoss
 
 
 torch.autograd.set_detect_anomaly(True)
@@ -88,7 +87,7 @@ def preprocess_cmd_args() -> argparse.Namespace:
     # Manual normalization of statistics before segmentation
     parser.add_argument('--manually_norm_img_before_seg_val', type=parse_bool, help='Whether to manually normalize images before segmentation. Default: False')
     parser.add_argument('--manually_norm_img_before_seg_tta', type=parse_bool, help='Whether to manually normalize images before segmentation in TTA. Default: False')
-    parser.add_argument('--normalization_strategy', type=str, help='Normalization strategy to use. Default: None', choices=['zscore', 'minmax', None])
+    parser.add_argument('--normalization_strategy', type=str, help='Normalization strategy to use. Default: None', choices=['standardize', 'min_max', None])
     
     # Seg model params
     parser.add_argument('--seg_with_bg_supp', type=parse_bool, help='Whether to use background suppression for segmentation. Default: True')

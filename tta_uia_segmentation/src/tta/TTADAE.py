@@ -448,60 +448,82 @@ class TTADAE:
             drop_last=False,
         )
 
-        x_norm = []
-        y_pred = []
+        manual_normalization = {
+            'without_manual_normlization': False}
         
-        for x, _, bg_mask in volume_dataloader:
-            x_norm_part, y_pred_part, _ = self.forward_pass_seg(
-                x.to(device), bg_mask.to(device), 
-                self.bg_suppression_opts, device,
-                update_norm_td_statistics=False,
-                manually_norm_img_before_seg=manually_norm_img_before_seg
-                )
-            
-            x_norm.append(x_norm_part.cpu())
-            y_pred.append(y_pred_part.cpu())
-
-        x_norm = torch.vstack(x_norm)
-        y_pred = torch.vstack(y_pred)
-
-        # Rescale x and y to the original resolution
-        x_norm = x_norm.permute(1, 0, 2, 3).unsqueeze(0)  # convert to NCDHW (with N=1)
-        y_pred = y_pred.permute(1, 0, 2, 3).unsqueeze(0)  # convert to NCDHW (with N=1)
-
-        x_norm = F.interpolate(x_norm, size=(D, H, W), mode='trilinear')
-        y_pred = F.interpolate(y_pred, size=(D, H, W), mode='trilinear')
-
-        if y_dae_or_atlas is not None:
-            y_dae_or_atlas = F.interpolate(y_dae_or_atlas, size=(D, H, W), mode='trilinear')
-            
-        if x_guidance is not None:
-            x_guidance = F.interpolate(x_guidance, size=(D, H, W), mode='trilinear')
-            
-        export_images(
-            x_original,
-            x_norm,
-            y_original,
-            y_pred,
-            x_guidance=x_guidance,
-            y_dae=y_dae_or_atlas,
-            n_classes=self.n_classes,
-            output_dir=os.path.join(logdir, 'segmentations'),
-            image_name=f'{dataset_name}_test_{index:03}_{iteration:03}{appendix}.png'
-        )
-
-        dices, dices_fg = dice_score(y_pred, y_original, soft=False, reduction='none', epsilon=1e-5)
-        print(f'Iteration {iteration} - dice score: {dices_fg.mean().item()}')
+        if manually_norm_img_before_seg:
+            manual_normalization['with_manual_normlization'] = True
         
-        if self.wandb_log:
-            wandb.log(
-                {
-                    f'dice_score_fg/img_{index:03d}': dices_fg.mean().item(),
-                    'tta_step': iteration
-                }
+        dices_out, dices_fg_out = None, None
+        
+        for manual_norm_mode, manual_norm_value in manual_normalization.items():
+            
+            log_suffix = '' if not manually_norm_img_before_seg else f'_{manual_norm_mode}'
+
+            x_norm = []
+            y_pred = []
+            
+            for x, _, bg_mask in volume_dataloader:
+                x_norm_part, y_pred_part, _ = self.forward_pass_seg(
+                    x.to(device), bg_mask.to(device), 
+                    self.bg_suppression_opts, device,
+                    update_norm_td_statistics=False,
+                    manually_norm_img_before_seg=manual_norm_value
+                    )
+                
+                x_norm.append(x_norm_part.cpu())
+                y_pred.append(y_pred_part.cpu())
+
+            x_norm = torch.vstack(x_norm)
+            y_pred = torch.vstack(y_pred)
+
+            # Rescale x and y to the original resolution
+            x_norm = x_norm.permute(1, 0, 2, 3).unsqueeze(0)  # convert to NCDHW (with N=1)
+            y_pred = y_pred.permute(1, 0, 2, 3).unsqueeze(0)  # convert to NCDHW (with N=1)
+
+            x_norm = F.interpolate(x_norm, size=(D, H, W), mode='trilinear')
+            y_pred = F.interpolate(y_pred, size=(D, H, W), mode='trilinear')
+
+            if y_dae_or_atlas is not None:
+                y_dae_or_atlas = F.interpolate(y_dae_or_atlas, size=(D, H, W), mode='trilinear')
+                
+            if x_guidance is not None:
+                x_guidance = F.interpolate(x_guidance, size=(D, H, W), mode='trilinear')
+                
+            export_images(
+                x_original,
+                x_norm,
+                y_original,
+                y_pred,
+                x_guidance=x_guidance,
+                y_dae=y_dae_or_atlas,
+                n_classes=self.n_classes,
+                output_dir=os.path.join(logdir, 'segmentations' + log_suffix),
+                image_name=f'{dataset_name}_test_{index:03}_{iteration:03}{appendix}{log_suffix}.png'
             )
 
-        return dices.cpu(), dices_fg.cpu()
+            dices, dices_fg = dice_score(y_pred, y_original, soft=False, reduction='none', epsilon=1e-5)
+            print(f'Iteration {iteration} - dice score' + log_suffix + f': {dices_fg.mean().item()}')
+            
+            if self.wandb_log:
+                wandb.log(
+                    {
+                        f'dice_score_fg/img_{index:03d}{log_suffix}': dices_fg.mean().item(),
+                        'tta_step': iteration
+                    }
+                )
+                
+            if manually_norm_img_before_seg and manual_norm_mode == 'with_manual_normlization':
+                dices_out = dices.cpu()
+                dices_fg_out = dices_fg.cpu()
+            
+            elif not manually_norm_img_before_seg:
+                dices_out = dices.cpu()
+                dices_fg_out = dices_fg.cpu()
+        
+        assert dices_out is not None and dices_fg_out is not None, 'Dice scores will not be returned.'
+        
+        return dices_out.cpu(), dices_fg_out.cpu()
     
     @torch.inference_mode()
     def generate_pseudo_labels(
