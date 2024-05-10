@@ -26,9 +26,11 @@ from tta_uia_segmentation.src.dataset.dataset_in_memory import get_datasets
 from tta_uia_segmentation.src.models.io import (
     load_cddpm_from_configs_and_cpt,
     load_norm_and_seg_from_configs_and_cpt,
-    load_dae_and_atlas_from_configs_and_cpt
+    load_dae_and_atlas_from_configs_and_cpt,
+    load_domain_statistiscs
 )
-from tta_uia_segmentation.src.utils.io import load_config, dump_config, print_config, write_to_csv, rewrite_config_arguments
+from tta_uia_segmentation.src.utils.io import (
+    load_config, dump_config, print_config, write_to_csv, rewrite_config_arguments)
 from tta_uia_segmentation.src.utils.utils import seed_everything, define_device
 from tta_uia_segmentation.src.utils.logging import setup_wandb
 from tta_uia_segmentation.src.utils.loss import DiceLoss
@@ -83,6 +85,11 @@ def preprocess_cmd_args() -> argparse.Namespace:
     parser.add_argument('--use_ddpm_after_dice', type=float, help='Use DDPM after dice is below x. Default: None')
     parser.add_argument('--warmup_steps_for_ddpm_loss', type=int, help='Warmup steps for DDPM loss. Default: 0')
     
+    # Manual normalization of statistics before segmentation
+    parser.add_argument('--manually_norm_img_before_seg_val', type=parse_bool, help='Whether to manually normalize images before segmentation. Default: False')
+    parser.add_argument('--manually_norm_img_before_seg_tta', type=parse_bool, help='Whether to manually normalize images before segmentation in TTA. Default: False')
+    parser.add_argument('--normalization_strategy', type=str, help='Normalization strategy to use. Default: None', choices=['zscore', 'minmax', None])
+    
     # Seg model params
     parser.add_argument('--seg_with_bg_supp', type=parse_bool, help='Whether to use background suppression for segmentation. Default: True')
     
@@ -95,6 +102,8 @@ def preprocess_cmd_args() -> argparse.Namespace:
     parser.add_argument('--use_y_gt_for_ddpm_loss', type=parse_bool, help='Whether to use ground truth segmetnation as conditional for DDPM. ONLY FOR DEBUGGING. Default: False')
     parser.add_argument('--detach_x_norm_from_ddpm_loss', type=parse_bool, help='Whether to detach x_norm from DDPM loss. Default: False')
     parser.add_argument('--minibatch_size_ddpm', type=int, help='Minibatch size for DDPM. Default: 2')
+   
+    parser.add_argument('--update_norm_td_statistics', type=parse_bool, help='Whether to update the normalization statistics. Default: False')
     
     # DAE and Atlas params
     parser.add_argument('--alpha', type=float, help='Proportion of how much better the dice of the DAE pseudolabel and predicted segmentation'
@@ -238,22 +247,30 @@ if __name__ == '__main__':
         
     print('Datasets loaded')
 
-    # Define the  segmentation model
+    # Define the segmentation model
     # :=========================================================================:
     print('Loading segmentation model')
     cpt_type = 'checkpoint_best' if tta_config['load_best_cpt'] \
         else 'checkpoint_last'
+    cpt_fp = os.path.join(seg_dir, train_params_seg[cpt_type])
     
     norm, seg, norm_state_source_domain = load_norm_and_seg_from_configs_and_cpt(
         n_classes = n_classes,
         model_params_norm = model_params_norm,
         model_params_seg = model_params_seg,
-        cpt_fp = os.path.join(seg_dir, train_params_seg[cpt_type]),
+        cpt_fp = cpt_fp,
         device = device,
         return_norm_state_dict=True,
     )
+    
+    # Load statistics of the source domain
+    norm_sd_statistics = load_domain_statistiscs(
+        cpt_fp = cpt_fp,
+        frozen = True,
+        momentum = 0.96
+    )
     print('Segmentation model loaded')
-       
+    
     # DAE
     dae, atlas = load_dae_and_atlas_from_configs_and_cpt(
         n_classes = n_classes,
@@ -287,11 +304,17 @@ if __name__ == '__main__':
 
     x_norm_regularization_loss  = tta_config[tta_mode]['x_norm_regularization_loss']
 
+    # How the segmentation is evaluated
+    bg_suppression_opts_tta     = tta_config[tta_mode]['bg_suppression_opts']
+    update_norm_td_statistics   = tta_config[tta_mode]['update_norm_td_statistics'] 
+    manually_norm_img_before_seg_val= tta_config[tta_mode]['manually_norm_img_before_seg_val']
+    manually_norm_img_before_seg_tta= tta_config[tta_mode]['manually_norm_img_before_seg_tta']
+    normalization_strategy      = tta_config[tta_mode]['normalization_strategy']
+    
     # DAE-TTA params
     alpha                       = tta_config[tta_mode]['alpha']
     beta                        = tta_config[tta_mode]['beta']
     rescale_factor              = train_params_dae['dae']['rescale_factor']
-    bg_suppression_opts_tta     = tta_config[tta_mode]['bg_suppression_opts']
     use_atlas_only_for_init     = tta_config[tta_mode]['use_atlas_only_for_init']
     
     # DDPM-TTA params    
@@ -300,7 +323,6 @@ if __name__ == '__main__':
     t_ddpm_range                = tta_config[tta_mode]['t_ddpm_range']
     t_sampling_strategy         = tta_config[tta_mode]['t_sampling_strategy']
     sampling_timesteps          = tta_config[tta_mode]['sampling_timesteps']
-    min_max_int_norm_imgs       = tta_config[tta_mode]['min_max_int_norm_imgs']
     use_y_pred_for_ddpm_loss    = tta_config[tta_mode]['use_y_pred_for_ddpm_loss']
     use_y_gt_for_ddpm_loss      = tta_config[tta_mode]['use_y_gt_for_ddpm_loss']
     detach_x_norm_from_ddpm_loss= tta_config[tta_mode]['detach_x_norm_from_ddpm_loss']
@@ -313,6 +335,7 @@ if __name__ == '__main__':
         seg                     = seg,
         dae                     = dae,
         atlas                   = atlas,
+        norm_sd_statistics      = norm_sd_statistics,
         ddpm                    = ddpm,          
         n_classes               = n_classes,
         learning_rate           = learning_rate,
@@ -321,6 +344,10 @@ if __name__ == '__main__':
         alpha                   = alpha,
         beta                    = beta,
         use_atlas_only_for_init = use_atlas_only_for_init,
+        update_norm_td_statistics=update_norm_td_statistics,
+        manually_norm_img_before_seg_val=manually_norm_img_before_seg_val,
+        manually_norm_img_before_seg_tta=manually_norm_img_before_seg_tta,
+        normalization_strategy  = normalization_strategy,
         rescale_factor          = rescale_factor,
         ddpm_loss_beta          = ddpm_loss_beta,
         ddpm_uncond_loss_gamma  = ddpm_uncond_loss_gamma,
@@ -328,7 +355,6 @@ if __name__ == '__main__':
         frac_vol_diffusion_tta  = frac_vol_diffusion_tta,
         t_ddpm_range            = t_ddpm_range,
         t_sampling_strategy     = t_sampling_strategy,
-        min_max_int_norm_imgs   = min_max_int_norm_imgs,
         use_y_pred_for_ddpm_loss=use_y_pred_for_ddpm_loss,
         use_y_gt_for_ddpm_loss  = use_y_gt_for_ddpm_loss,
         detach_x_norm_from_ddpm_loss=detach_x_norm_from_ddpm_loss,
@@ -460,8 +486,7 @@ if __name__ == '__main__':
         )
 
         for key in norm_dict.keys():
-            # TODO: We might not want to pick the model with the highest agreeement, 
-            #  but the one of the last step
+            # Save the normalization statistics of the best model (model with higest agreement to PL)
             print(f'Model at minimum {key} (best agreement with PL) = {metrics_best[key]}')
 
             tta.load_state_dict_norm(norm_dict[key])

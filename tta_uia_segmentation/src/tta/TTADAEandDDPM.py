@@ -12,9 +12,9 @@ from kornia.losses import SSIM3DLoss
 from torch.nn import functional as F
 from torch.utils.data import ConcatDataset, DataLoader, TensorDataset
 
-from tta_uia_segmentation.src.tta import TTADAE, DomainStatistics
+from tta_uia_segmentation.src.tta import TTADAE
 from tta_uia_segmentation.src.utils.loss import DescriptorRegularizationLoss, DiceLoss
-from tta_uia_segmentation.src.models import ConditionalGaussianDiffusion
+from tta_uia_segmentation.src.models import ConditionalGaussianDiffusion, DomainStatistics
 from tta_uia_segmentation.src.utils.io import save_checkpoint, write_to_csv
 from tta_uia_segmentation.src.utils.utils import get_seed, stratified_sampling
 from tta_uia_segmentation.src.dataset import DatasetInMemory, utils as du
@@ -177,7 +177,6 @@ class TTADAEandDDPM(TTADAE):
         save_checkpoints: bool,
         device: str,
         logdir: Optional[str] = None,        
-        running_min_max_momentum: float = 0.96,
     ):       
         """_summary_
 
@@ -225,8 +224,6 @@ class TTADAEandDDPM(TTADAE):
                 num_workers=num_workers,
                 drop_last=False,
             )
-        
-        running_min = self.min_int_norm_imgs
         
         # Initialize warmup factor for the DDPM loss term
         if self.warmup_steps_for_ddpm_loss is not None:
@@ -287,7 +284,7 @@ class TTADAEandDDPM(TTADAE):
                     num_workers=num_workers,
                     index=index,
                     iteration=step,
-                    bg_suppression_opts=self.bg_suppression_opts,
+                    bg_suppression_opts=self.bg_suppression_opts
                 )
                 self.test_scores.append(dices_fg.mean().item())
 
@@ -407,7 +404,9 @@ class TTADAEandDDPM(TTADAE):
                     
                     _, mask, _ = self.forward_pass_seg(
                         x, bg_mask, self.bg_suppression_opts_tta, device,
-                        update_norm_td_statistics=False)
+                        update_norm_td_statistics=False,
+                        manually_norm_img_before_seg=self.manually_norm_img_before_seg_tta
+                    )
                     
                     if self.rescale_factor is not None:
                         mask = self.rescale_volume(mask)
@@ -531,7 +530,7 @@ class TTADAEandDDPM(TTADAE):
                     )
                                     
                 if not accumulate_over_volume:
-                    self._take_optimize_step(index, step)              
+                    self._take_optimizer_step(index, step)              
 
                 with torch.no_grad():
                     step_dae_loss += (dae_loss.detach() * x.shape[0]).item() \
@@ -550,11 +549,12 @@ class TTADAEandDDPM(TTADAE):
                         if self.x_norm_regularization_loss_zeta > 0 else 0
                                                                         
             if accumulate_over_volume:
-                self._take_optimize_step(index, step)
+                self._take_optimizer_step(index, step)
                 
             # Update the running statistics of the target domain
-            self.norm_td_statistics.update_statistics()
-            
+            if self.update_norm_td_statistics:
+                self.norm_td_statistics.update_statistics()
+                                
             # Log losses
             step_dae_loss = (step_dae_loss / n_samples) if n_samples > 0 else 0
             
@@ -579,13 +579,7 @@ class TTADAEandDDPM(TTADAE):
                 )  
 
         if save_checkpoints:
-            os.makedirs(os.path.join(logdir, 'checkpoints'), exist_ok=True)
-            save_checkpoint(
-                path=os.path.join(logdir, 'checkpoints',
-                                f'checkpoint_tta_{dataset_name}_{index:02d}.pth'),
-                norm_state_dict=self.norm_dict['best_score'],
-                seg_state_dict=self.seg.state_dict(),
-            )
+            self._save_checkpoint(logdir, dataset_name, index)
 
         os.makedirs(os.path.join(logdir, 'metrics'), exist_ok=True)
 
@@ -646,7 +640,8 @@ class TTADAEandDDPM(TTADAE):
             x_norm_mb = self.norm(x[i: i + minibatch_size])
             
             # Update the statistics of the target domain in the current step
-            self.norm_td_statistics.update_step_statistics(x_norm_mb) 
+            if self.update_norm_td_statistics:
+                self.norm_td_statistics.update_step_statistics(x_norm_mb) 
             
             if use_unconditional_ddpm:
                 x_cond_mb = self.ddpm._generate_unconditional_x_cond(batch_size=minibatch_size, device=device)
@@ -688,7 +683,7 @@ class TTADAEandDDPM(TTADAE):
                                     
         return ddpm_loss_value
     
-    def _take_optimize_step(self, index, step):
+    def _take_optimizer_step(self, index, step):
         if self.use_ddpm_loss and self.dae_loss_alpha > 0: 
                     
             # Calculate adaptive beta for the DDPM loss

@@ -76,10 +76,10 @@ segmentation:
     rot_max:            10
     scale_min:          0.9
     scale_max:          1.1
-    gamma_min:          0.5 #0.2     # Default 0.5
-    gamma_max:          2.0 #5.0     # Default 2.0
-    brightness_min:     0.0 #-0.2    # Default 0.0
-    brightness_max:     0.1 #0.2     # Default 0.1
+    gamma_min:          0.2 #0.2     # Default 0.5
+    gamma_max:          5.0 #5.0     # Default 2.0
+    brightness_min:     -0.2 #-0.2    # Default 0.0
+    brightness_max:     0.2 #0.2     # Default 0.1
     noise_mean:         0.0
     noise_std:          0.1
 

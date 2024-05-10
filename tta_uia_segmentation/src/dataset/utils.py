@@ -50,7 +50,7 @@ def normalize_standardize(data, mean=None, std=None):
         mean = torch.mean(data)
     if std is None:
         std = torch.std(data)
-        
+
     data = (data - mean) / std
     
     return data

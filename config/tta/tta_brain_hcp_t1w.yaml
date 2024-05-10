@@ -81,6 +81,10 @@ dae_and_ddpm:
 
   seg_with_bg_supp: False
   x_norm_regularization_loss: null
+  update_norm_td_statistics: True
+  manually_norm_img_before_seg_val: False
+  manually_norm_img_before_seg_tta: False
+  normalization_strategy: standardize  # standardize, min_max, null
 
   dae_loss_alpha: 1.0
   ddpm_loss_beta: 1.0
@@ -97,7 +101,6 @@ dae_and_ddpm:
   t_ddpm_range: [0.02, 0.98]
   t_sampling_strategy: uniform  # uniform, stratified, one_per_volume
   sampling_timesteps: 100
-  min_max_int_norm_imgs: [-0.7377170324325562, 0.24169665575027466]
   use_y_pred_for_ddpm_loss: True   # If False, and use_y_gt_for_ddpm_loss is False, then it will use the pseudo label from the DAE
   use_y_gt_for_ddpm_loss: False    # Only true for debugging
   detach_x_norm_from_ddpm_loss: False

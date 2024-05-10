@@ -6,7 +6,6 @@ from typing import Union, Optional, Any, Literal
 import wandb
 import torch
 import numpy as np
-from tdigest import TDigest
 from torch.nn import functional as F
 from torch.utils.data import TensorDataset, ConcatDataset, DataLoader
 
@@ -17,7 +16,8 @@ from tta_uia_segmentation.src.utils.visualization import export_images
 from tta_uia_segmentation.src.utils.utils import get_seed
 from tta_uia_segmentation.src.dataset import DatasetInMemory
 from tta_uia_segmentation.src.dataset.utils import normalize
-from tta_uia_segmentation.src.tta import DomainStatistics
+from tta_uia_segmentation.src.models import DomainStatistics
+
 
 class TTADAE:
     """
@@ -65,7 +65,9 @@ class TTADAE:
         alpha: float = 1.0,
         beta: float = 0.25,
         use_atlas_only_for_init: bool = False,
-        normalize_img_int_before_seg: bool = False,
+        update_norm_td_statistics: bool = False,
+        manually_norm_img_before_seg_tta: bool = False,
+        manually_norm_img_before_seg_val: bool = False,
         normalization_strategy: Literal['standardize', 'min_max', 'histogram_eq'] = 'standardize',
         seg_with_bg_supp: bool = True,
         wandb_log: bool = False,
@@ -83,9 +85,13 @@ class TTADAE:
         # Strategy for normalizing the image intensities to match those of the source domain
         self.normalization_strategy = normalization_strategy
         
-        # Initialize target domain statistics
+        # Handling of target domain statistics
+        self.update_norm_td_statistics = update_norm_td_statistics
+        self.manually_norm_img_before_seg_tta = manually_norm_img_before_seg_tta
+        self.manually_norm_img_before_seg_val = manually_norm_img_before_seg_val
+        
         self.norm_td_statistics = DomainStatistics(**asdict(norm_sd_statistics))
-        self.normalize_img_int_before_seg = normalize_img_int_before_seg
+        self.norm_td_statistics.frozen = not update_norm_td_statistics
         self.norm_td_statistics.quantile_cal = None
         self.norm_td_statistics.precalculated_quantiles = None
         
@@ -117,7 +123,12 @@ class TTADAE:
         self.tta_losses = []
         self.test_scores = []
 
-        self.norm_dict = {'best_score': copy.deepcopy(self.norm.state_dict())}
+        self.norm_dict = {
+            'best_score': {
+                'norm_state_dict': copy.deepcopy(self.norm.state_dict()),
+                'norm_td_statistics': asdict(self.norm_td_statistics)
+                }
+        }
         self.metrics_best = {'best_score': 0}
         
         # Set segmentation and DAE models in eval mode
@@ -201,7 +212,7 @@ class TTADAE:
                     num_workers=num_workers,
                     index=index,
                     iteration=step,
-                    bg_suppression_opts=self.bg_suppression_opts,
+                    bg_suppression_opts=self.bg_suppression_opts
                 )
                 self.test_scores.append(dices_fg.mean().item())
 
@@ -242,7 +253,9 @@ class TTADAE:
                 y_pl = y_pl.to(device)
                 
                 _, mask, _ = self.forward_pass_seg(
-                    x, bg_mask, self.bg_suppression_opts_tta, device)
+                    x, bg_mask, self.bg_suppression_opts_tta, device,
+                    update_norm_td_statistics=self.update_norm_td_statistics,
+                    manually_norm_img_before_seg=self.manually_norm_img_before_seg_tta)
 
                 if self.rescale_factor is not None:
                     mask = self.rescale_volume(mask)
@@ -275,13 +288,7 @@ class TTADAE:
                     })
 
         if save_checkpoints:
-            os.makedirs(os.path.join(logdir, 'checkpoints'), exist_ok=True)
-            save_checkpoint(
-                path=os.path.join(logdir, 'checkpoints',
-                                f'checkpoint_tta_{dataset_name}_{index:02d}.pth'),
-                norm_state_dict=self.norm_dict['best_score'],
-                seg_state_dict=self.seg.state_dict(),
-            )
+            self._save_checkpoint(logdir, dataset_name, index)
 
         os.makedirs(os.path.join(logdir, 'metrics'), exist_ok=True)
 
@@ -341,6 +348,7 @@ class TTADAE:
         device: Optional[Union[str, torch.device]] = None,
         x_norm: Optional[torch.Tensor] = None,
         update_norm_td_statistics: bool = False,
+        manually_norm_img_before_seg: bool = False,
         ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         
         x_norm = x_norm if x_norm is not None else self.norm(x)
@@ -350,16 +358,16 @@ class TTADAE:
             self.norm_td_statistics.update_step_statistics(x_norm)
         
         # Normalize image intensities to match the source domain statistics
-        if self.normalize_img_int_before_seg:
-            x_norm_to_sd = self._normalize_image_intensities_to_sd(x_norm)
+        if manually_norm_img_before_seg:
+            x_norm = self._normalize_image_intensities_to_sd(x_norm)
         
         if self.seg_with_bg_supp:
             print('DEBUG, delete me: Using background suppression')
             bg_mask = bg_mask.to(device)
-            x_norm_bg_supp = background_suppression(x_norm_to_sd, bg_mask, bg_suppression_opts)
+            x_norm_bg_supp = background_suppression(x_norm, bg_mask, bg_suppression_opts)
             mask, logits = self.seg(x_norm_bg_supp)
         else:
-            mask, logits = self.seg(x_norm_to_sd)
+            mask, logits = self.seg(x_norm)
         
         return x_norm, mask, logits
     
@@ -397,9 +405,11 @@ class TTADAE:
         iteration=-1,
         device: Optional[Union[str, torch.device]] = None,
         logdir: Optional[str] = None,
+        manually_norm_img_before_seg: Optional[bool] = None
     ):
         bg_suppression_opts = bg_suppression_opts or self.bg_suppression_opts
-
+        manually_norm_img_before_seg = manually_norm_img_before_seg or self.manually_norm_img_before_seg_val
+        
         # Get original images
         x_original, y_original, bg = volume_dataset.dataset.get_original_images(index)
         _, C, D, H, W = y_original.shape  # xyz = HWD
@@ -444,7 +454,9 @@ class TTADAE:
         for x, _, bg_mask in volume_dataloader:
             x_norm_part, y_pred_part, _ = self.forward_pass_seg(
                 x.to(device), bg_mask.to(device), 
-                self.bg_suppression_opts, device
+                self.bg_suppression_opts, device,
+                update_norm_td_statistics=False,
+                manually_norm_img_before_seg=manually_norm_img_before_seg
                 )
             
             x_norm.append(x_norm_part.cpu())
@@ -479,7 +491,7 @@ class TTADAE:
         )
 
         dices, dices_fg = dice_score(y_pred, y_original, soft=False, reduction='none', epsilon=1e-5)
-        print(f'Iteration {iteration} - dice score {dices_fg.mean().item()}')
+        print(f'Iteration {iteration} - dice score: {dices_fg.mean().item()}')
         
         if self.wandb_log:
             wandb.log(
@@ -505,7 +517,8 @@ class TTADAE:
         for x, _, _, _, bg_mask in dae_dataloader:
             x = x.to(device).float()
             _, mask, _ = self.forward_pass_seg(
-                x, bg_mask, self.bg_suppression_opts_tta, device)
+                x, bg_mask, self.bg_suppression_opts_tta, device,
+                manually_norm_img_before_seg=self.manually_norm_img_before_seg_tta)
             masks.append(mask)
 
         masks = torch.cat(masks)
@@ -516,8 +529,8 @@ class TTADAE:
 
         dae_output, _ = self.dae(masks)
 
-        dice_denoised, _ = dice_score(masks, dae_output, soft=True, reduction='mean')
-        dice_atlas, _ = dice_score(masks, self.atlas, soft=True, reduction='mean')
+        dice_denoised, _ = dice_score(masks, dae_output, soft=True, reduction='mean', epsilon=1e-5)
+        dice_atlas, _ = dice_score(masks, self.atlas, soft=True, reduction='mean', epsilon=1e-5)
 
         print(f'DEBUG: dice_denoised: {dice_denoised}, dice_atlas: {dice_atlas}')  # TODO: Delete me
         
@@ -545,7 +558,9 @@ class TTADAE:
         target_labels = target_labels.permute(1,0,2,3)
 
         if self.metrics_best['best_score'] < dice:
-            self.norm_dict['best_score'] = copy.deepcopy(self.norm.state_dict())
+            # Store the weights of the model with the highest agreement with the pseudo label
+            self.norm_dict['best_score']['norm_state_dict'] = copy.deepcopy(self.norm.state_dict())
+            self.norm_dict['best_score']['norm_td_statistics'] = asdict(self.norm_td_statistics)
             self.metrics_best['best_score'] = dice
             
         pl_dataloader =  DataLoader(
@@ -558,17 +573,77 @@ class TTADAE:
         
         return dice_denoised.item(), dice_atlas.item(), pl_dataloader
         
+    def _normalize_image_intensities_to_sd(self, x_norm: torch.Tensor) -> torch.Tensor:
+        """Normalize image intensities to match the source domain statistics.
+
+        Args:
+            x_norm (torch.Tensor): Normalized image resulting from the normalization model.
+
+        Returns:
+            torch.Tensor: Preprocess normalized image intensities to match statistics of the source domain.
+        """
+        if self.normalization_strategy == 'standardize':
+            x_norm_standardized = normalize(
+                type='standardize', data=x_norm,
+                mean=self.norm_td_statistics.mean, std=self.norm_td_statistics.std
+                )
+            x_norm_norm_to_sd = self.norm_sd_statistics.std * x_norm_standardized + self.norm_sd_statistics.mean
+        
+        elif self.normalization_strategy == 'min_max':
+            x_norm_btw_0_1 = normalize(
+                type='min_max', data=x_norm,
+                min=self.norm_td_statistics.min, max=self.norm_td_statistics.max
+                )
+            x_norm_norm_to_sd = (self.norm_sd_statistics.max - self.norm_sd_statistics.min) * x_norm_btw_0_1  +\
+                self.norm_sd_statistics.min
+                
+        elif self.normalization_strategy == 'histogram_eq':
+            raise NotImplementedError('Histogram equalization is not implemented yet')
+
+        else:
+            raise ValueError(f'Normalization strategy {self.normalization_strategy} is not valid')
+        
+        return x_norm_norm_to_sd
+    
     def _define_custom_wandb_metrics(self):
         wandb.define_metric("tta_step")
         wandb.define_metric('dice_score_fg/*', step_metric='tta_step')
         wandb.define_metric('tta_loss/*', step_metric='tta_step')
 
+    def _save_checkpoint(self, logdir: str, dataset_name: str, index: int) -> None:
+        os.makedirs(os.path.join(logdir, 'checkpoints'), exist_ok=True)
+        
+        # Save normalizer weights with the highest agreement with the pseudo label
+        save_checkpoint(
+            path=os.path.join(logdir, 'checkpoints',
+                            f'checkpoint_tta_{dataset_name}_{index:02d}_best_score.pth'),
+            norm_state_dict=self.norm_dict['best_score']['norm_state_dict'],
+            seg_state_dict=self.seg.state_dict(),
+            norm_sd_statistics=asdict(self.norm_sd_statistics),
+            norm_td_statistics=self.norm_dict['best_score']['norm_td_statistics'],
+        )
+        
+        # Save the normalizer weights in the last step
+        save_checkpoint(
+            path=os.path.join(logdir, 'checkpoints',
+                            f'checkpoint_tta_{dataset_name}_{index:02d}_last_step.pth'),
+            norm_state_dict=self.norm.state_dict(),
+            seg_state_dict=self.seg.state_dict(),
+            norm_sd_statistics=asdict(self.norm_sd_statistics),
+            norm_td_statistics=asdict(self.norm_td_statistics),
+        )
+    
     def set_use_only_dae_pl(self, use_only_dae_pl: bool) -> None:
         self.use_only_dae_pl = use_only_dae_pl
         
     def reset_initial_state(self, state_dict: dict) -> None:
         self.norm.load_state_dict(state_dict)
-        self.norm_dict['best_score'] = copy.deepcopy(self.norm.state_dict())
+        self.norm_dict = {
+            'best_score': {
+                'norm_state_dict': copy.deepcopy(self.norm.state_dict()),
+                'norm_td_statistics': asdict(self.norm_td_statistics)
+                }
+        }
         self.metrics_best['best_score'] = 0
         self.tta_losses = []
         self.test_scores = []
@@ -592,6 +667,10 @@ class TTADAE:
         
         # Reset target domain statistics
         self.norm_td_statistics = DomainStatistics(**asdict(self.norm_sd_statistics))
+        self.norm_td_statistics.frozen = not self.update_norm_td_statistics 
+        self.norm_td_statistics.quantile_cal = None
+        self.norm_td_statistics.precalculated_quantiles = None
         
     def load_state_dict_norm(self, state_dict: dict) -> None:
-        self.norm.load_state_dict(state_dict)
+        self.norm.load_state_dict(state_dict['norm_state_dict'])
+        self.norm_td_statistics = DomainStatistics(**state_dict['norm_td_statistics'])

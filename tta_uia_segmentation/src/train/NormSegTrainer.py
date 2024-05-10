@@ -229,7 +229,7 @@ class NormSegTrainer:
             
             loss = self.loss_func(y_pred, y)
             
-            _, dice_fg = dice_score(y_pred, y, soft=False, reduction='none')
+            _, dice_fg = dice_score(y_pred, y, soft=False, reduction='none', epsilon=1e-5)
             dice_fg = dice_fg.nanmean(0)
 
             validation_loss += loss * x.shape[0]
@@ -306,7 +306,7 @@ class NormSegTrainer:
                 x = x.to(self.device).float()
                 x_norm = self.norm(x)
                 
-                n_px += torch.prod(torch.tensor(x.shape))
+                n_px += x.numel()
                 sum_px += x.sum().item()
                 sum_sq_px += (x ** 2).sum().item()
                 digest.batch_update(x_norm.flatten().cpu().numpy())

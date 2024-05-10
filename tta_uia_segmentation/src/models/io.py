@@ -1,15 +1,18 @@
 import os
+import json
 from typing import Optional, Union
 
 import torch
 import torch.nn as nn
 from torch import nn as nn
+from tdigest import TDigest
 from ema_pytorch import EMA
 
 from tta_uia_segmentation.src.models import Normalization, ConditionalUnet, UNet
 from tta_uia_segmentation.src.models.ConditionalGaussianDiffusion import ConditionalGaussianDiffusion
 from tta_uia_segmentation.src.models.UNetModelOAI import create_model_conditioned_on_seg_mask, model_defaults
 from tta_uia_segmentation.src.models.ConditionalGaussianDiffusionOAI import ConditionalGaussianDiffusionOAI, diffusion_defaults
+from tta_uia_segmentation.src.models import DomainStatistics
 from improved_diffusion.script_util import create_gaussian_diffusion
 from improved_diffusion.resample import create_named_schedule_sampler
 from improved_diffusion.respace import SpacedDiffusion
@@ -165,6 +168,41 @@ def load_norm_and_seg_from_configs_and_cpt(
         return norm, seg, norm_state_dict   
     else:
         return norm, seg
+    
+
+def load_domain_statistiscs(
+    cpt_fp: str,
+    frozen: bool,
+    momentum: float = 0.96,
+    min_max_clip_q: tuple[float, float] = (0.025, 0.975)
+) -> DomainStatistics:
+    # Load the statistics and quantiles dict
+    checkpoint_filepath_prefix = cpt_fp.replace('.pth', '')
+    
+    stats_dict = json.load(
+        open(f'{checkpoint_filepath_prefix}_moments_and_quantiles.json', 'r'))
+    
+    # Load the TDigest object to calculate quantiles
+    digest_dict = json.load(
+        open(f'{checkpoint_filepath_prefix}_serialized_TDigest' + 
+             '_to_calculate_quantiles.json', 'r')
+    )
+    quantile_cal = TDigest().update_from_dict(digest_dict)
+    
+    ds = DomainStatistics(
+        mean=stats_dict['mean'],
+        std=stats_dict['std'],
+        quantile_cal = quantile_cal,
+        precalculated_quantiles = stats_dict['quantiles'],
+        momentum = momentum,
+        frozen = frozen
+    )
+    
+    ds.min = ds.get_quantile(min_max_clip_q[0])
+    ds.max = ds.get_quantile(min_max_clip_q[1])
+    
+    return ds  
+    
     
 def load_dae_and_atlas_from_configs_and_cpt(
     n_classes: int,
