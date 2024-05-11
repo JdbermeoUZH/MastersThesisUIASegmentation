@@ -139,7 +139,8 @@ class TTADAEandDDPM(TTADAE):
         self.warmup_steps_for_ddpm_loss = warmup_steps_for_ddpm_loss
         
         # If a flag is not set, use the DDPM at every step
-        self.use_ddpm_loss = use_ddpm_after_dice is None and use_ddpm_after_step is None
+        self.use_ddpm_loss = (self.ddpm_loss_beta > 0 or self.ddpm_uncond_loss_gamma > 0) and \
+            use_ddpm_after_dice is None and use_ddpm_after_step is None
         
         # Modify loss weights if using classifier free guidance
         if classifier_free_guidance_weight is not None:
@@ -290,10 +291,12 @@ class TTADAEandDDPM(TTADAE):
 
             # Update Pseudo label, with DAE or Atlas, depending on which has a better agreement
             # :===============================================================:
-            if step % update_dae_output_every == 0 and self.dae_loss_alpha > 0 and not self.use_y_pred_for_ddpm_loss:
+            if step % update_dae_output_every == 0 and (
+                self.dae_loss_alpha > 0 or
+                (self.ddpm_loss_beta > 0 and not self.use_y_pred_for_ddpm_loss and not self.use_y_gt_for_ddpm_loss)
+            ):
                 # Only update the pseudo label if it has not been calculated yet or
                 #  if the beta is less than 1.0
-
                 if step == 0 or self.beta <= 1.0:
                     dice_dae, _, label_dataloader = self.generate_pseudo_labels(
                         dae_dataloader=dae_dataloader,
@@ -345,11 +348,14 @@ class TTADAEandDDPM(TTADAE):
             ddpm_reweigh_factor *= warmup_factor 
             
             # Define the values of t that will be used for the DDPM loss
-            t_dl = self._sample_t_for_ddpm_loss(
-                num_samples=batch_size * len(b_i_for_ddpm_loss),
-                batch_size=batch_size,
-                num_workers=num_workers,                            
-            )
+            if self.ddpm_loss_beta > 0 or self.ddpm_uncond_loss_gamma > 0:
+                t_dl = self._sample_t_for_ddpm_loss(
+                    num_samples=batch_size * len(b_i_for_ddpm_loss),
+                    batch_size=batch_size,
+                    num_workers=num_workers,                            
+                )
+            else:
+                t_dl = [[None]] * len(volume_dataloader)
                         
             # Define which volumes to use for the DDPM sample guidance (if any at all)
             # :============================================================:
@@ -382,7 +388,7 @@ class TTADAEandDDPM(TTADAE):
 
             if const_aug_per_volume:
                 volume_dataset.dataset.set_seed(get_seed())
-            
+                    
             for b_i, ((x, y_gt,_,_, bg_mask), (y_pl,), (x_sampled,), (t,)) in enumerate(zip(volume_dataloader, label_dataloader, sampled_vol_dl, t_dl)):
                 x_norm = None        
                 if not accumulate_over_volume:
@@ -750,8 +756,8 @@ class TTADAEandDDPM(TTADAE):
         self.x_norm_grads_ddpm_loss = defaultdict(int)         # Gradient of the last layer of the normalizer wrt the DDPM loss
         self.x_norm_grads_x_norm_reg_loss = defaultdict(int)   # Gradient of the last layer of the normalizer wrt the x_norm regularization loss
         
-        self.use_ddpm_loss = self.use_ddpm_after_dice is None and \
-            self.use_ddpm_after_step is None
+        self.use_ddpm_loss = (self.ddpm_loss_beta > 0 or self.ddpm_uncond_loss_gamma > 0) and \
+            self.use_ddpm_after_dice is None and self.use_ddpm_after_step is None
                     
     def _get_gradients_x_norm(self) -> dict:
         gradients_dict = defaultdict(int)

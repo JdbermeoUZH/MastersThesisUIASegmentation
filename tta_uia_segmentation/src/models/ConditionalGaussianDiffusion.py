@@ -206,6 +206,7 @@ class ConditionalGaussianDiffusion(GaussianDiffusion):
         if self.also_unconditional:
             num_x_cond_channels = self.model.input_channels - self.model.channels
             img_shape = (batch_size, num_x_cond_channels, self.image_size, self.image_size)
+            img_shape = tuple([int(i) for i  in img_shape])
 
             x_cond = torch.zeros(img_shape, device=device)
             

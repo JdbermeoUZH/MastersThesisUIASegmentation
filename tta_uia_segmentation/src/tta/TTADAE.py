@@ -502,7 +502,7 @@ class TTADAE:
                 image_name=f'{dataset_name}_test_{index:03}_{iteration:03}{appendix}{log_suffix}.png'
             )
 
-            dices, dices_fg = dice_score(y_pred, y_original, soft=False, reduction='none', epsilon=1e-5)
+            dices, dices_fg = dice_score(y_pred, y_original, soft=False, reduction='none', smooth=1e-5)
             print(f'Iteration {iteration} - dice score' + log_suffix + f': {dices_fg.mean().item()}')
             
             if self.wandb_log:
@@ -551,8 +551,8 @@ class TTADAE:
 
         dae_output, _ = self.dae(masks)
 
-        dice_denoised, _ = dice_score(masks, dae_output, soft=True, reduction='mean', epsilon=1e-5)
-        dice_atlas, _ = dice_score(masks, self.atlas, soft=True, reduction='mean', epsilon=1e-5)
+        dice_denoised, _ = dice_score(masks, dae_output, soft=True, reduction='mean', smooth=1e-5)
+        dice_atlas, _ = dice_score(masks, self.atlas, soft=True, reduction='mean', smooth=1e-5)
 
         print(f'DEBUG: dice_denoised: {dice_denoised}, dice_atlas: {dice_atlas}')  # TODO: Delete me
         

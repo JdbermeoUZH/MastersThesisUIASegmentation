@@ -27,7 +27,7 @@ from tta_uia_segmentation.src.utils.visualization import export_images
 
 
 metrics = {
-    'dice': lambda y_pred, y_true: dice_score(y_pred, y_true, soft=False, reduction='none', epsilon=1e-5)
+    'dice': lambda y_pred, y_true: dice_score(y_pred, y_true, soft=False, reduction='none', smooth=1e-5)
 }
 
 

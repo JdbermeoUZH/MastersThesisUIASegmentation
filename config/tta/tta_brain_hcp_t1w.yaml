@@ -81,7 +81,7 @@ dae_and_ddpm:
 
   seg_with_bg_supp: False
   x_norm_regularization_loss: null
-  update_norm_td_statistics: True
+  update_norm_td_statistics: False
   manually_norm_img_before_seg_val: False
   manually_norm_img_before_seg_tta: False
   normalization_strategy: standardize  # standardize, min_max, null

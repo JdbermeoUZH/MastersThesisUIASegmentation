@@ -115,7 +115,7 @@ def test_volume(
         image_name=f'{dataset}_test_{index:03}_{iteration:03}{appendix}.png'
     )
 
-    dices, dices_fg = dice_score(y_pred, y_original, soft=False, reduction='none', epsilon=1e-5)
+    dices, dices_fg = dice_score(y_pred, y_original, soft=False, reduction='none', smooth=1e-5)
     print(f'Iteration {iteration} - dice score {dices_fg.mean().item()}')
 
     return dices.cpu(), dices_fg.cpu()

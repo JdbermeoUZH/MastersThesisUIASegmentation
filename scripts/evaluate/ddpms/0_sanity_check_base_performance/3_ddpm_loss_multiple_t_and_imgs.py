@@ -292,11 +292,8 @@ if __name__ == '__main__':
         img_sd, seg_sd, _ = dataset_sd[dataset_sd.vol_and_z_idx_to_idx(vol_idx_sd, slice_idx)]    
         img_sd = img_sd.to(device)
         seg_sd = seg_sd.to(device)
-        if ddpm.also_unconditional and not ddpm.condition_by_concat:
-            _, h, w = seg_sd.shape
-            seg_sd = torch.cat([seg_sd, torch.zeros(1, h, w, device=seg_sd.device)], dim = 0)
-        seg_uncond_sd = ddpm._process_x_cond_for_unconditional_sampling(seg_sd)
-        
+        seg_uncond_sd = ddpm._generate_unconditional_x_cond(batch_size=1, device=seg_sd.device)
+
         # Target Domain images and labels
         img_td, seg_td, _ = dataset_td[dataset_td.vol_and_z_idx_to_idx(vol_idx_td, slice_idx)]
         img_td = img_td.to(device)
@@ -306,7 +303,7 @@ if __name__ == '__main__':
         # Normalize the source images between -1 and 1
         img_sd = ddpm.normalize(img_sd.unsqueeze(0))
         seg_sd = ddpm.normalize(seg_sd.unsqueeze(0))
-        seg_uncond_sd = ddpm.normalize(seg_uncond_sd.unsqueeze(0))
+        seg_uncond_sd = ddpm.normalize(seg_uncond_sd)
         img_td = ddpm.normalize(img_td.unsqueeze(0))
         
         # Iterate over volumes and calculate the denoising performance     
@@ -354,11 +351,7 @@ if __name__ == '__main__':
             ddpm_loss_sample_td_uncond = 0
             for _, seg_mismatch, _ in mismatch_dl:    
                 seg_mismatch = seg_mismatch.to(device)
-                
-                if ddpm.also_unconditional and not ddpm.condition_by_concat:
-                    _, h, w = seg_mismatch.shape
-                    seg_mismatch = torch.cat([seg_mismatch, torch.zeros(1, h, w, device=seg_mismatch.device)], dim = 0)
-                seg_mismatch_uncond = ddpm._process_x_cond_for_unconditional_sampling(seg_mismatch)
+                seg_mismatch_uncond = ddpm._generate_unconditional_x_cond(seg_sd.shape[0], device=seg_sd.device)
 
                 check_btw_0_1(seg_mismatch, seg_mismatch_uncond)
                 seg_mismatch = ddpm.normalize(seg_mismatch)

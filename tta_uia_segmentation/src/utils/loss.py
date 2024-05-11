@@ -23,7 +23,7 @@ def onehot_to_class(onehot, class_dim=1, keepdim=True):
     return onehot.argmax(dim=class_dim, keepdim=keepdim)
 
 
-def dice_score(mask_pred, mask_gt, soft=True, reduction='mean', bg_channel=0, k=1, epsilon=0):
+def dice_score(mask_pred, mask_gt, soft=True, reduction='mean', bg_channel=0, k=1, smooth=0, epsilon=1e-10):
     """ 
     Assumes that mask_pred and mask_gt are one-hot encoded.
     
@@ -46,8 +46,11 @@ def dice_score(mask_pred, mask_gt, soft=True, reduction='mean', bg_channel=0, k=
     k : int
         Exponent.
     
-    epsilon : float
+    smooth : float
         Smoothing factor.
+        
+    epsilon : float
+        Small value to avoid division by zero. 
         
     """
 
@@ -64,7 +67,7 @@ def dice_score(mask_pred, mask_gt, soft=True, reduction='mean', bg_channel=0, k=
     tp = torch.sum(mask_gt * mask_pred, dim=-1)
     tp_plus_fp = torch.sum(mask_pred ** k, dim=-1)
     tp_plus_fn = torch.sum(mask_gt ** k, dim=-1)
-    dices = (2 * tp + epsilon) / (tp_plus_fp + tp_plus_fn + epsilon)
+    dices = (2 * tp + smooth) / (tp_plus_fp + tp_plus_fn + smooth + epsilon)
 
     assert_in(reduction, 'reduction', ['none', 'mean', 'sum'])
 
@@ -78,18 +81,29 @@ def dice_score(mask_pred, mask_gt, soft=True, reduction='mean', bg_channel=0, k=
 
 
 class DiceLoss(nn.Module):
-    def __init__(self, epsilon = 1e-5):
+    def __init__(self, smooth = 0, epsilon=1e-10):
+        """
+        Dice loss.
+        
+        Attributes
+        ----------
+        smooth : float
+            Smoothing factor. We keep it at 0 so that the loss is maximum numerator and denominator are 0.
+            (Dice score is 1 when both numerator and denominator are 0, so loss is 1)
+            
+        epsilon : float
+            Small value to avoid division by zero.
+        """
         super().__init__()
+        self.smooth = smooth
         self.epsilon = epsilon
 
     def forward(self, mask_pred, mask_gt, **kwargs):
-        if 'epsilon' in kwargs:
-            epsilon = kwargs.pop('epsilon')
-        else:
-            epsilon = self.epsilon
             
         dice, _ = dice_score(
-            mask_pred, mask_gt, epsilon=epsilon,
+            mask_pred, mask_gt, 
+            soft=True,
+            smooth=self.smooth, epsilon=self.epsilon, 
             **kwargs
             )
         loss = 1 - dice

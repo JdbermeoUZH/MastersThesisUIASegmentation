@@ -344,7 +344,7 @@ class DiffusionTTA:
                 image_name=f'{dataset_name}_test_{index:03}_{step:03}.png'
             )
             
-            _, dices_fg = dice_score(y_pred, y_original, soft=False, reduction='none', epsilon=1e-5)
+            _, dices_fg = dice_score(y_pred, y_original, soft=False, reduction='none', smooth=1e-5)
             print(f'Step {step} - dice score {dices_fg.mean().item()}')
             self.tta_score.append(dices_fg.mean().item())
 
@@ -490,7 +490,7 @@ class DiffusionTTA:
             image_name=f'{dataset_name}_test_{index:03}_{iteration:03}{appendix}.png'
         )
 
-        dices, dices_fg = dice_score(y_pred, y_original, soft=False, reduction='none', epsilon=1e-5)
+        dices, dices_fg = dice_score(y_pred, y_original, soft=False, reduction='none', smooth=1e-5)
         print(f'Iteration {iteration} - dice score {dices_fg.mean().item()}')
         
         if self.wandb_log:

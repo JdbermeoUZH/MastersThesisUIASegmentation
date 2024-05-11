@@ -229,7 +229,7 @@ class NormSegTrainer:
             
             loss = self.loss_func(y_pred, y)
             
-            _, dice_fg = dice_score(y_pred, y, soft=False, reduction='none', epsilon=1e-5)
+            _, dice_fg = dice_score(y_pred, y, soft=False, reduction='none', smooth=1e-5)
             dice_fg = dice_fg.nanmean(0)
 
             validation_loss += loss * x.shape[0]
@@ -311,8 +311,8 @@ class NormSegTrainer:
                 sum_sq_px += (x ** 2).sum().item()
                 digest.batch_update(x_norm.flatten().cpu().numpy())
                 
-        mean = (sum_px / n_px).item()
-        std = np.sqrt(sum_sq_px / n_px - mean ** 2).item()
+        mean = (sum_px / n_px)
+        std = np.sqrt(sum_sq_px / n_px - mean ** 2)
         quantiles = {q: digest.percentile(q * 100) for q in quantiles_to_report}
         
         moments_and_quantiles = {
