@@ -60,7 +60,7 @@ def preprocess_cmd_args() -> argparse.Namespace:
     parser.add_argument('--image_size', type=int, nargs='+', help='Size of images in dataset. Default: [560, 640, 160]')
     parser.add_argument('--resolution_proc', type=float, nargs='+', help='Resolution of images in dataset. Default: [0.3, 0.3, 0.6]')
     parser.add_argument('--rescale_factor', type=float, help='Rescale factor for images in dataset. Default: None')
-        
+    parser.add_argument('--evaluate_also_bg_supp', type=lambda s: s.strip().lower() == 'true')
     args = parser.parse_args()
     
     return args
@@ -94,6 +94,7 @@ def test_volume(
     device: Optional[Union[str, torch.device]] = None,
     logdir: Optional[str] = None,
     export_seg_imgs: bool = False,
+    evaluate_also_bg_supp: bool = True,
 ):
     # Get original images (they are still downscaled)
     # :=========================================================================:
@@ -137,6 +138,7 @@ def test_volume(
 
     x_norm = []
     y_pred = []
+    bg_mask_vol = []
     
     for x, _, bg_mask in volume_dataloader:
         x = x.to(device).float()
@@ -152,6 +154,8 @@ def test_volume(
         
         x_norm.append(x_norm_part.cpu())
         y_pred.append(y_pred_part.cpu())
+        bg_mask_vol.append(bg_mask.cpu())
+        
 
     x_norm = torch.vstack(x_norm)
     y_pred = torch.vstack(y_pred)
@@ -159,10 +163,15 @@ def test_volume(
     # Rescale x and y to the original resolution
     x_norm = x_norm.permute(1, 0, 2, 3).unsqueeze(0)  # convert to NCDHW (with N=1)
     y_pred = y_pred.permute(1, 0, 2, 3).unsqueeze(0)  # convert to NCDHW (with N=1)
+    
+    if evaluate_also_bg_supp:
+        bg_mask_vol = torch.vstack(bg_mask_vol).permute(1, 0, 2, 3).unsqueeze(0)  # convert to NCDHW (with N=1)
+        y_pred_bg_supp = y_pred * bg_mask_vol.logical_not().float()
+        y_pred_bg_supp = F.interpolate(y_pred_bg_supp, size=(D, H, W), mode='trilinear') 
 
     x_norm = F.interpolate(x_norm, size=(D, H, W), mode='trilinear')
     y_pred = F.interpolate(y_pred, size=(D, H, W), mode='trilinear')
-
+    
     ## Calculate metrics and save images
     if export_seg_imgs:
         export_images(
@@ -174,6 +183,17 @@ def test_volume(
             output_dir=os.path.join(logdir, 'example_segmentations'),
             image_name=f'{dataset_name}_{split}_{index:03}_{appendix}.png'
         )
+        
+        if evaluate_also_bg_supp:
+            export_images(
+                x_original,
+                x_norm,
+                y_original,
+                y_pred_bg_supp,
+                n_classes=n_classes,
+                output_dir=os.path.join(logdir, 'example_segmentations_bg_supp_at_eval_time'),
+                image_name=f'{dataset_name}_{split}_{index:03}_{appendix}.png'
+            )
     
     metrics_index = {}
     for metric_name, metric_fn in metrics.items():
@@ -181,6 +201,11 @@ def test_volume(
             dices, dices_fg = metric_fn(y_pred, y_original)
             metrics_index['dice'] = {'dices': dices, 'dices_fg': dices_fg}
             print(f'\t mean dice score foreground: {dices_fg.mean().item()}')
+            
+            if evaluate_also_bg_supp:
+                dices_bg_supp, dices_fg_bg_supp = metric_fn(y_pred_bg_supp, y_original)
+                metrics_index['dice_bg_supp'] = {'dices': dices_bg_supp, 'dices_fg': dices_fg_bg_supp}
+                print(f'\t mean dice score foreground with bg suppression during evaluation: {dices_fg_bg_supp.mean().item()}')
     
     return metrics_index
 
@@ -194,11 +219,12 @@ if __name__ == '__main__':
     # :=========================================================================:
     dataset_config, evaluation_config = get_configuration_arguments()
     
+    dataset                 = evaluation_config['dataset']
     seg_dir                 = evaluation_config['seg_dir']
     seed                    = evaluation_config['seed']
     device                  = evaluation_config['device']
     split                   = evaluation_config['split']
-    logdir                  = os.path.join(evaluation_config['logdir'], split)
+    logdir                  = os.path.join(evaluation_config['logdir'], f'pred_on_{dataset}', split)
 
     assert os.path.exists(seg_dir), f"Path to segmentation directory does not exist: {seg_dir}"
     os.makedirs(logdir, exist_ok=True)
@@ -222,13 +248,13 @@ if __name__ == '__main__':
     # :=========================================================================:
     seed_everything(seed)
     device                  = define_device(device)
-    dataset                 = evaluation_config['dataset']
     n_classes               = dataset_config[dataset]['n_classes']
     paths                   = dataset_config[dataset]['paths_processed']
     paths_original          = dataset_config[dataset]['paths_original']
     image_size              = evaluation_config['image_size']
     resolution_proc         = dataset_config[dataset]['resolution_proc']
     dim_proc                = dataset_config[dataset]['dim']
+    bg_suppresion_opts      = train_params_seg['segmentation']['bg_suppression_opts']
     
     print(f'Loading dataset: {dataset} {split}')
     eval_dataset, = get_datasets(
@@ -242,7 +268,7 @@ if __name__ == '__main__':
         aug_params = None,
         deformation = None,
         load_original = True,
-        bg_suppression_opts = None,
+        bg_suppression_opts = bg_suppresion_opts,
     )    
     print('Dataset loaded')
 
@@ -267,7 +293,10 @@ if __name__ == '__main__':
     print(f'Evaluating model')
     batch_size = evaluation_config['batch_size']
     num_workers = evaluation_config['num_workers']
+    also_bg_supp = evaluation_config['evaluate_also_bg_supp']
+
     indices_per_volume = eval_dataset.get_volume_indices() 
+    
     metrics_dict = {}
     for i in range(len(indices_per_volume)):
         print(f'Processing volume {i+1}/{len(indices_per_volume)}')
@@ -288,6 +317,7 @@ if __name__ == '__main__':
             device=device,
             logdir=logdir,
             export_seg_imgs=True,
+            evaluate_also_bg_supp=also_bg_supp,
         )
         
     # Save the mean of each metric over the entire volume
@@ -298,11 +328,11 @@ if __name__ == '__main__':
     
     print('Saving metrics')
     print(f'Classes of interest: {classes_of_interest}')
-    
-    for metric_name in metrics.keys():
+    for metric_name in metrics_dict[0].keys():
         
-        if metric_name == 'dice':
-            dice_dict = [{'vol': i, 'dice': dices['dice']['dices'][0].cpu().numpy().tolist()}
+        if 'dice' in metric_name:
+            print(f'Storing results for {metric_name}' + '\n' + '-'*50)
+            dice_dict = [{'vol': i, 'dice': dices[metric_name]['dices'][0].cpu().numpy().tolist()}
                          for i, dices in metrics_dict.items()]            
             df = pd.DataFrame(dice_dict).set_index('vol').sort_index()
             
@@ -310,11 +340,11 @@ if __name__ == '__main__':
             df = pd.DataFrame(df['dice'].to_list(), index=df.index)
                        
             # Save the dataframe to csv
-            df.to_csv(os.path.join(logdir, f'dices_{dataset}_{split}.csv'))
+            df.to_csv(os.path.join(logdir, f'{metric_name}_{dataset}_{split}.csv'))
             
             # Dice of the foreground classes
             fg_cols = [col for col in df.columns if col != 0]
-            mean_dice_fg_str = f'Mean dice score over entire {split} set: ' + \
+            mean_dice_fg_str = f'Mean {metric_name} over entire {split} set: ' + \
                   f'{df[fg_cols].mean(axis=1).mean():.3f} +/- {df[fg_cols].mean(axis=1).std():.3f}'
             print(mean_dice_fg_str)
             out_summary_file.write(mean_dice_fg_str + '\n')
@@ -322,9 +352,11 @@ if __name__ == '__main__':
             # Dice of the classes of interest
             if classes_of_interest is not None:
                 cls_interest_cols = [col for col in df.columns if col in classes_of_interest]
-                mean_dice_cls_interest_str = (f'Mean dice score over entire {split} set for classes of interest: {classes_of_interest}'
+                mean_dice_cls_interest_str = (f'Mean {metric_name} over entire {split} set for classes of interest: {classes_of_interest}'
                         f'{df[cls_interest_cols].mean(axis=1).mean():.3f} +/- {df[cls_interest_cols].mean(axis=1).std():.3f}')
+                print(mean_dice_cls_interest_str)
                 out_summary_file.write(mean_dice_cls_interest_str + '\n')
+            out_summary_file.write('\n')
 
     out_summary_file.close()
             

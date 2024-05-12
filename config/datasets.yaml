@@ -151,9 +151,9 @@ nuhs_w_synthseg_labels:
     test: /scratch_net/biwidl319/jbermeo/data/wmh_miccai/nuhs/data_nuhs_2d_size_256_256_depth_48_res_1_1_3_from_10_to_15_w_synthseg_labels.hdf5
     val: /scratch_net/biwidl319/jbermeo/data/wmh_miccai/nuhs/data_nuhs_2d_size_256_256_depth_48_res_1_1_3_from_15_to_20_w_synthseg_labels.hdf5
   paths_original:
-    train: /scratch_net/biwidl319/jbermeo/data/wmh_miccai/nuhs/data_nuhs_original_depth_-1_from_0_to_10.hdf5
-    test: /scratch_net/biwidl319/jbermeo/data/wmh_miccai/nuhs/data_nuhs_original_depth_-1_from_10_to_15.hdf5
-    val: /scratch_net/biwidl319/jbermeo/data/wmh_miccai/nuhs/data_nuhs_original_depth_-1_from_15_to_20.hdf5
+    train: /scratch_net/biwidl319/jbermeo/data/wmh_miccai/nuhs/data_nuhs_original_depth_-1_from_0_to_10_w_synthseg_labels.hdf5
+    test: /scratch_net/biwidl319/jbermeo/data/wmh_miccai/nuhs/data_nuhs_original_depth_-1_from_10_to_15_w_synthseg_labels.hdf5
+    val: /scratch_net/biwidl319/jbermeo/data/wmh_miccai/nuhs/data_nuhs_original_depth_-1_from_15_to_20_w_synthseg_labels.hdf5
 
 umc:
   image_channels: 1
@@ -179,9 +179,9 @@ umc_w_synthseg_labels:
     test: /scratch_net/biwidl319/jbermeo/data/wmh_miccai/umc/data_umc_2d_size_256_256_depth_48_res_1_1_3_from_10_to_15_w_synthseg_labels.hdf5
     val: /scratch_net/biwidl319/jbermeo/data/wmh_miccai/umc/data_umc_2d_size_256_256_depth_48_res_1_1_3_from_15_to_20_w_synthseg_labels.hdf5
   paths_original:
-    train: /scratch_net/biwidl319/jbermeo/data/wmh_miccai/umc/data_umc_original_depth_-1_from_0_to_10.hdf5
-    test: /scratch_net/biwidl319/jbermeo/data/wmh_miccai/umc/data_umc_original_depth_-1_from_10_to_15.hdf5
-    val: /scratch_net/biwidl319/jbermeo/data/wmh_miccai/umc/data_umc_original_depth_-1_from_15_to_20.hdf5
+    train: /scratch_net/biwidl319/jbermeo/data/wmh_miccai/umc/data_umc_original_depth_-1_from_0_to_10_w_synthseg_labels.hdf5
+    test: /scratch_net/biwidl319/jbermeo/data/wmh_miccai/umc/data_umc_original_depth_-1_from_10_to_15_w_synthseg_labels.hdf5
+    val: /scratch_net/biwidl319/jbermeo/data/wmh_miccai/umc/data_umc_original_depth_-1_from_15_to_20_w_synthseg_labels.hdf5
 
 vu:
   image_channels: 1
@@ -207,9 +207,9 @@ vu_w_synthseg_labels:
     test: /scratch_net/biwidl319/jbermeo/data/wmh_miccai/vu/data_vu_2d_size_256_256_depth_48_res_1_1_3_from_10_to_15_w_synthseg_labels.hdf5
     val: /scratch_net/biwidl319/jbermeo/data/wmh_miccai/vu/data_vu_2d_size_256_256_depth_48_res_1_1_3_from_15_to_20_w_synthseg_labels.hdf5
   paths_original:
-    train: /scratch_net/biwidl319/jbermeo/data/wmh_miccai/vu/data_vu_original_depth_-1_from_0_to_10.hdf5
-    test: /scratch_net/biwidl319/jbermeo/data/wmh_miccai/vu/data_vu_original_depth_-1_from_10_to_15.hdf5
-    val: /scratch_net/biwidl319/jbermeo/data/wmh_miccai/vu/data_vu_original_depth_-1_from_15_to_20.hdf5
+    train: /scratch_net/biwidl319/jbermeo/data/wmh_miccai/vu/data_vu_original_depth_-1_from_0_to_10_w_synthseg_labels.hdf5
+    test: /scratch_net/biwidl319/jbermeo/data/wmh_miccai/vu/data_vu_original_depth_-1_from_10_to_15_w_synthseg_labels.hdf5
+    val: /scratch_net/biwidl319/jbermeo/data/wmh_miccai/vu/data_vu_original_depth_-1_from_15_to_20_w_synthseg_labels.hdf5
 
 
   

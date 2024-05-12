@@ -5,6 +5,7 @@ dataset:    umc   # brain: hcp_t1, hcp_t2, abide_caltech, abide_stanford; wmh: n
 split:      test       # train, val, test
 classes_of_interest: null # Null, or a list of classes for which to focus to measure the dice score 
 image_size: [1, 256, 256]
+evaluate_also_bg_supp: True
 
 logdir:  /scratch_net/biwidl319/jbermeo/results/wmh/umc/no_bg_supp_norm_w_3x3_conv
 
