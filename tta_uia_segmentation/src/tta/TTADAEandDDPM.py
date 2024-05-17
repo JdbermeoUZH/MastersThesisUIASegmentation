@@ -69,15 +69,15 @@ class TTADAEandDDPM(TTADAE):
         ddpm: ConditionalGaussianDiffusion,
         dae_loss_alpha: float = 0.5,
         ddpm_loss_beta: float = 1.0,
-        ddpm_uncond_loss_gamma: float = 1.0,
         ddpm_loss_adaptive_beta_init: float = 1.0,
-        ddpm_sample_guidance_eta: float = 0.0,
-        x_norm_regularization_loss_zeta: float = 1.0,
-        dae_loss: Optional[callable] = DiceLoss(),
+        ddpm_uncond_loss_gamma: float = 1.0,
         classifier_free_guidance_weight: Optional[float] = None,
-        guidance_loss: Optional[callable] = ssim_loss,
-        x_norm_regularization_loss: Optional[Literal['sift', 'zncc', 'mi']] = 'sift',
+        x_norm_regularization_loss_eta: float = 1.0,
+        dae_loss: Optional[callable] = DiceLoss(),
+        ddpm_loss: Literal['jacobian', 'sds', 'ddds', 'pds'] = 'jacobian',
+        x_norm_regularization_loss: Optional[Literal['sift', 'rsq_sift', 'zncc', 'mi', 'rsq_grad']] = 'rsq_grad',
         x_norm_kwargs: dict = {},
+        finetune_bn: bool = False,
         minibatch_size_ddpm: int = 2,
         frac_vol_diffusion_tta: float = 1.0,
         t_ddpm_range: tuple[float, float] = [0, 1.0],
@@ -100,7 +100,6 @@ class TTADAEandDDPM(TTADAE):
         self.ddpm_uncond_loss_gamma = ddpm_uncond_loss_gamma
         self.ddpm_loss_adaptive_beta_init = ddpm_loss_adaptive_beta_init
         self.ddpm_loss_adaptive_beta = ddpm_loss_adaptive_beta_init
-        self.ddpm_sample_guidance_eta = ddpm_sample_guidance_eta
         
         self.x_norm_grads_dae_loss = defaultdict(int)          # Gradient of the last layer of the normalizer wrt the DAE loss
         self.x_norm_grads_ddpm_loss = defaultdict(int)         # Gradient of the last layer of the normalizer wrt the DDPM loss
@@ -152,16 +151,15 @@ class TTADAEandDDPM(TTADAE):
             self.x_norm_regularization_loss_zeta *= (1 + classifier_free_guidance_weight)  
         
         # x_norm regularization parameters
-        self.x_norm_regularization_loss_zeta = x_norm_regularization_loss_zeta
+        self.x_norm_regularization_loss_zeta = x_norm_regularization_loss_eta
         self.x_norm_regularization_loss = DescriptorRegularizationLoss(
             type=x_norm_regularization_loss, **x_norm_kwargs
         ) if self.x_norm_regularization_loss_zeta > 0 else None
         
         # DDPM sample guidance parameters
-        self.guidance_loss = guidance_loss
-        self.atlas_sampled_vol = self._sample_vol((self.atlas > 0.5).float()) \
-            if self.ddpm_sample_guidance_eta > 0 else None
-    
+        if ddpm_loss in ['dds', 'pds']:
+            self.sampled_latents = self._sample_latents((self.atlas > 0.5).float())
+                
     def tta(
         self,
         volume_dataset: DatasetInMemory,
@@ -217,15 +215,6 @@ class TTADAEandDDPM(TTADAE):
             drop_last=True,
         )
         
-        if self.ddpm_sample_guidance_eta > 0:
-            atlas_sampled_vol_dl = DataLoader(
-                TensorDataset(self.atlas_sampled_vol.permute(1, 0, 2, 3, 4)), # NDCHW -> DNCHW over depth in 2D 
-                batch_size=batch_size,
-                shuffle=False,
-                num_workers=num_workers,
-                drop_last=False,
-            )
-        
         # Initialize warmup factor for the DDPM loss term
         if self.warmup_steps_for_ddpm_loss is not None:
             warmup_steps_for_ddpm_loss = list(np.linspace(1, 1/self.warmup_steps_for_ddpm_loss,
@@ -265,15 +254,6 @@ class TTADAEandDDPM(TTADAE):
                 else:
                     y_dae_or_atlas = None
                     
-                # Get the guidance volume generated with the DDPM to log how it looks like
-                if self.ddpm_sample_guidance_eta > 0:
-                    x_guidance = dae_sampled_vol if self.using_dae_pl else self.atlas_sampled_vol
-                    x_guidance = x_guidance[0:1]
-                    x_guidance = x_guidance.permute(0, 2, 1, 3, 4) # NDCHW -> NCDHW
-                    x_guidance = x_guidance.detach().cpu()  
-                else:
-                    x_guidance = None
-
                 _, dices_fg = self.test_volume(
                     volume_dataset=volume_dataset,
                     dataset_name=dataset_name,
@@ -311,18 +291,7 @@ class TTADAEandDDPM(TTADAE):
                     self.use_ddpm_loss = dice_dae >= self.use_ddpm_after_dice
                     if self.use_ddpm_loss:
                         print('---------Start using DDPM loss ---------')
-                
-                # Sample volumes from the DDPM using the DAE predicted labels 
-                if self.ddpm_sample_guidance_eta > 0 and self.using_dae_pl:
-                    dae_sampled_vol = self._sample_vol(label_dataloader)
-                    dae_sampled_vol_dl = DataLoader(
-                        TensorDataset(dae_sampled_vol.permute(1, 0, 2, 3, 4)), # NDCHW -> DNCHW over depth in 2D
-                        batch_size=batch_size,
-                        shuffle=False,
-                        num_workers=num_workers,
-                        drop_last=False,
-                    )
-                    
+                                    
             elif self.dae_loss_alpha == 0 and self.use_y_pred_for_ddpm_loss:
                 # If we are not using the pl from the DAE or atlas for the DAE loss or to condition the DDPM
                 #   then pack the list with null values
@@ -357,13 +326,6 @@ class TTADAEandDDPM(TTADAE):
             else:
                 t_dl = [[None]] * len(volume_dataloader)
                         
-            # Define which volumes to use for the DDPM sample guidance (if any at all)
-            # :============================================================:
-            if self.ddpm_sample_guidance_eta > 0:
-                sampled_vol_dl = dae_sampled_vol_dl if self.using_dae_pl else atlas_sampled_vol_dl
-            else:
-                sampled_vol_dl = [[None]] * len(volume_dataloader)
-            
             # :===========================================:
             # Adapting to the target distribution
             # :===========================================:
@@ -496,28 +458,7 @@ class TTADAEandDDPM(TTADAE):
                         self.x_norm_grads_ddpm_loss,
                         subtract_gradients_dicts(x_norm_grads_old, x_norm_grads_new),
                     )
-                    
-                # DDPM sample guidance
-                # :===============================================================: 
-                if self.ddpm_sample_guidance_eta > 0:
-                    print('DEBUG, use_ddpm_sample_guidance')
-                    x_norm = self.norm(x)
-                    x_sampled = x_sampled.to(device)    
-                    
-                    x_norm = x_norm.unsqueeze(1).repeat(1, x_sampled.shape[1], 1, 1, 1) # BCHW -> BNCHW to match x_sampled 
-                    
-                    x_norm = x_norm.permute(1, 2, 0, 3, 4)       # BNCHW -> NCBHW to compare as volumes, B = Depth
-                    x_sampled = x_sampled.permute(1, 2, 0, 3, 4) # BNCHW -> NCBHW to compare as volumes, B = Depth
-                    
-                    # Calculate guidance loss wrt to Atlas or DAE sampled volumes                                
-                    ddpm_guidance_loss = self.ddpm_sample_guidance_eta * \
-                            self.guidance_loss(x_norm, x_sampled)
-                            
-                    if accumulate_over_volume:
-                        ddpm_guidance_loss = ddpm_guidance_loss / len(volume_dataloader)    
-                        
-                    ddpm_guidance_loss.backward()
-                    
+                                    
                 # Regularize the shift between x and x_norm, to ensure information of the image is preserved
                 # :===============================================================:
                 if self.x_norm_regularization_loss_zeta > 0:
@@ -548,9 +489,6 @@ class TTADAEandDDPM(TTADAE):
                     
                     step_ddpm_loss += mini_batch_ddpm_loss 
                     
-                    step_ddpm_guidance_loss += (ddpm_guidance_loss.detach() * x.shape[0]).item() \
-                        if self.ddpm_sample_guidance_eta > 0 else 0
-                        
                     step_x_norm_reg_loss += (x_norm_regularization_loss.detach() * x.shape[0]).item() \
                         if self.x_norm_regularization_loss_zeta > 0 else 0
                                                                         
@@ -613,7 +551,8 @@ class TTADAEandDDPM(TTADAE):
         min_int_norm_imgs: float = 0,
         max_int_norm_imgs: float = 1,
         use_unconditional_ddpm: bool = False,
-        min_max_tolerance: float = 2e-1
+        min_max_tolerance: float = 2e-1,
+        strategy: Literal['jacobian', 'sds', 'ddds', 'pds'] = 'jacobian'
         ) -> torch.Tensor:
         """
         
@@ -801,6 +740,9 @@ class TTADAEandDDPM(TTADAE):
                 f'ddpm_loss_adaptive_beta/img_{index:03d}': self.ddpm_loss_adaptive_beta,
                 'tta_step': step
             })
+    
+    def _sample_latents(self, x_cond: torch.Tensor) -> torch.Tensor:
+        raise NotImplementedError('Method not implemented')
     
     def _sample_vol(self, x_cond_vol: Union[torch.Tensor, DataLoader], num_sampled_vols: int = 1, 
                     convert_onehot_to_cat: bool = True) -> torch.Tensor:

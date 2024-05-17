@@ -89,8 +89,7 @@ dae_and_ddpm:
   dae_loss_alpha: 1.0
   ddpm_loss_beta: 1.0
   ddpm_uncond_loss_gamma: 1.0
-  ddpm_sample_guidance_eta: 0.0
-  x_norm_regularization_zeta: 0.0
+  x_norm_regularization_eta: 0.0
   classifier_free_guidance_weight: null # null, or 30, or 100
 
   use_ddpm_after_step: null # 500

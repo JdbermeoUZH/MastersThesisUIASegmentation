@@ -76,9 +76,8 @@ def preprocess_cmd_args() -> argparse.Namespace:
     parser.add_argument('--dae_loss_alpha', type=float, help='Weight for DAE loss. Default: 1.0')
     parser.add_argument('--ddpm_uncond_loss_gamma', type=float, help='Weight for DDPM unconditional loss. Default: 1.0')
     parser.add_argument('--classifier_free_guidance_weight', type=float, help='Weight for classifier free guidance. Default: None')
-    parser.add_argument('--ddpm_sample_guidance_eta', type=float, help='Eta for DDPM sampling guidance. Default: None')
     parser.add_argument('--x_norm_regularization_loss', type=str, help='Type of x_norm regularization loss. Default: None', choices=['sift', 'zncc', 'mi', None])
-    parser.add_argument('--x_norm_regularization_zeta', type=float, help='Gamma for x_norm regularization loss. Default: 1.0')
+    parser.add_argument('--x_norm_regularization_eta', type=float, help='Gamma for x_norm regularization loss. Default: 1.0')
     parser.add_argument('--frac_vol_diffusion_tta', type=float, help='Fraction of volume to diffuse. Default: 0.5')
     parser.add_argument('--use_ddpm_after_step', type=int, help='Use DDPM after x steps. Default: None')
     parser.add_argument('--use_ddpm_after_dice', type=float, help='Use DDPM after dice is below x. Default: None')
@@ -297,8 +296,7 @@ if __name__ == '__main__':
     ddpm_uncond_loss_gamma      = tta_config[tta_mode]['ddpm_uncond_loss_gamma']
     classifier_free_guidance_weight = tta_config[tta_mode]['classifier_free_guidance_weight']
 
-    ddpm_sample_guidance_eta    = tta_config[tta_mode]['ddpm_sample_guidance_eta']
-    x_norm_regularization_zeta  = tta_config[tta_mode]['x_norm_regularization_zeta']
+    x_norm_regularization_eeta  = tta_config[tta_mode]['x_norm_regularization_eta']
     seg_with_bg_supp            = tta_config[tta_mode]['seg_with_bg_supp']
 
     x_norm_regularization_loss  = tta_config[tta_mode]['x_norm_regularization_loss']
@@ -360,9 +358,8 @@ if __name__ == '__main__':
         use_ddpm_after_step     = use_ddpm_after_step,
         use_ddpm_after_dice     = use_ddpm_after_dice,
         warmup_steps_for_ddpm_loss=warmup_steps_for_ddpm_loss,
-        ddpm_sample_guidance_eta=ddpm_sample_guidance_eta,
         sampling_timesteps      = sampling_timesteps,
-        x_norm_regularization_loss_zeta = x_norm_regularization_zeta,
+        x_norm_regularization_loss_eta = x_norm_regularization_eta,
         x_norm_regularization_loss = x_norm_regularization_loss,
         wandb_log               = wandb_log,
         device                  = device,
