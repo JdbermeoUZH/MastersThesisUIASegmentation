@@ -1,3 +1,18 @@
+"""
+TODO:
+ - Add automatic resizing to evaluate 128x128 DDPMs
+ 
+ - Check what is going wrong with the following situation
+        python -u 3_ddpm_loss_multiple_t_and_imgs.py \
+        --ddpm_dir /scratch_net/biwidl319/jbermeo/logs/wmh/ddpm/umc_w_synthseg_labels/normalized_imgs/3x3_norm_filters/4_26/batch_size_130_dim_64_dim_mults_1_2_2_2_cond_by_concatenation_with_unconditional_training_rate_0.95 \
+        --cpt_fn model-5.pt \
+        --num_iterations 100 \
+        --out_dir /scratch_net/biwidl319/jbermeo/results/wmh/ddpm/ \
+        --dataset_sd umc_w_synthseg_labels --split_sd val \
+        --dataset_td umc_w_synthseg_labels --split_td val \
+        --mismatch_mode \
+        --exp_name batch_size_130_dim_64_dim_mults_1_2_2_2_cond_by_concatenation_with_unconditional_training_rate_0.95
+"""
 import os
 import sys
 import yaml
@@ -5,6 +20,7 @@ import argparse
 from tqdm import tqdm
 from pprint import pprint
 from collections import defaultdict
+from typing import Literal
 
 import torch
 import random
@@ -13,6 +29,7 @@ import pandas as pd
 from PIL import Image
 import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader
+import torch.nn.functional as F
 
 sys.path.append(os.path.normpath(os.path.join(
     os.path.dirname(__file__), '..', '..', '..', '..')))
@@ -79,6 +96,26 @@ map_dataset_to_dataset_type = {
 def check_btw_0_1(*args: torch.Tensor, margin_error = 1e-2):
     for tensor in args:
         assert tensor.min() >= 0 - margin_error and tensor.max() <= 1 + margin_error, 'tensor values should be between 0 and 1'    
+
+
+def rescale_volume(
+        x: torch.Tensor,
+        rescale_factor: tuple[float, float, float],
+        how: Literal['up', 'down'] = 'down',
+        return_dchw: bool = True
+    ) -> torch.Tensor:
+        # By define the recale factor as the proportion between
+        #  the Atlas or DAE volumes and the processed volumes 
+        rescale_factor = list((1 / np.array(rescale_factor))) \
+            if how == 'up' else rescale_factor
+            
+        x = x.permute(1, 0, 2, 3).unsqueeze(0)
+        x = F.interpolate(x, scale_factor=rescale_factor, mode='trilinear')
+        
+        if return_dchw:
+            x = x.squeeze(0).permute(1, 0, 2, 3)
+        
+        return x
 
 
 def get_cmd_args():
@@ -256,6 +293,9 @@ if __name__ == '__main__':
         )
     ddpm.eval()
     
+    rescale_factor = np.array([1, ddpm.image_size , ddpm.image_size]) / np.array(train_ddpm_cfg['image_size'])
+    #breakpoint()
+    
     # Get the relevant mismatch args
     if args.mismatch_mode != 'none':
         dataset_type = map_dataset_to_dataset_type[args.dataset_td]
@@ -336,6 +376,13 @@ if __name__ == '__main__':
                         
             # Calculate losses in source domain       
             t_sd = torch.full((1,), t, device=device).long()
+            
+            # Rescale the images and labels if needed
+            if all(rescale_factor != [1, 1, 1]):
+                #breakpoint()
+                img_sd = rescale_volume(img_sd, rescale_factor, how='down')
+                seg_sd = rescale_volume(seg_sd, rescale_factor, how='down').round()
+                seg_uncond_sd = rescale_volume(seg_uncond_sd, rescale_factor, how='down').round()
                  
             with torch.no_grad():
                 ddpm_loss_sample_sd_cond = ddpm.p_losses_conditioned_on_img(
@@ -351,7 +398,7 @@ if __name__ == '__main__':
             ddpm_loss_sample_td_uncond = 0
             for _, seg_mismatch, _ in mismatch_dl:    
                 seg_mismatch = seg_mismatch.to(device)
-                seg_mismatch_uncond = ddpm._generate_unconditional_x_cond(seg_sd.shape[0], device=seg_sd.device)
+                seg_mismatch_uncond = ddpm._generate_unconditional_x_cond(seg_mismatch.shape[0], device=seg_sd.device)
 
                 check_btw_0_1(seg_mismatch, seg_mismatch_uncond)
                 seg_mismatch = ddpm.normalize(seg_mismatch)
@@ -361,6 +408,11 @@ if __name__ == '__main__':
                 b = seg_mismatch.shape[0]                
                 img_mismatch = img_td
                 img_mismatch_b = img_mismatch.repeat(b, 1, 1, 1)
+
+                # Rescale the images and labels if needed
+                if all(rescale_factor != [1, 1, 1]):
+                    img_mismatch_b = rescale_volume(img_mismatch_b, rescale_factor, how='down').round()
+                    seg_mismatch = rescale_volume(seg_mismatch, rescale_factor, how='down').round()
                 
                 # Calculate the ddpm_loss
                 t_tch = torch.full((b,), t, device=device).long()
@@ -370,7 +422,7 @@ if __name__ == '__main__':
                         ddpm.p_losses_conditioned_on_img(img_mismatch_b, t_tch, seg_mismatch)
                     ddpm_loss_sample_td_uncond += (1 / len(mismatch_dl)) * \
                         ddpm.p_losses_conditioned_on_img(img_mismatch_b, t_tch, seg_mismatch_uncond) if ddpm.also_unconditional else torch.tensor(0)
-                    
+
             metrics_per_t_td['conditional'][t].append(ddpm_loss_sample_td_cond.item())
             metrics_per_t_td['unconditional'][t].append(ddpm_loss_sample_td_uncond.item())
                     
