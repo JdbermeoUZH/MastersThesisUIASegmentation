@@ -12,7 +12,7 @@ from torch.utils.data import ConcatDataset, DataLoader, TensorDataset
 
 from tta_uia_segmentation.src.tta import TTADAE
 from tta_uia_segmentation.src.utils.loss import DescriptorRegularizationLoss, DiceLoss
-from tta_uia_segmentation.src.models import ConditionalGaussianDiffusion, DomainStatistics
+from tta_uia_segmentation.src.models import ConditionalGaussianDiffusion
 from tta_uia_segmentation.src.utils.io import write_to_csv
 from tta_uia_segmentation.src.utils.utils import get_seed, stratified_sampling
 from tta_uia_segmentation.src.dataset import DatasetInMemory, utils as du
@@ -199,9 +199,6 @@ class TTADAEandDDPM(TTADAE):
         
         label_dataloader = None
         
-        if not self.finetune_bn:
-            self.seg.requires_grad_(False)
-    
         if self.rescale_factor is not None:
             assert (batch_size * self.rescale_factor[0]) % 1 == 0
             label_batch_size = int(batch_size * self.rescale_factor[0])
@@ -700,19 +697,19 @@ class TTADAEandDDPM(TTADAE):
         wandb.define_metric(f'dice_score_fg/*', step_metric=f'tta_step')    
         
     def _set_state_bn_layers(self):
-        if self.finetune_bn or self.track_running_stats_bn is not None:
+        if self.finetune_bn or self.track_running_stats_bn:
             bn_layers = [layer for layer in self.seg.modules() if isinstance(layer, torch.nn.BatchNorm2d)]
 
             for i, bn_layer_i in enumerate(bn_layers):
                 if self.subset_bn_layers is not None and i not in self.subset_bn_layers:
                     continue
             
-                if self.finetune_bn:
-                    bn_layer_i.requires_grad_(True)
-                    bn_layer_i.train()
+                bn_layer_i.train()
                 
-                if self.track_running_stats_bn is not None:
-                    bn_layer_i.track_running_stats = self.track_running_stats_bn
+                bn_layer_i.requires_grad_(self.finetune_bn)
+                
+                bn_layer_i.track_running_stats = self.track_running_stats_bn
+                    
 
     def reset_initial_state(self, state_dict: dict) -> None:
         super().reset_initial_state(state_dict)
@@ -818,4 +815,4 @@ class TTADAEandDDPM(TTADAE):
             # Add upsampled volume to the list
             sampled_vols.append(vol_i) # add batch dimensions
             
-        return torch.concat(sampled_vols, dim=0).cpu() # NDCHW
+        return torch.concat(sampled_vols, dim=0).cpu() # NDCHW                                            
