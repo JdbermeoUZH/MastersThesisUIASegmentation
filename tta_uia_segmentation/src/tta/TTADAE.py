@@ -23,7 +23,8 @@ class TTADAE:
     """
     Class to perform Test-Time Adaptation (TTA) using a DAE model to generate pseudo labels.
     
-    Arguments:
+    Arguments
+    ---------
     norm: torch.nn.Module
         Normalization model.
     seg: torch.nn.Module
@@ -69,7 +70,7 @@ class TTADAE:
         manually_norm_img_before_seg_tta: bool = False,
         manually_norm_img_before_seg_val: bool = False,
         normalization_strategy: Literal['standardize', 'min_max', 'histogram_eq'] = 'standardize',
-        seg_with_bg_supp: bool = True,
+        seg_with_bg_supp: bool = False,
         wandb_log: bool = False,
         device: str = 'cuda',
         ) -> None:
@@ -94,7 +95,7 @@ class TTADAE:
         self.norm_td_statistics.frozen = not update_norm_td_statistics
         self.norm_td_statistics.quantile_cal = None
         self.norm_td_statistics.precalculated_quantiles = None
-        
+                
         # Whether the segmentation model uses background suppression of input images
         self.seg_with_bg_supp = seg_with_bg_supp
         self.bg_suppression_opts = bg_suppression_opts
@@ -252,9 +253,13 @@ class TTADAE:
                 x = x.to(device).float()
                 y_pl = y_pl.to(device)
                 
+                # Update the statistics of the normalized target domain in the current step
+                if self.update_norm_td_statistics:
+                    with torch.no_grad():
+                        self.norm_td_statistics.update_step_statistics(self.norm(x))
+                
                 _, mask, _ = self.forward_pass_seg(
                     x, bg_mask, self.bg_suppression_opts_tta, device,
-                    update_norm_td_statistics=self.update_norm_td_statistics,
                     manually_norm_img_before_seg=self.manually_norm_img_before_seg_tta)
 
                 if self.rescale_factor is not None:
@@ -347,22 +352,16 @@ class TTADAE:
         bg_suppression_opts: Optional[dict] = None,
         device: Optional[Union[str, torch.device]] = None,
         x_norm: Optional[torch.Tensor] = None,
-        update_norm_td_statistics: bool = False,
         manually_norm_img_before_seg: bool = False,
         ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         
         x_norm = x_norm if x_norm is not None else self.norm(x)
-        
-        # Update step statistics for normalization model
-        if update_norm_td_statistics:
-            self.norm_td_statistics.update_step_statistics(x_norm)
         
         # Normalize image intensities to match the source domain statistics
         if manually_norm_img_before_seg:
             x_norm = self._normalize_image_intensities_to_sd(x_norm)
         
         if self.seg_with_bg_supp:
-            print('DEBUG, delete me: Using background suppression')
             bg_mask = bg_mask.to(device)
             x_norm_bg_supp = background_suppression(x_norm, bg_mask, bg_suppression_opts)
             mask, logits = self.seg(x_norm_bg_supp)
@@ -467,7 +466,6 @@ class TTADAE:
                 x_norm_part, y_pred_part, _ = self.forward_pass_seg(
                     x.to(device), bg_mask.to(device), 
                     self.bg_suppression_opts, device,
-                    update_norm_td_statistics=False,
                     manually_norm_img_before_seg=manual_norm_value
                     )
                 

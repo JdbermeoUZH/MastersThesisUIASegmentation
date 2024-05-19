@@ -7,22 +7,15 @@ from typing import Optional, Union, Literal
 import wandb
 import torch
 import numpy as np
-#from pytorch_msssim import SSIM
-from kornia.losses import SSIM3DLoss
 from torch.nn import functional as F
 from torch.utils.data import ConcatDataset, DataLoader, TensorDataset
 
 from tta_uia_segmentation.src.tta import TTADAE
 from tta_uia_segmentation.src.utils.loss import DescriptorRegularizationLoss, DiceLoss
 from tta_uia_segmentation.src.models import ConditionalGaussianDiffusion, DomainStatistics
-from tta_uia_segmentation.src.utils.io import save_checkpoint, write_to_csv
+from tta_uia_segmentation.src.utils.io import write_to_csv
 from tta_uia_segmentation.src.utils.utils import get_seed, stratified_sampling
 from tta_uia_segmentation.src.dataset import DatasetInMemory, utils as du
-
-
-#ssim = SSIM(data_range=1.0, channel=1, spatial_dims=3)
-#ssim_loss = lambda x, y: 0.5 * (1 - ssim(x, y))
-ssim_loss  = SSIM3DLoss(window_size=11, reduction='mean', max_val=1.0)
 
 
 def subtract_gradients_dicts(gradients_old: defaultdict, gradients_new: dict) -> dict:
@@ -73,11 +66,13 @@ class TTADAEandDDPM(TTADAE):
         ddpm_uncond_loss_gamma: float = 1.0,
         classifier_free_guidance_weight: Optional[float] = None,
         x_norm_regularization_loss_eta: float = 1.0,
+        finetune_bn: bool = False,
+        track_running_stats_bn: bool = False,
+        subset_bn_layers: Optional[list[str]] = None,
         dae_loss: Optional[callable] = DiceLoss(),
         ddpm_loss: Literal['jacobian', 'sds', 'ddds', 'pds'] = 'jacobian',
         x_norm_regularization_loss: Optional[Literal['sift', 'rsq_sift', 'zncc', 'mi', 'rsq_grad']] = 'rsq_grad',
         x_norm_kwargs: dict = {},
-        finetune_bn: bool = False,
         minibatch_size_ddpm: int = 2,
         frac_vol_diffusion_tta: float = 1.0,
         t_ddpm_range: tuple[float, float] = [0, 1.0],
@@ -94,6 +89,8 @@ class TTADAEandDDPM(TTADAE):
         
         super().__init__(loss_func=dae_loss, **kwargs)
         self.ddpm = ddpm
+        
+        self.ddpm_loss = ddpm_loss
         
         self.dae_loss_alpha = dae_loss_alpha
         self.ddpm_loss_beta = ddpm_loss_beta
@@ -118,6 +115,13 @@ class TTADAEandDDPM(TTADAE):
         self.sampling_timesteps = sampling_timesteps
         self.ddpm.set_sampling_timesteps(sampling_timesteps)
         
+        # Whether to finetune BN statistics of the segmentation model
+        self.subset_bn_layers = subset_bn_layers
+        self.finetune_bn = finetune_bn
+        self.track_running_stats_bn = track_running_stats_bn
+        self._set_state_bn_layers()
+        breakpoint()
+                    
         # Set DDPM model in eval mode
         self.ddpm.eval()
         self.ddpm.requires_grad_(False)
@@ -138,8 +142,9 @@ class TTADAEandDDPM(TTADAE):
         self.warmup_steps_for_ddpm_loss = warmup_steps_for_ddpm_loss
         
         # If a flag is not set, use the DDPM at every step
+        no_ddpm_loss_warmup = use_ddpm_after_dice is None and use_ddpm_after_step is None
         self.use_ddpm_loss = (self.ddpm_loss_beta > 0 or self.ddpm_uncond_loss_gamma > 0) and \
-            use_ddpm_after_dice is None and use_ddpm_after_step is None
+            no_ddpm_loss_warmup
         
         # Modify loss weights if using classifier free guidance
         if classifier_free_guidance_weight is not None:
@@ -156,9 +161,13 @@ class TTADAEandDDPM(TTADAE):
             type=x_norm_regularization_loss, **x_norm_kwargs
         ) if self.x_norm_regularization_loss_zeta > 0 else None
         
-        # DDPM sample guidance parameters
-        if ddpm_loss in ['dds', 'pds']:
+        # Sample latents in case of using DDPM loss that require them
+        if self.ddpm_loss in ['dds', 'pds']:
             self.sampled_latents = self._sample_latents((self.atlas > 0.5).float())
+            self.sampled_vol = self.sampled_latents[-1]
+        else:
+            self.sampled_latents = None
+            self.sampled_vol = None
                 
     def tta(
         self,
@@ -189,9 +198,9 @@ class TTADAEandDDPM(TTADAE):
         self.test_scores = []
         
         label_dataloader = None
-        dae_sampled_vol = None
-            
-        self.seg.requires_grad_(False)
+        
+        if not self.finetune_bn:
+            self.seg.requires_grad_(False)
     
         if self.rescale_factor is not None:
             assert (batch_size * self.rescale_factor[0]) % 1 == 0
@@ -258,7 +267,7 @@ class TTADAEandDDPM(TTADAE):
                     volume_dataset=volume_dataset,
                     dataset_name=dataset_name,
                     y_dae_or_atlas=y_dae_or_atlas,
-                    x_guidance=x_guidance,
+                    x_guidance=self.sampled_vol,
                     logdir=logdir,
                     device=device,
                     batch_size=batch_size,
@@ -333,7 +342,6 @@ class TTADAEandDDPM(TTADAE):
             step_tta_loss = 0
             step_dae_loss = 0
             step_ddpm_loss = 0
-            step_ddpm_guidance_loss = 0
             step_x_norm_reg_loss = 0
             
             n_samples = 0
@@ -351,7 +359,7 @@ class TTADAEandDDPM(TTADAE):
             if const_aug_per_volume:
                 volume_dataset.dataset.set_seed(get_seed())
                     
-            for b_i, ((x, y_gt,_,_, bg_mask), (y_pl,), (x_sampled,), (t,)) in enumerate(zip(volume_dataloader, label_dataloader, sampled_vol_dl, t_dl)):
+            for b_i, ((x, y_gt,_,_, bg_mask), (y_pl,), (t,)) in enumerate(zip(volume_dataloader, label_dataloader, t_dl)):
                 x_norm = None        
                 if not accumulate_over_volume:
                     self.optimizer.zero_grad()
@@ -361,6 +369,11 @@ class TTADAEandDDPM(TTADAE):
 
                 x = x.to(device).float()                               
                 n_samples += x.shape[0]
+                
+                # Update the statistics of the target domain in the current step
+                if self.update_norm_td_statistics:
+                    with torch.no_grad():
+                        self.norm_td_statistics.update_step_statistics(self.norm(x)) 
                 
                 # DAE loss: Calculate gradients from the segmentation task on the pseudo label  
                 # :===============================================================:  
@@ -372,7 +385,6 @@ class TTADAEandDDPM(TTADAE):
                     
                     _, mask, _ = self.forward_pass_seg(
                         x, bg_mask, self.bg_suppression_opts_tta, device,
-                        update_norm_td_statistics=False,
                         manually_norm_img_before_seg=self.manually_norm_img_before_seg_tta
                     )
                     
@@ -442,7 +454,7 @@ class TTADAEandDDPM(TTADAE):
                     
                     # Calculate gradients wrt unconditional DDPM. This represents log 1/p(x), which means we subtract it 
                     if self.ddpm_uncond_loss_gamma > 0 and self.ddpm.also_unconditional:
-                        ddpm_loss = self._calculate_ddpm_gradients(
+                        ddpm_loss += self._calculate_ddpm_gradients(
                             x=x,
                             x_cond=x_cond,
                             t=t,
@@ -450,7 +462,7 @@ class TTADAEandDDPM(TTADAE):
                             ddpm_reweigh_factor= -1 * self.ddpm_uncond_loss_gamma * ddpm_reweigh_factor,
                             max_int_norm_imgs=self.norm_td_statistics.max,
                             min_int_norm_imgs=self.norm_td_statistics.min,
-                            use_unconditional_ddpm=True
+                            use_unconditional_ddpm=True,
                         )
                     
                     x_norm_grads_new = self._get_gradients_x_norm()
@@ -504,10 +516,8 @@ class TTADAEandDDPM(TTADAE):
             
             step_ddpm_loss = (step_ddpm_loss / n_samples_diffusion) if n_samples_diffusion > 0 else 0
             step_ddpm_loss *= self.ddpm_loss_adaptive_beta if accumulate_over_volume else 1
-            
-            step_ddpm_guidance_loss = (step_ddpm_guidance_loss / n_samples) if n_samples > 0 else 0
-            
-            step_tta_loss = step_dae_loss + step_ddpm_loss + step_ddpm_guidance_loss + step_x_norm_reg_loss
+                        
+            step_tta_loss = step_dae_loss + step_ddpm_loss + step_x_norm_reg_loss
             
             self.tta_losses.append(step_tta_loss)
 
@@ -515,7 +525,6 @@ class TTADAEandDDPM(TTADAE):
                 wandb.log({
                     f'dae_loss/img_{index:03d}': step_dae_loss, 
                     f'ddpm_loss/img_{index:03d}': step_ddpm_loss,
-                    f'ddpm_guidance_loss/img_{index:03d}': step_ddpm_guidance_loss,
                     f'x_norm_reg_loss/img_{index:03d}': step_x_norm_reg_loss,
                     f'total_loss/img_{index:03d}': step_tta_loss, 
                     'tta_step': step
@@ -552,6 +561,7 @@ class TTADAEandDDPM(TTADAE):
         max_int_norm_imgs: float = 1,
         use_unconditional_ddpm: bool = False,
         min_max_tolerance: float = 2e-1,
+        update_norm_td_statistics: Optional[bool] = None,
         strategy: Literal['jacobian', 'sds', 'ddds', 'pds'] = 'jacobian'
         ) -> torch.Tensor:
         """
@@ -579,14 +589,13 @@ class TTADAEandDDPM(TTADAE):
         minibatch_size = self.minibatch_size_ddpm
         num_minibatches = np.ceil(x.shape[0] / minibatch_size)
         ddpm_reweigh_factor = ddpm_reweigh_factor * (1 / num_minibatches)  
+        
+        if update_norm_td_statistics is None:
+            update_norm_td_statistics = self.update_norm_td_statistics
                 
         for i in range(0, x.shape[0], minibatch_size):
             t_mb = t[i: i + minibatch_size] if t is not None else None
             x_norm_mb = self.norm(x[i: i + minibatch_size])
-            
-            # Update the statistics of the target domain in the current step
-            if self.update_norm_td_statistics:
-                self.norm_td_statistics.update_step_statistics(x_norm_mb) 
             
             if use_unconditional_ddpm:
                 x_cond_mb = self.ddpm._generate_unconditional_x_cond(batch_size=minibatch_size, device=device)
@@ -615,6 +624,9 @@ class TTADAEandDDPM(TTADAE):
                 print(f'WARNING: x_norm_mb.max()={x_norm_mb_ddpm.max()}, x_norm_mb.min()={x_norm_mb.min()}')
             
             # Calculate the DDPM loss and backpropagate
+            # TODO: 
+            # - Implement the 4 different strategies for the DDPM loss and add conditional free guidance
+            
             ddpm_loss = ddpm_reweigh_factor * self.ddpm(
                 x_norm_mb_ddpm, 
                 x_cond_mb,
@@ -686,9 +698,26 @@ class TTADAEandDDPM(TTADAE):
         wandb.define_metric(f'ddpm_guidance_loss/*', step_metric=f'tta_step')
         wandb.define_metric(f'total_loss/*', step_metric=f'tta_step')   
         wandb.define_metric(f'dice_score_fg/*', step_metric=f'tta_step')    
+        
+    def _set_state_bn_layers(self):
+        if self.finetune_bn or self.track_running_stats_bn is not None:
+            bn_layers = [layer for layer in self.seg.modules() if isinstance(layer, torch.nn.BatchNorm2d)]
+
+            for i, bn_layer_i in enumerate(bn_layers):
+                if self.subset_bn_layers is not None and i not in self.subset_bn_layers:
+                    continue
+            
+                if self.finetune_bn:
+                    bn_layer_i.requires_grad_(True)
+                    bn_layer_i.train()
+                
+                if self.track_running_stats_bn is not None:
+                    bn_layer_i.track_running_stats = self.track_running_stats_bn
 
     def reset_initial_state(self, state_dict: dict) -> None:
         super().reset_initial_state(state_dict)
+        
+        self._set_state_bn_layers()
         
         self.ddpm_loss_adaptive_beta = self.ddpm_loss_adaptive_beta_init
         self.x_norm_grads_dae_loss = defaultdict(int)          # Gradient of the last layer of the normalizer wrt the DAE loss

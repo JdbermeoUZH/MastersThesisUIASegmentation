@@ -92,6 +92,10 @@ dae_and_ddpm:
   x_norm_regularization_eta: 0.0
   classifier_free_guidance_weight: null # null, or 30, or 100
 
+  finetune_bn: False
+  track_running_stats_bn: False
+  subset_bn_layers: null # [0, 1]
+  
   use_ddpm_after_step: null # 500
   use_ddpm_after_dice: null # 0.5
   warmup_steps_for_ddpm_loss: 100
@@ -99,6 +103,7 @@ dae_and_ddpm:
   frac_vol_diffusion_tta: 1.0
   t_ddpm_range: [0.02, 0.98]
   t_sampling_strategy: uniform  # uniform, stratified, one_per_volume
+  min_max_quantile: [0.1, 0.975]
   sampling_timesteps: 100
   use_y_pred_for_ddpm_loss: True   # If False, and use_y_gt_for_ddpm_loss is False, then it will use the pseudo label from the DAE
   use_y_gt_for_ddpm_loss: False    # Only true for debugging

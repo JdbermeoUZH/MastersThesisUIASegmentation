@@ -200,7 +200,7 @@ def load_domain_statistiscs(
     
     ds.min = ds.get_quantile(min_max_clip_q[0])
     ds.max = ds.get_quantile(min_max_clip_q[1])
-    
+        
     return ds  
     
     

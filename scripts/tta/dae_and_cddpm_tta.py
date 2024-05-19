@@ -78,6 +78,9 @@ def preprocess_cmd_args() -> argparse.Namespace:
     parser.add_argument('--classifier_free_guidance_weight', type=float, help='Weight for classifier free guidance. Default: None')
     parser.add_argument('--x_norm_regularization_loss', type=str, help='Type of x_norm regularization loss. Default: None', choices=['sift', 'zncc', 'mi', None])
     parser.add_argument('--x_norm_regularization_eta', type=float, help='Gamma for x_norm regularization loss. Default: 1.0')
+    parser.add_argument('--finetune_bn', type=parse_bool, help='Finetune batchnorm layers. Default: False')
+    parser.add_argument('--track_running_stats_bn', type=parse_bool, help='Track running stats of batchnorm layers. Default: False')
+    parser.add_argument('--subset_bn_layers', type=int, nargs='+', help='Subset of batchnorm layers to finetune. Default: None')
     parser.add_argument('--frac_vol_diffusion_tta', type=float, help='Fraction of volume to diffuse. Default: 0.5')
     parser.add_argument('--use_ddpm_after_step', type=int, help='Use DDPM after x steps. Default: None')
     parser.add_argument('--use_ddpm_after_dice', type=float, help='Use DDPM after dice is below x. Default: None')
@@ -96,6 +99,7 @@ def preprocess_cmd_args() -> argparse.Namespace:
     parser.add_argument('--cpt_fn', type=str, help='Name of checkpoint file to load for DDPM')
     parser.add_argument('--t_ddpm_range', type=float, nargs=2, help='Quantile range of t values for DDPM. Default: [0.2, 0.98]')       
     parser.add_argument('--t_sampling_strategy', type=str, help='Sampling strategy for t values. Default: uniform')
+    parser.add_argument('--min_max_quantile', type=float, nargs=2, help='Quantile range for min max clipping. Default: [0.1, 0.975]')
     parser.add_argument('--use_y_pred_for_ddpm_loss', type=parse_bool, help='Whether to use predicted segmentation as conditional for DDPM. Default: True')
     parser.add_argument('--use_y_gt_for_ddpm_loss', type=parse_bool, help='Whether to use ground truth segmetnation as conditional for DDPM. ONLY FOR DEBUGGING. Default: False')
     parser.add_argument('--detach_x_norm_from_ddpm_loss', type=parse_bool, help='Whether to detach x_norm from DDPM loss. Default: False')
@@ -262,10 +266,13 @@ if __name__ == '__main__':
     )
     
     # Load statistics of the source domain
+    min_max_clip_q = tta_config[tta_mode]['min_max_quantile']   
+    
     norm_sd_statistics = load_domain_statistiscs(
         cpt_fp = cpt_fp,
         frozen = True,
-        momentum = 0.96
+        momentum = 0.96,
+        min_max_clip_q=min_max_clip_q,
     )
     print('Segmentation model loaded')
     
@@ -296,11 +303,17 @@ if __name__ == '__main__':
     ddpm_uncond_loss_gamma      = tta_config[tta_mode]['ddpm_uncond_loss_gamma']
     classifier_free_guidance_weight = tta_config[tta_mode]['classifier_free_guidance_weight']
 
-    x_norm_regularization_eeta  = tta_config[tta_mode]['x_norm_regularization_eta']
+    # Finetunning of batchnorm layers
+    finetune_bn                 = tta_config[tta_mode]['finetune_bn']
+    subset_bn_layers            = tta_config[tta_mode]['subset_bn_layers']
+    track_running_stats_bn      = tta_config[tta_mode]['track_running_stats_bn']
+    
     seg_with_bg_supp            = tta_config[tta_mode]['seg_with_bg_supp']
 
+    # Regularization btw x and x_norm
+    x_norm_regularization_eta  = tta_config[tta_mode]['x_norm_regularization_eta']
     x_norm_regularization_loss  = tta_config[tta_mode]['x_norm_regularization_loss']
-
+    
     # How the segmentation is evaluated
     bg_suppression_opts_tta     = tta_config[tta_mode]['bg_suppression_opts']
     update_norm_td_statistics   = tta_config[tta_mode]['update_norm_td_statistics'] 
@@ -336,6 +349,9 @@ if __name__ == '__main__':
         ddpm                    = ddpm,          
         n_classes               = n_classes,
         learning_rate           = learning_rate,
+        finetune_bn             = finetune_bn,
+        track_running_stats_bn  = track_running_stats_bn,
+        subset_bn_layers        = subset_bn_layers,
         seg_with_bg_supp        = seg_with_bg_supp,
         dae_loss_alpha          = dae_loss_alpha,
         alpha                   = alpha,
@@ -404,16 +420,17 @@ if __name__ == '__main__':
                 
     if ddpm_loss_beta > 0:
         print(f'Using DDPM with weight: {ddpm_loss_beta}')
-        
-    if ddpm_sample_guidance_eta is not None and ddpm_sample_guidance_eta > 0:
-        print(f'Using DDPM sample guidance with weight: {ddpm_sample_guidance_eta}')
-    
+            
     if ddpm_uncond_loss_gamma > 0 and ddpm.also_unconditional:
         if classifier_free_guidance_weight is None:
             print(f'Using DDPM unconditional loss with weight: {ddpm_uncond_loss_gamma}')
         else:
             print(f'Using DDPM unconditional loss with weight: {ddpm_uncond_loss_gamma} '
                   f'in classifier free guidance mode with weight: {classifier_free_guidance_weight}')
+            
+    if x_norm_regularization_eta > 0:
+        print(f'Using x_norm regularization with eta: {x_norm_regularization_eta}'
+              f' and loss: {x_norm_regularization_loss}')
         
     dice_scores = torch.zeros((len(indices_per_volume), n_classes))
     

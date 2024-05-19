@@ -63,9 +63,10 @@ class DomainStatistics:
         return q
     
     def _reset_step_statistics(self):
-        self._step_max = -torch.inf
-        self._step_min = torch.inf
         self._step_num_px = 0
         self._step_sum = 0.0
         self._step_sum_sq = 0.0
+        self._step_min = torch.inf
+        self._step_max = -torch.inf
+
         

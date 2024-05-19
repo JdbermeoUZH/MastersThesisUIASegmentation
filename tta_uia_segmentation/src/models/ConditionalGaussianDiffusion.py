@@ -84,7 +84,7 @@ class ConditionalGaussianDiffusion(GaussianDiffusion):
         img_size = img_size[0] if isinstance(img_size, tuple) else img_size
         assert h == img_size and w == img_size, f'height and width of image must be {img_size}, \
             but got {h} and {w} respectively'
-            
+        
         img = self.normalize(img)
         if img.max() > 1 or img.min() < -1:
             print('Warning: img is not normalized between -1 and 1'
@@ -97,15 +97,10 @@ class ConditionalGaussianDiffusion(GaussianDiffusion):
             if self.also_unconditional:
                 assert cond_img.shape[1] > 1, 'cond_img must be one hot encoded if training a single model in conditional and unconditional mode' 
                 
-                if not self.condition_by_concat:
-                    # Add an unconditional channel of zeros to the one hot encoded cond_img
-                    #  if conditioning by multiplication
-                    cond_img = torch.cat([cond_img, torch.zeros(b, 1, h, w, device = cond_img.device)], dim = 1)
-                    
                 # Choose randomly whether it will be a conditional or unconditional forward pass
                 if random.random() < self.uncoditional_rate:
                     cond_img = self._generate_unconditional_x_cond(batch_size=cond_img.shape[0], device=cond_img.device)
-                    
+            
             cond_img = self.normalize(cond_img)  
             
             if cond_img.max() > 1 or cond_img.min() < -1:
