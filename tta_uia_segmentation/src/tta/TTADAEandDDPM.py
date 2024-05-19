@@ -44,17 +44,7 @@ def add_gradients_dicts(gradients_dict_1: defaultdict, gradients_dict_2: dict) -
 
 class TTADAEandDDPM(TTADAE):
     """
-    TODO:
-        - DDPM sample guidance
-            - Change from sampling with DDIM only x_0 but rather all posterior x_t
-            - Make it part of the DDPM Loss
         
-        - DDPM Loss
-            - Use the sampled t in both conditional and unconditional DDPM loss
-            - Make sure the the _calculate_ddpm_gradients function breaks the t's into the corect minibatch sizes
-        
-        - DAE Loss  
-            - Determine if there is a gap between this script and the DAE script
     """
     
     def __init__(
@@ -120,7 +110,6 @@ class TTADAEandDDPM(TTADAE):
         self.finetune_bn = finetune_bn
         self.track_running_stats_bn = track_running_stats_bn
         self._set_state_bn_layers()
-        breakpoint()
                     
         # Set DDPM model in eval mode
         self.ddpm.eval()
@@ -815,4 +804,4 @@ class TTADAEandDDPM(TTADAE):
             # Add upsampled volume to the list
             sampled_vols.append(vol_i) # add batch dimensions
             
-        return torch.concat(sampled_vols, dim=0).cpu() # NDCHW                                            
+        return torch.concat(sampled_vols, dim=0).cpu() # NDCHW
