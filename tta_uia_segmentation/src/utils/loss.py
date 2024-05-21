@@ -4,6 +4,10 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from kornia.feature import SIFTDescriptor
+from kornia.core import  Tensor, concatenate, normalize
+from kornia.core.check import KORNIA_CHECK_SHAPE
+from kornia.filters import spatial_gradient
+from kornia.geometry.conversions import pi
 
 from tta_uia_segmentation.src.utils.utils import assert_in, from_dict_or_default
 
@@ -112,6 +116,59 @@ class DiceLoss(nn.Module):
 
 
 class SIFTDescriptor(SIFTDescriptor):
+    def __init__(
+        self,
+        patch_size: int = 41,
+        num_ang_bins: int = 8,
+        num_spatial_bins: int = 4,
+        rootsift: bool = True,
+        clipval: float = 0.2,
+        use_rsq_grads: bool = False
+        ): 
+        super().__init__(patch_size, num_ang_bins, num_spatial_bins, rootsift, clipval)
+        self.use_rsq_grads = use_rsq_grads
+    
+    def forward(self, input: Tensor) -> Tensor:
+        KORNIA_CHECK_SHAPE(input, ["B", "1", f"{self.patch_size}", f"{self.patch_size}"])
+        B: int = input.shape[0]
+        self.pk = self.pk.to(input.dtype).to(input.device)
+
+        grads = spatial_gradient(input, "diff")
+        # unpack the edges
+        gx = grads[:, :, 0]
+        gy = grads[:, :, 1]
+        
+        if self.use_rsq_grads:
+            gx = torch.sqrt(gx**2)
+            gy = torch.sqrt(gy**2)
+
+        mag = torch.sqrt(gx * gx + gy * gy + self.eps)
+        ori = torch.atan2(gy, gx + self.eps) + 2.0 * pi
+        mag = mag * self.gk.expand_as(mag).type_as(mag).to(mag.device)
+        o_big = float(self.num_ang_bins) * ori / (2.0 * pi)
+
+        bo0_big_ = torch.floor(o_big)
+        wo1_big_ = o_big - bo0_big_
+        bo0_big = bo0_big_ % self.num_ang_bins
+        bo1_big = (bo0_big + 1) % self.num_ang_bins
+        wo0_big = (1.0 - wo1_big_) * mag
+        wo1_big = wo1_big_ * mag
+
+        ang_bins = concatenate(
+            [
+                self.pk((bo0_big == i).to(input.dtype) * wo0_big + (bo1_big == i).to(input.dtype) * wo1_big)
+                for i in range(0, self.num_ang_bins)
+            ],
+            1,
+        )
+        ang_bins = ang_bins.view(B, -1)
+        ang_bins = normalize(ang_bins, p=2)
+        ang_bins = torch.clamp(ang_bins, 0.0, float(self.clipval))
+        ang_bins = normalize(ang_bins, p=2)
+        if self.rootsift:
+            ang_bins = torch.sqrt(normalize(ang_bins, p=1) + self.eps)
+        return ang_bins
+    
     def describe_image_sift(self, image):
         image = image.unfold(-2, self.patch_size, self.patch_size)\
             .unfold(-2, self.patch_size, self.patch_size)
@@ -120,9 +177,10 @@ class SIFTDescriptor(SIFTDescriptor):
     
 
 class SIFDescriptorLoss(nn.Module):
-    def __init__(self, patch_size=256, num_ang_bins=8, num_spatial_bins=16, **kwargs):
+    def __init__(self, patch_size=256, num_ang_bins=8, num_spatial_bins=16, use_rsq_grads=True, **kwargs):
         super().__init__()
-        self.sift = SIFTDescriptor(patch_size=patch_size, num_ang_bins=num_ang_bins, num_spatial_bins=num_spatial_bins, **kwargs)
+        self.sift = SIFTDescriptor(patch_size=patch_size, num_ang_bins=num_ang_bins, num_spatial_bins=num_spatial_bins, 
+                                   use_rsq_grads=use_rsq_grads, **kwargs)
 
     def forward(self, img_1, img_2):
         descs_1 = self.sift.describe_image_sift(img_1)
@@ -256,19 +314,38 @@ class MutualInformationLoss(nn.Module):
         return 1 - self.getMutualInformation(input1, input2).mean()
 
 
+class BasicGradientComparissonLoss(nn.Module):
+    def __init__(self, use_sq_grads=True, mode='diff'):
+        super().__init__()
+        self.use_sq_grads = use_sq_grads
+        self.mode = mode
+
+    def forward(self, x1, x2):
+        grad_x1 = spatial_gradient(x1, self.mode)
+        grad_x2 = spatial_gradient(x2, self.mode)
+
+        if self.use_sq_grads:
+            grad_x1 = grad_x1**2
+            grad_x2 = grad_x2**2
+    
+        return F.mse_loss(grad_x1, grad_x2)
+
+
+
 class DescriptorRegularizationLoss(nn.Module):
     """
     TODO
      - Add term that penalizes low vaiances in the input image
      - add method to crop around the center of the image a patch that is 75% the size of the image
     """
-    def __init__(self, type: Literal['sift', 'zncc', 'mi'], **kwargs):
+    def __init__(self, type: Literal['sift', 'zncc', 'mi', 'sq_grad'], **kwargs):
         super().__init__()
         if type == 'sift':
             self.loss_fn = SIFDescriptorLoss(
                 patch_size=from_dict_or_default(kwargs, 'patch_size', 256),
                 num_ang_bins=from_dict_or_default(kwargs, 'num_ang_bins', 8),
-                num_spatial_bins=from_dict_or_default(kwargs, 'num_spatial_bins', 16)
+                num_spatial_bins=from_dict_or_default(kwargs, 'num_spatial_bins', 16),
+                use_rsq_grads=from_dict_or_default(kwargs, 'use_rsq_grads', True)   
                 )
         
         elif type == 'zncc':
@@ -282,6 +359,11 @@ class DescriptorRegularizationLoss(nn.Module):
                 num_bins=from_dict_or_default(kwargs, 'num_bins', 256),
                 normalize=from_dict_or_default(kwargs, 'normalize', True)
                 )        
+        elif type == 'sq_grad':
+            self.loss_fn = BasicGradientComparissonLoss(
+                use_sq_grads=from_dict_or_default(kwargs, 'use_sq_grads', True),
+                mode=from_dict_or_default(kwargs, 'mode', 'diff')
+                )
         else:
             raise ValueError(f'Unknown descriptor type: {type}')
 

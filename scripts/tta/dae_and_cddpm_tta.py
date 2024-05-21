@@ -76,7 +76,7 @@ def preprocess_cmd_args() -> argparse.Namespace:
     parser.add_argument('--dae_loss_alpha', type=float, help='Weight for DAE loss. Default: 1.0')
     parser.add_argument('--ddpm_uncond_loss_gamma', type=float, help='Weight for DDPM unconditional loss. Default: 1.0')
     parser.add_argument('--classifier_free_guidance_weight', type=float, help='Weight for classifier free guidance. Default: None')
-    parser.add_argument('--x_norm_regularization_loss', type=str, help='Type of x_norm regularization loss. Default: None', choices=['sift', 'zncc', 'mi', None])
+    parser.add_argument('--x_norm_regularization_loss', type=str, help='Type of x_norm regularization loss. Default: None', choices=['sift', 'zncc', 'mi', 'sq_grad', None])
     parser.add_argument('--x_norm_regularization_eta', type=float, help='Gamma for x_norm regularization loss. Default: 1.0')
     parser.add_argument('--finetune_bn', type=parse_bool, help='Finetune batchnorm layers. Default: False')
     parser.add_argument('--track_running_stats_bn', type=parse_bool, help='Track running stats of batchnorm layers. Default: False')
