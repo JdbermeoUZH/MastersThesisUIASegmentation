@@ -78,9 +78,14 @@ def preprocess_cmd_args() -> argparse.Namespace:
     parser.add_argument('--classifier_free_guidance_weight', type=float, help='Weight for classifier free guidance. Default: None')
     parser.add_argument('--x_norm_regularization_loss', type=str, help='Type of x_norm regularization loss. Default: None', choices=['sift', 'zncc', 'mi', 'sq_grad', None])
     parser.add_argument('--x_norm_regularization_eta', type=float, help='Gamma for x_norm regularization loss. Default: 1.0')
+    
     parser.add_argument('--finetune_bn', type=parse_bool, help='Finetune batchnorm layers. Default: False')
     parser.add_argument('--track_running_stats_bn', type=parse_bool, help='Track running stats of batchnorm layers. Default: False')
     parser.add_argument('--subset_bn_layers', type=int, nargs='+', help='Subset of batchnorm layers to finetune. Default: None')
+    
+    parser.add_argument('--use_adaptive_beta', type=parse_bool, help='Use adaptive beta for DDPM loss. Default: True')
+    parser.add_argument('--adaptive_beta_momentum', type=float, help='Momentum for adaptive beta. ')
+    
     parser.add_argument('--frac_vol_diffusion_tta', type=float, help='Fraction of volume to diffuse. Default: 0.5')
     parser.add_argument('--use_ddpm_after_step', type=int, help='Use DDPM after x steps. Default: None')
     parser.add_argument('--use_ddpm_after_dice', type=float, help='Use DDPM after dice is below x. Default: None')
@@ -309,6 +314,10 @@ if __name__ == '__main__':
     track_running_stats_bn      = tta_config[tta_mode]['track_running_stats_bn']
     
     seg_with_bg_supp            = tta_config[tta_mode]['seg_with_bg_supp']
+    
+    # Adaptive beta for DDPM loss
+    use_adaptive_beta           = tta_config[tta_mode]['use_adaptive_beta']
+    adaptive_beta_momentum      = tta_config[tta_mode]['adaptive_beta_momentum']
 
     # Regularization btw x and x_norm
     x_norm_regularization_eta  = tta_config[tta_mode]['x_norm_regularization_eta']
@@ -363,6 +372,8 @@ if __name__ == '__main__':
         normalization_strategy  = normalization_strategy,
         rescale_factor          = rescale_factor,
         ddpm_loss_beta          = ddpm_loss_beta,
+        use_adaptive_beta       = use_adaptive_beta,
+        adaptive_beta_momentum  = adaptive_beta_momentum,
         ddpm_uncond_loss_gamma  = ddpm_uncond_loss_gamma,
         minibatch_size_ddpm     = minibatch_size_ddpm,
         frac_vol_diffusion_tta  = frac_vol_diffusion_tta,
@@ -419,7 +430,10 @@ if __name__ == '__main__':
             print(f'Using only the Atlas as a pseudo-label with weight: {ddpm_loss_beta: .5f}')    
                 
     if ddpm_loss_beta > 0:
-        print(f'Using DDPM with weight: {ddpm_loss_beta}')
+        print(f'Using DDPM loss with weight: {ddpm_loss_beta}')
+    
+    if use_adaptive_beta:
+        print(f'Using adaptive beta for DDPM loss with momentum: {adaptive_beta_momentum}')
             
     if ddpm_uncond_loss_gamma > 0 and ddpm.also_unconditional:
         if classifier_free_guidance_weight is None:

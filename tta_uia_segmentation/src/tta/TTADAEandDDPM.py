@@ -52,7 +52,6 @@ class TTADAEandDDPM(TTADAE):
         ddpm: ConditionalGaussianDiffusion,
         dae_loss_alpha: float = 0.5,
         ddpm_loss_beta: float = 1.0,
-        ddpm_loss_adaptive_beta_init: float = 1.0,
         ddpm_uncond_loss_gamma: float = 1.0,
         classifier_free_guidance_weight: Optional[float] = None,
         x_norm_regularization_loss_eta: float = 1.0,
@@ -63,6 +62,9 @@ class TTADAEandDDPM(TTADAE):
         ddpm_loss: Literal['jacobian', 'sds', 'ddds', 'pds'] = 'jacobian',
         x_norm_regularization_loss: Optional[Literal['sift', 'rsq_sift', 'zncc', 'mi', 'rsq_grad']] = 'rsq_grad',
         x_norm_kwargs: dict = {},
+        use_adaptive_beta: bool = False,
+        adaptive_beta_momentum: float = 0.8,
+        ddpm_loss_adaptive_beta_init: float = 1.0,
         minibatch_size_ddpm: int = 2,
         frac_vol_diffusion_tta: float = 1.0,
         t_ddpm_range: tuple[float, float] = [0, 1.0],
@@ -85,12 +87,19 @@ class TTADAEandDDPM(TTADAE):
         self.dae_loss_alpha = dae_loss_alpha
         self.ddpm_loss_beta = ddpm_loss_beta
         self.ddpm_uncond_loss_gamma = ddpm_uncond_loss_gamma
-        self.ddpm_loss_adaptive_beta_init = ddpm_loss_adaptive_beta_init
-        self.ddpm_loss_adaptive_beta = ddpm_loss_adaptive_beta_init
-        
+                
         self.x_norm_grads_dae_loss = defaultdict(int)          # Gradient of the last layer of the normalizer wrt the DAE loss
         self.x_norm_grads_ddpm_loss = defaultdict(int)         # Gradient of the last layer of the normalizer wrt the DDPM loss
         self.x_norm_grads_x_norm_reg_loss = defaultdict(int)   # Gradient of the last layer of the normalizer wrt the x_norm regularization loss
+
+        
+        # Parameters for adaptive weight to balance the DAE and DDPM loss
+        self.use_adaptive_beta = use_adaptive_beta
+        self.ddpm_loss_adaptive_beta_init = ddpm_loss_adaptive_beta_init if use_adaptive_beta else None
+        self.ddpm_loss_adaptive_beta = ddpm_loss_adaptive_beta_init 
+        self.adaptive_beta_momentum = adaptive_beta_momentum if use_adaptive_beta else None
+        self.norm_x_norm_out_grad_dae_loss = None
+        self.norm_x_norm_out_grad_ddpm_loss  = None        
         
         self.minibatch_size_ddpm = minibatch_size_ddpm
         self.frac_vol_diffusion_tta = frac_vol_diffusion_tta
@@ -142,13 +151,13 @@ class TTADAEandDDPM(TTADAE):
                         
             self.ddpm_uncond_loss_gamma *= classifier_free_guidance_weight
 
-            self.x_norm_regularization_loss_zeta *= (1 + classifier_free_guidance_weight)  
+            self.x_norm_regularization_loss_eta *= (1 + classifier_free_guidance_weight)  
         
         # x_norm regularization parameters
-        self.x_norm_regularization_loss_zeta = x_norm_regularization_loss_eta
+        self.x_norm_regularization_loss_eta = x_norm_regularization_loss_eta
         self.x_norm_regularization_loss = DescriptorRegularizationLoss(
             type=x_norm_regularization_loss, **x_norm_kwargs
-        ) if self.x_norm_regularization_loss_zeta > 0 else None
+        ) if self.x_norm_regularization_loss_eta > 0 else None
         
         # Sample latents in case of using DDPM loss that require them
         if self.ddpm_loss in ['dds', 'pds']:
@@ -209,7 +218,7 @@ class TTADAEandDDPM(TTADAE):
             num_workers=num_workers,
             drop_last=True,
         )
-        
+                
         # Initialize warmup factor for the DDPM loss term
         if self.warmup_steps_for_ddpm_loss is not None:
             warmup_steps_for_ddpm_loss = list(np.linspace(1, 1/self.warmup_steps_for_ddpm_loss,
@@ -320,7 +329,7 @@ class TTADAEandDDPM(TTADAE):
                 )
             else:
                 t_dl = [[None]] * len(volume_dataloader)
-                        
+                                        
             # :===========================================:
             # Adapting to the target distribution
             # :===========================================:
@@ -427,12 +436,15 @@ class TTADAEandDDPM(TTADAE):
                     x_norm_grads_old = self._get_gradients_x_norm()
                     
                     # Calculate gradients wrt conditional DDPM. This represents log p(x|y)
+                    ddpm_loss_beta = self.ddpm_loss_beta * self.ddpm_loss_adaptive_beta if self.use_adaptive_beta \
+                        else self.ddpm_loss_beta
+                    
                     ddpm_loss = self._calculate_ddpm_gradients(
                         x=x,
                         x_cond=x_cond,
                         t=t,
                         device=device,  
-                        ddpm_reweigh_factor=self.ddpm_loss_beta * ddpm_reweigh_factor,
+                        ddpm_reweigh_factor=ddpm_loss_beta * ddpm_reweigh_factor,
                         max_int_norm_imgs=self.norm_td_statistics.max,
                         min_int_norm_imgs=self.norm_td_statistics.min,
                         use_unconditional_ddpm=False
@@ -459,11 +471,11 @@ class TTADAEandDDPM(TTADAE):
                                     
                 # Regularize the shift between x and x_norm, to ensure information of the image is preserved
                 # :===============================================================:
-                if self.x_norm_regularization_loss_zeta > 0:
+                if self.x_norm_regularization_loss_eta > 0:
                     x_norm_grads_old = self._get_gradients_x_norm()
                     
                     x_norm = self.norm(x)
-                    x_norm_regularization_loss = self.x_norm_regularization_loss_zeta * \
+                    x_norm_regularization_loss = self.x_norm_regularization_loss_eta * \
                         self.x_norm_regularization_loss(x_norm, x)
                         
                     x_norm_regularization_loss.backward()
@@ -488,7 +500,7 @@ class TTADAEandDDPM(TTADAE):
                     step_ddpm_loss += mini_batch_ddpm_loss 
                     
                     step_x_norm_reg_loss += (x_norm_regularization_loss.detach() * x.shape[0]).item() \
-                        if self.x_norm_regularization_loss_zeta > 0 else 0
+                        if self.x_norm_regularization_loss_eta > 0 else 0
                                                                         
             if accumulate_over_volume:
                 self._take_optimizer_step(index, step)
@@ -592,7 +604,7 @@ class TTADAEandDDPM(TTADAE):
                     _, x_cond_mb, _ = self.forward_pass_seg(
                         x_norm=x_norm_mb, bg_mask=bg_mask, 
                         bg_suppression_opts=self.bg_suppression_opts_tta, 
-                        device=device, update_norm_td_statistics=False
+                        device=device
                     )
                 else:
                     x_cond_mb = x_cond[i: i + minibatch_size]
@@ -627,21 +639,10 @@ class TTADAEandDDPM(TTADAE):
         return ddpm_loss_value
     
     def _take_optimizer_step(self, index, step):
-        if self.use_ddpm_loss and self.dae_loss_alpha > 0: 
-                    
-            # Calculate adaptive beta for the DDPM loss
+        # Calculate adaptive beta for the DDPM loss
+        if self.use_ddpm_loss and self.dae_loss_alpha > 0 and self.use_adaptive_beta: 
             self._update_ddpm_loss_adaptive_beta(index, step)
-                    
-            # Replace all gradients in x_norm for grad_dae + beta * grad_ddpm
-            assert self.x_norm_grads_dae_loss.keys() == self.x_norm_grads_ddpm_loss.keys(), \
-                'Gradients for the DAE and DDPM losses must have the same keys'
-                
-            for name, param in self.norm.named_parameters():
-                if param.grad is not None:
-                    param.grad = self.x_norm_grads_dae_loss[name] + \
-                        self.ddpm_loss_adaptive_beta * self.x_norm_grads_ddpm_loss[name] + \
-                        self.ddpm_loss_adaptive_beta * self.x_norm_grads_x_norm_reg_loss[name]
-        
+                                    
         # Log the magnitude of gradients from the different losses
         if self.wandb_log: self._log_x_norm_out_gradient_magnitudes(index, step)
                     
@@ -683,7 +684,13 @@ class TTADAEandDDPM(TTADAE):
         wandb.define_metric(f'ddpm_loss/*', step_metric=f'tta_step')
         wandb.define_metric(f'ddpm_guidance_loss/*', step_metric=f'tta_step')
         wandb.define_metric(f'total_loss/*', step_metric=f'tta_step')   
-        wandb.define_metric(f'dice_score_fg/*', step_metric=f'tta_step')    
+        wandb.define_metric(f'dice_score_fg/*', step_metric=f'tta_step')  
+        wandb.define_metric(f'x_norm_reg_loss/*', step_metric=f'tta_step')
+        
+        if self.use_adaptive_beta:
+            wandb.define_metric(f'ddpm_loss_adaptive_beta/*', step_metric=f'tta_step')  
+            wandb.define_metric(f'norm_x_norm_out_grad_dae_loss/*', step_metric=f'tta_step')
+            wandb.define_metric(f'norm_x_norm_out_grad_ddpm_loss/*', step_metric=f'tta_step')
         
     def _set_state_bn_layers(self):
         if self.finetune_bn or self.track_running_stats_bn:
@@ -706,6 +713,7 @@ class TTADAEandDDPM(TTADAE):
         self._set_state_bn_layers()
         
         self.ddpm_loss_adaptive_beta = self.ddpm_loss_adaptive_beta_init
+        
         self.x_norm_grads_dae_loss = defaultdict(int)          # Gradient of the last layer of the normalizer wrt the DAE loss
         self.x_norm_grads_ddpm_loss = defaultdict(int)         # Gradient of the last layer of the normalizer wrt the DDPM loss
         self.x_norm_grads_x_norm_reg_loss = defaultdict(int)   # Gradient of the last layer of the normalizer wrt the x_norm regularization loss
@@ -735,7 +743,7 @@ class TTADAEandDDPM(TTADAE):
             log_dict[f'norm_x_norm_out_grad_ddpm_loss/img_{index:03d}'] = \
                 torch.norm(self.x_norm_grads_ddpm_loss[last_layer_name])
                 
-        if self.x_norm_regularization_loss_zeta > 0:
+        if self.x_norm_regularization_loss_eta > 0:
             log_dict[f'norm_x_norm_out_grad_xnorm_reg_loss/img_{index:03d}'] = \
                 torch.norm(self.x_norm_grads_x_norm_reg_loss[last_layer_name])        
         
@@ -744,9 +752,24 @@ class TTADAEandDDPM(TTADAE):
     def _update_ddpm_loss_adaptive_beta(self, index, step):
         # Get the name of the last layer
         last_layer_name = [name for name, _ in self.norm.named_parameters() if 'weight' in name][-1]
-        norm_x_norm_out_grad_dae_loss = torch.norm(self.x_norm_grads_dae_loss[last_layer_name])
-        norm_x_norm_out_grad_ddpm_loss = torch.norm(self.x_norm_grads_ddpm_loss[last_layer_name])
-        λ = norm_x_norm_out_grad_dae_loss / (norm_x_norm_out_grad_ddpm_loss + 1e-7)
+        norm_x_norm_out_grad_dae_loss_current = torch.norm(self.x_norm_grads_dae_loss[last_layer_name])
+        norm_x_norm_out_grad_ddpm_loss_current = torch.norm(self.x_norm_grads_ddpm_loss[last_layer_name])   
+        
+        # Calculate EMA norms of the gradients of the last layer of the normalizer wrt the DAE and DDPM loss
+        if self.norm_x_norm_out_grad_dae_loss is None:
+            self.norm_x_norm_out_grad_dae_loss = norm_x_norm_out_grad_dae_loss_current
+        else:
+            self.norm_x_norm_out_grad_dae_loss = self.adaptive_beta_momentum * self.norm_x_norm_out_grad_dae_loss + \
+                (1 - self.adaptive_beta_momentum) * norm_x_norm_out_grad_dae_loss_current
+        
+        if self.norm_x_norm_out_grad_ddpm_loss is None:
+            self.norm_x_norm_out_grad_ddpm_loss = norm_x_norm_out_grad_ddpm_loss_current
+        else:
+            self.norm_x_norm_out_grad_ddpm_loss = self.adaptive_beta_momentum * self.norm_x_norm_out_grad_ddpm_loss + \
+                (1 - self.adaptive_beta_momentum) * norm_x_norm_out_grad_ddpm_loss_current
+        
+        # Calculate the adaptive beta
+        λ = self.norm_x_norm_out_grad_dae_loss / (self.norm_x_norm_out_grad_ddpm_loss + 1e-7)
         λ = torch.clamp(λ, 0, 1e4).detach()
         self.ddpm_loss_adaptive_beta = 0.8 * λ 
         
@@ -804,4 +827,4 @@ class TTADAEandDDPM(TTADAE):
             # Add upsampled volume to the list
             sampled_vols.append(vol_i) # add batch dimensions
             
-        return torch.concat(sampled_vols, dim=0).cpu() # NDCHW
+        return torch.concat(sampled_vols, dim=0).cpu() # NDCHW                     

@@ -91,6 +91,13 @@ dae_and_ddpm:
   x_norm_regularization_eta: 0.0
   classifier_free_guidance_weight: null # null, or 30, or 100
 
+  finetune_bn: False
+  track_running_stats_bn: False
+  subset_bn_layers: null # [0, 1]. If null, it will use all the layers
+
+  use_adaptive_beta: True
+  adaptive_beta_momentum: 0.8
+
   use_ddpm_after_step: null # 500
   use_ddpm_after_dice: null # 0.5
   warmup_steps_for_ddpm_loss: null # 100

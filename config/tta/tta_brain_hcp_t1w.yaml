@@ -94,7 +94,10 @@ dae_and_ddpm:
 
   finetune_bn: False
   track_running_stats_bn: False
-  subset_bn_layers: null # [0, 1]
+  subset_bn_layers: null # [0, 1]. If null, it will use all the layers
+
+  use_adaptive_beta: True
+  adaptive_beta_momentum: 0.8
   
   use_ddpm_after_step: null # 500
   use_ddpm_after_dice: null # 0.5
