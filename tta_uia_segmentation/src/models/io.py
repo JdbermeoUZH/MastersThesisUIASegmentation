@@ -75,7 +75,8 @@ def load_cddpm_from_configs_and_cpt(
     cpt_fp: str,
     img_size: int,
     device: torch.device,
-    sampling_timesteps: Optional[int] = None) -> ConditionalGaussianDiffusion:
+    sampling_timesteps: Optional[int] = None,
+    unconditional_rate: Optional[float] = None ) -> ConditionalGaussianDiffusion:
 
     timesteps           = train_ddpm_cfg['timesteps']
     sampling_timesteps  = train_ddpm_cfg['sampling_timesteps'] \
@@ -99,6 +100,9 @@ def load_cddpm_from_configs_and_cpt(
         also_unconditional = train_ddpm_cfg['also_unconditional'],
         unconditional_rate = train_ddpm_cfg['unconditional_rate'], 
     ).to(device)
+    
+    if unconditional_rate is not None:
+        ddpm.unconditional_rate = unconditional_rate 
 
     cpt = torch.load(cpt_fp, map_location=device)
     ema_update_every = 10

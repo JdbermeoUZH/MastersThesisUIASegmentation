@@ -338,14 +338,22 @@ class DescriptorRegularizationLoss(nn.Module):
      - Add term that penalizes low vaiances in the input image
      - add method to crop around the center of the image a patch that is 75% the size of the image
     """
-    def __init__(self, type: Literal['sift', 'zncc', 'mi', 'sq_grad'], **kwargs):
+    def __init__(self, type: Literal['sq_grad', 'rsq_sift', 'sift', 'zncc', 'mi'], **kwargs):
         super().__init__()
-        if type == 'sift':
+        if type == 'rsq_sift':
             self.loss_fn = SIFDescriptorLoss(
                 patch_size=from_dict_or_default(kwargs, 'patch_size', 256),
                 num_ang_bins=from_dict_or_default(kwargs, 'num_ang_bins', 8),
                 num_spatial_bins=from_dict_or_default(kwargs, 'num_spatial_bins', 16),
                 use_rsq_grads=from_dict_or_default(kwargs, 'use_rsq_grads', True)   
+                )
+
+        if type == 'sift':
+            self.loss_fn = SIFDescriptorLoss(
+                patch_size=from_dict_or_default(kwargs, 'patch_size', 256),
+                num_ang_bins=from_dict_or_default(kwargs, 'num_ang_bins', 8),
+                num_spatial_bins=from_dict_or_default(kwargs, 'num_spatial_bins', 16),
+                use_rsq_grads=from_dict_or_default(kwargs, 'use_rsq_grads', False)   
                 )
         
         elif type == 'zncc':

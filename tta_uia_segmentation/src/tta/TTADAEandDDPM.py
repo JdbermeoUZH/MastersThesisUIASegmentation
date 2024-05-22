@@ -50,17 +50,18 @@ class TTADAEandDDPM(TTADAE):
     def __init__(
         self,
         ddpm: ConditionalGaussianDiffusion,
-        dae_loss_alpha: float = 0.5,
+        min_max_intenities_norm_imgs: tuple[float, float],
+        dae_loss_alpha: float = 1.0,
         ddpm_loss_beta: float = 1.0,
-        ddpm_uncond_loss_gamma: float = 1.0,
-        classifier_free_guidance_weight: Optional[float] = None,
-        x_norm_regularization_loss_eta: float = 1.0,
+        ddpm_uncond_loss_gamma: float = 0.0,
+        classifier_free_guidance_weight: float = 0.0,
+        x_norm_regularization_loss_eta: float = 0.0,
         finetune_bn: bool = False,
         track_running_stats_bn: bool = False,
         subset_bn_layers: Optional[list[str]] = None,
         dae_loss: Optional[callable] = DiceLoss(),
         ddpm_loss: Literal['jacobian', 'sds', 'ddds', 'pds'] = 'jacobian',
-        x_norm_regularization_loss: Optional[Literal['sift', 'rsq_sift', 'zncc', 'mi', 'rsq_grad']] = 'rsq_grad',
+        x_norm_regularization_loss: Optional[Literal['sift', 'rsq_sift', 'zncc', 'mi', 'sq_grad']] = 'rsq_grad',
         x_norm_kwargs: dict = {},
         use_adaptive_beta: bool = False,
         adaptive_beta_momentum: float = 0.8,
@@ -69,7 +70,6 @@ class TTADAEandDDPM(TTADAE):
         frac_vol_diffusion_tta: float = 1.0,
         t_ddpm_range: tuple[float, float] = [0, 1.0],
         t_sampling_strategy: Literal['uniform', 'stratified', 'one_per_volume'] = 'uniform',
-        sampling_timesteps: Optional[int] = None,
         detach_x_norm_from_ddpm_loss: bool = False,
         use_y_pred_for_ddpm_loss: bool = False,
         use_y_gt_for_ddpm_loss: bool = False,    # Of course use only for debugging
@@ -84,14 +84,18 @@ class TTADAEandDDPM(TTADAE):
         
         self.ddpm_loss = ddpm_loss
         
+        # Loss weights
+        # :===============================================================:
         self.dae_loss_alpha = dae_loss_alpha
         self.ddpm_loss_beta = ddpm_loss_beta
         self.ddpm_uncond_loss_gamma = ddpm_uncond_loss_gamma
-                
-        self.x_norm_grads_dae_loss = defaultdict(int)          # Gradient of the last layer of the normalizer wrt the DAE loss
-        self.x_norm_grads_ddpm_loss = defaultdict(int)         # Gradient of the last layer of the normalizer wrt the DDPM loss
-        self.x_norm_grads_x_norm_reg_loss = defaultdict(int)   # Gradient of the last layer of the normalizer wrt the x_norm regularization loss
-
+        self.x_norm_regularization_loss_eta = x_norm_regularization_loss_eta
+        
+        # DDPM loss parameters
+        # :===============================================================:
+        self.classifier_free_guidance_weight = classifier_free_guidance_weight
+        self.use_y_pred_for_ddpm_loss = use_y_pred_for_ddpm_loss   
+        self.detach_x_norm_from_ddpm_loss = detach_x_norm_from_ddpm_loss 
         
         # Parameters for adaptive weight to balance the DAE and DDPM loss
         self.use_adaptive_beta = use_adaptive_beta
@@ -101,37 +105,26 @@ class TTADAEandDDPM(TTADAE):
         self.norm_x_norm_out_grad_dae_loss = None
         self.norm_x_norm_out_grad_ddpm_loss  = None        
         
-        self.minibatch_size_ddpm = minibatch_size_ddpm
-        self.frac_vol_diffusion_tta = frac_vol_diffusion_tta
+        #   initialize the gradients of the last layer of the normalizer wrt the different losses        
+        self.x_norm_grads_dae_loss = defaultdict(int)          # Gradient of the last layer of the normalizer wrt the DAE loss
+        self.x_norm_grads_ddpm_loss = defaultdict(int)         # Gradient of the last layer of the normalizer wrt the DDPM loss
+        self.x_norm_grads_x_norm_reg_loss = defaultdict(int)   # Gradient of the last layer of the normalizer wrt the x_norm regularization loss
         
+        # How to sample the timesteps for the DDPM loss
         self.min_t_diffusion_tta = int(np.ceil(t_ddpm_range[0] * (self.ddpm.num_timesteps - 1)))
         self.max_t_diffusion_tta = int(np.floor(t_ddpm_range[1] * (self.ddpm.num_timesteps - 1)))
         self.t_sampling_strategy = t_sampling_strategy
         
-        self.use_y_pred_for_ddpm_loss = use_y_pred_for_ddpm_loss   
-        self.detach_x_norm_from_ddpm_loss = detach_x_norm_from_ddpm_loss 
+        # Intensity normalization parameters
+        self.min_max_intenities_norm_imgs = min_max_intenities_norm_imgs
+        self.norm_td_statistics.min = min_max_intenities_norm_imgs[0]
+        self.norm_td_statistics.max = min_max_intenities_norm_imgs[1] 
+         
+        # Optimization loop parameters for the DDPM loss
+        self.minibatch_size_ddpm = minibatch_size_ddpm
+        self.frac_vol_diffusion_tta = frac_vol_diffusion_tta
         
-        self.sampling_timesteps = sampling_timesteps
-        self.ddpm.set_sampling_timesteps(sampling_timesteps)
-        
-        # Whether to finetune BN statistics of the segmentation model
-        self.subset_bn_layers = subset_bn_layers
-        self.finetune_bn = finetune_bn
-        self.track_running_stats_bn = track_running_stats_bn
-        self._set_state_bn_layers()
-                    
-        # Set DDPM model in eval mode
-        self.ddpm.eval()
-        self.ddpm.requires_grad_(False)
-        
-        # Attributes used only for debugging
-        self.use_y_gt_for_ddpm_loss = use_y_gt_for_ddpm_loss
-        
-        # Setup the custom metrics and steps wandb
-        if self.wandb_log:
-            self._define_custom_wandb_metrics() 
-            
-        # Set the step at which to use the DDPM
+        #   warmup for the DDPM loss, if a flag is not set, use the DDPM at every step 
         assert use_ddpm_after_dice is None or use_ddpm_after_step is None, \
             'Only one of use_ddpm_after_dice or use_ddpm_after_step can be set'
 
@@ -139,34 +132,42 @@ class TTADAEandDDPM(TTADAE):
         self.use_ddpm_after_dice = use_ddpm_after_dice
         self.warmup_steps_for_ddpm_loss = warmup_steps_for_ddpm_loss
         
-        # If a flag is not set, use the DDPM at every step
         no_ddpm_loss_warmup = use_ddpm_after_dice is None and use_ddpm_after_step is None
         self.use_ddpm_loss = (self.ddpm_loss_beta > 0 or self.ddpm_uncond_loss_gamma > 0) and \
-            no_ddpm_loss_warmup
+            no_ddpm_loss_warmup        
         
-        # Modify loss weights if using classifier free guidance
-        if classifier_free_guidance_weight is not None:
-            self.dae_loss_alpha *= (1 + classifier_free_guidance_weight)
-            self.ddpm_loss_beta *= (1 + classifier_free_guidance_weight)            
-                        
-            self.ddpm_uncond_loss_gamma *= classifier_free_guidance_weight
-
-            self.x_norm_regularization_loss_eta *= (1 + classifier_free_guidance_weight)  
+        # Set DDPM model in eval mode
+        self.ddpm.eval()
+        self.ddpm.requires_grad_(False)
         
-        # x_norm regularization parameters
-        self.x_norm_regularization_loss_eta = x_norm_regularization_loss_eta
-        self.x_norm_regularization_loss = DescriptorRegularizationLoss(
-            type=x_norm_regularization_loss, **x_norm_kwargs
-        ) if self.x_norm_regularization_loss_eta > 0 else None
-        
-        # Sample latents in case of using DDPM loss that require them
+        # Sample latents in case of using a DDPM loss that requires them
         if self.ddpm_loss in ['dds', 'pds']:
             self.sampled_latents = self._sample_latents((self.atlas > 0.5).float())
             self.sampled_vol = self.sampled_latents[-1]
         else:
             self.sampled_latents = None
             self.sampled_vol = None
+       
+        # Attributes used only for debugging
+        self.use_y_gt_for_ddpm_loss = use_y_gt_for_ddpm_loss
+                                    
+        # x_norm regularization parameters
+        # :===============================================================:
+        self.x_norm_regularization_loss = DescriptorRegularizationLoss(
+            type=x_norm_regularization_loss, **x_norm_kwargs
+        ) if self.x_norm_regularization_loss_eta > 0 else None
                 
+        # Whether to finetune BN layers of the segmentation model
+        # :===============================================================:
+        self.subset_bn_layers = subset_bn_layers
+        self.finetune_bn = finetune_bn
+        self.track_running_stats_bn = track_running_stats_bn
+        self._set_state_bn_layers()
+        
+        # Setup the custom metrics and steps wandb
+        if self.wandb_log:
+            self._define_custom_wandb_metrics() 
+                           
     def tta(
         self,
         volume_dataset: DatasetInMemory,
@@ -451,13 +452,15 @@ class TTADAEandDDPM(TTADAE):
                     )
                     
                     # Calculate gradients wrt unconditional DDPM. This represents log 1/p(x), which means we subtract it 
+                    ddpm_uncond_loss_gamma = self.ddpm_uncond_loss_gamma * self.ddpm_loss_adaptive_beta if self.use_adaptive_beta \
+                        else self.ddpm_uncond_loss_gamma
                     if self.ddpm_uncond_loss_gamma > 0 and self.ddpm.also_unconditional:
                         ddpm_loss += self._calculate_ddpm_gradients(
                             x=x,
                             x_cond=x_cond,
                             t=t,
                             device=device,  
-                            ddpm_reweigh_factor= -1 * self.ddpm_uncond_loss_gamma * ddpm_reweigh_factor,
+                            ddpm_reweigh_factor= -1 * ddpm_uncond_loss_gamma * ddpm_reweigh_factor,
                             max_int_norm_imgs=self.norm_td_statistics.max,
                             min_int_norm_imgs=self.norm_td_statistics.min,
                             use_unconditional_ddpm=True,
@@ -511,9 +514,8 @@ class TTADAEandDDPM(TTADAE):
                                 
             # Log losses
             step_dae_loss = (step_dae_loss / n_samples) if n_samples > 0 else 0
-            
             step_ddpm_loss = (step_ddpm_loss / n_samples_diffusion) if n_samples_diffusion > 0 else 0
-            step_ddpm_loss *= self.ddpm_loss_adaptive_beta if accumulate_over_volume else 1
+            step_x_norm_reg_loss = (step_x_norm_reg_loss / n_samples) if n_samples > 0 else 0
                         
             step_tta_loss = step_dae_loss + step_ddpm_loss + step_x_norm_reg_loss
             
@@ -560,7 +562,6 @@ class TTADAEandDDPM(TTADAE):
         use_unconditional_ddpm: bool = False,
         min_max_tolerance: float = 2e-1,
         update_norm_td_statistics: Optional[bool] = None,
-        strategy: Literal['jacobian', 'sds', 'ddds', 'pds'] = 'jacobian'
         ) -> torch.Tensor:
         """
         
@@ -624,14 +625,28 @@ class TTADAEandDDPM(TTADAE):
             # Calculate the DDPM loss and backpropagate
             # TODO: 
             # - Implement the 4 different strategies for the DDPM loss and add conditional free guidance
+            if self.ddpm_loss == 'jacobian':
+                ddpm_loss = ddpm_reweigh_factor * self.ddpm(
+                    x_norm_mb_ddpm, 
+                    x_cond_mb,
+                    t_mb,
+                    min_t=self.min_t_diffusion_tta,
+                    max_t=self.max_t_diffusion_tta,
+                    w_clf_free=self.classifier_free_guidance_weight,
+                )
             
-            ddpm_loss = ddpm_reweigh_factor * self.ddpm(
-                x_norm_mb_ddpm, 
-                x_cond_mb,
-                t_mb,
-                min_t=self.min_t_diffusion_tta,
-                max_t=self.max_t_diffusion_tta,
-            )
+            elif self.ddpm_loss == 'sds':
+                raise NotImplementedError('SDS loss not implemented')
+            
+            elif self.ddpm_loss == 'ddds':
+                raise NotImplementedError('DDDS loss not implemented')
+            
+            elif self.ddpm_loss == 'pds':
+                raise NotImplementedError('PDS loss not implemented')
+            
+            else:
+                raise ValueError(f'Invalid DDPM loss: {self.ddpm_loss}, options are: jacobian, sds, ddds, pds')
+            
             ddpm_loss.backward()
             
             ddpm_loss_value += ddpm_loss.detach()
@@ -678,7 +693,7 @@ class TTADAEandDDPM(TTADAE):
             drop_last=False,
         )        
     
-    def _define_custom_wandb_metrics(self, ):
+    def _define_custom_wandb_metrics(self):
         wandb.define_metric(f'tta_step')
         wandb.define_metric(f'dae_loss/*', step_metric=f'tta_step')
         wandb.define_metric(f'ddpm_loss/*', step_metric=f'tta_step')
@@ -687,7 +702,7 @@ class TTADAEandDDPM(TTADAE):
         wandb.define_metric(f'dice_score_fg/*', step_metric=f'tta_step')  
         wandb.define_metric(f'x_norm_reg_loss/*', step_metric=f'tta_step')
         
-        if self.use_adaptive_beta:
+        if self.use_adaptive_beta is not None and self.use_adaptive_beta:
             wandb.define_metric(f'ddpm_loss_adaptive_beta/*', step_metric=f'tta_step')  
             wandb.define_metric(f'norm_x_norm_out_grad_dae_loss/*', step_metric=f'tta_step')
             wandb.define_metric(f'norm_x_norm_out_grad_ddpm_loss/*', step_metric=f'tta_step')
@@ -706,7 +721,6 @@ class TTADAEandDDPM(TTADAE):
                 
                 bn_layer_i.track_running_stats = self.track_running_stats_bn
                     
-
     def reset_initial_state(self, state_dict: dict) -> None:
         super().reset_initial_state(state_dict)
         
@@ -720,6 +734,9 @@ class TTADAEandDDPM(TTADAE):
         
         self.use_ddpm_loss = (self.ddpm_loss_beta > 0 or self.ddpm_uncond_loss_gamma > 0) and \
             self.use_ddpm_after_dice is None and self.use_ddpm_after_step is None
+            
+        self.norm_td_statistics.min = self.min_max_intenities_norm_imgs[0]
+        self.norm_td_statistics.max = self.min_max_intenities_norm_imgs[1]
                     
     def _get_gradients_x_norm(self) -> dict:
         gradients_dict = defaultdict(int)
@@ -827,4 +844,4 @@ class TTADAEandDDPM(TTADAE):
             # Add upsampled volume to the list
             sampled_vols.append(vol_i) # add batch dimensions
             
-        return torch.concat(sampled_vols, dim=0).cpu() # NDCHW                     
+        return torch.concat(sampled_vols, dim=0).cpu() # NDCHW

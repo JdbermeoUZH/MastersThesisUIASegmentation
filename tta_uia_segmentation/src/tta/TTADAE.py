@@ -149,8 +149,7 @@ class TTADAE:
         self.wandb_log = wandb_log
         
         if self.wandb_log:
-            self._define_custom_wandb_metrics()
-
+            TTADAE._define_custom_wandb_metrics(self)
         
     def tta(
         self,
@@ -239,11 +238,7 @@ class TTADAE:
 
             if const_aug_per_volume:
                 volume_dataset.dataset.set_seed(get_seed())
-                
-            # TODO: Delete these next lines, DEBUGGING
-            print('DEBUG DELETE ME: len(volume_dataloader)', len(volume_dataloader))
-            print('DEBUG DELETE ME: len(label_dataloader)', len(label_dataloader))
-                                                        
+                                                            
             # Adapting to the target distribution.
             for (x,_,_,_, bg_mask), (y_pl,) in zip(volume_dataloader, label_dataloader):
 

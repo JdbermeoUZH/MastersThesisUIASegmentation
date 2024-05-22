@@ -77,63 +77,82 @@ dae_and_ddpm:
   logdir: /scratch_net/biwidl319/jbermeo/logs/brain/tta/tests/4_17
   dae_dir: /scratch_net/biwidl319/jbermeo/data/models/brain/dae/hcp_t1
   ddpm_dir: /scratch_net/biwidl319/jbermeo/logs/brain/ddpm/hcp_t1/normalized_imgs/3x3_norm_filters/4_26/batch_size_130_dim_64_dim_mults_1_2_2_2_cond_by_concatenation_with_unconditional_training_rate_0.75
-  cpt_fn: 'model-8.pt'
-
-  seg_with_bg_supp: False
-  x_norm_regularization_loss: null
-  update_norm_td_statistics: False
-  manually_norm_img_before_seg_val: False
-  manually_norm_img_before_seg_tta: False
-  normalization_strategy: standardize  # standardize, min_max, null
-
+  cpt_fn: 'model-6.pt'
+  
+  # Loss weights
   dae_loss_alpha: 1.0
   ddpm_loss_beta: 1.0
   ddpm_uncond_loss_gamma: 0.0
   x_norm_regularization_eta: 0.0
-  classifier_free_guidance_weight: null # null, or 30, or 100
 
-  finetune_bn: False
-  track_running_stats_bn: False
-  subset_bn_layers: null # [0, 1]. If null, it will use all the layers
-
+  # DDPM loss params
   use_adaptive_beta: True
   adaptive_beta_momentum: 0.8
-  
-  use_ddpm_after_step: null # 500
-  use_ddpm_after_dice: null # 0.5
-  warmup_steps_for_ddpm_loss: 100
-  minibatch_size_ddpm: 2
-  frac_vol_diffusion_tta: 1.0
-  t_ddpm_range: [0.02, 0.98]
-  t_sampling_strategy: uniform  # uniform, stratified, one_per_volume
-  min_max_quantile: [0.1, 0.975]
-  sampling_timesteps: 100
-  use_y_pred_for_ddpm_loss: True   # If False, and use_y_gt_for_ddpm_loss is False, then it will use the pseudo label from the DAE
-  use_y_gt_for_ddpm_loss: False    # Only true for debugging
-  detach_x_norm_from_ddpm_loss: False
+  classifier_free_guidance_weight: 0.0     # 30, or 100
+  use_y_pred_for_ddpm_loss: True            # If False, and use_y_gt_for_ddpm_loss is False, then it will use the pseudo label from the DAE
+  use_y_gt_for_ddpm_loss: False             # Only true for debugging
+  detach_x_norm_from_ddpm_loss: False       # Use only gradients on the segmentation
 
-  accumulate_over_volume: True
-  batch_size: 32
-  dataset_repetition: 1
-  num_steps: 2000  # 500 for brain, 2700 for wmh
-  update_dae_output_every: 25
-  calculate_dice_every: 25  # 25 for brain, 135 for wmh (nuhs, umc, vu)
+  # Loss functions
+  ddpm_loss: jacobian                       # jacobian, ssd, dds, pds 
+  x_norm_regularization_loss: null          # null, sq_grad, zncc, rsq_sift, sift, mi 
+
+  # Finetune batch normalization layers
+  finetune_bn: False
+  track_running_stats_bn: False
+  subset_bn_layers: null                    # [0, 1]. If null, it will use all the layers
+
+  # DAE term parameters  
+  update_dae_output_every: 200              # 25 for brain, 135 for wmh (nuhs, umc, vu). Try 200 for brain and 270 for wmh for more stable convergence
+  calculate_dice_every: 50    
   alpha: 1.0
   beta: 0.25 
   use_atlas_only_for_init: False
+
+  # DDPM params
+  min_max_intenities_norm_imgs: [-0.7377170324325562, 0.24169665575027466]
+  update_norm_td_statistics: True
+  unconditional_rate: 0                     # It is the rate at which it does forward passes in unconditional mode
+  #   switch and warmup
+  use_ddpm_after_step: null                 # 500. If null, this condition is not used
+  use_ddpm_after_dice: null                 # 0.5. If null, this condition is not used
+  warmup_steps_for_ddpm_loss: 100           # 100. If null, no warmup is used
+  #   minibatching
+  minibatch_size_ddpm: 4
+  frac_vol_diffusion_tta: 1.0
+  #   sampling range for t's
+  t_ddpm_range: [0.02, 0.98]                # [0.02, 0.98] 
+  t_sampling_strategy: uniform              # uniform, stratified, one_per_volume
+  
+  sampling_timesteps: 100
+
+  # Optimization parameters 
+  num_steps: 2000                           # 500 for brain, 2700 for wmh
   learning_rate: 0.001
+  accumulate_over_volume: True
+  batch_size: 32
+  dataset_repetition: 1
   save_checkpoints: True
   const_aug_per_volume: False
-  
+
+  # Normalize intensities before segmentation
+  manually_norm_img_before_seg_val: False
+  manually_norm_img_before_seg_tta: False
+  normalization_strategy: standardize       # standardize, min_max, null
+  min_max_quantile: [0.1, 0.975]
+    
+  # Supress background x_norm 
+  seg_with_bg_supp: False
   bg_suppression_opts:
-    type: none  # possible values: none, fixed_value, random_value
+    type: none                              # none, fixed_value, random_value
     bg_value: -0.5
     bg_value_min: -0.5
     bg_value_max: 1
-    mask_source: thresholding  # possible values: thresholding, ground_truth
-    thresholding: otsu  # possible values: isodata, li, mean, minimum, otsu, triangle, yen
+    mask_source: thresholding               # thresholding, ground_truth
+    thresholding: otsu                      # isodata, li, mean, minimum, otsu, triangle, yen
     hole_filling: True
   
+  # Augmentation
   augmentation:
     da_ratio: 0.25
     sigma: 20

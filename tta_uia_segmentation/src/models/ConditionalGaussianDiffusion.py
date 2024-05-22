@@ -31,13 +31,13 @@ class ConditionalGaussianDiffusion(GaussianDiffusion):
         
         self.only_unconditional = only_unconditional
         self.also_unconditional = also_unconditional
-        self.uncoditional_rate = unconditional_rate
+        self.unconditional_rate = unconditional_rate
         self.condition_by_concat = condition_by_concat
         
         if not only_unconditional:
             assert self.model.condition, 'Unet model must be defined in conditional mode' 
                 
-    def p_losses_conditioned_on_img(self, x_start, t, x_cond, 
+    def p_losses_conditioned_on_img(self, x_start, t, x_cond, w_clf_free: float = 0,
                                     noise=None, offset_noise_strength=None):
 
         if not self.only_unconditional:
@@ -58,6 +58,16 @@ class ConditionalGaussianDiffusion(GaussianDiffusion):
 
         # predict and take gradient step
         model_out = self.model(x, t, x_cond)
+        
+        # calculate unconditional score
+        if w_clf_free > 0:
+            assert self.also_unconditional, 'w_clf_free is only available when also_unconditional is True'
+            assert not self.only_unconditional, 'w_clf_free only makes sense when the model was trained in conditional and unconditional mode'
+            print('DEBUG: Delete me, using w_clf_free: ', w_clf_free) # TODO
+            x_unconditional = self._generate_unconditional_x_cond(batch_size=x_cond.shape[0], device=x_cond.device)
+            model_out_unconditional = self.model(x, t, x_unconditional)
+            
+            model_out = (1 + w_clf_free) * model_out - w_clf_free * model_out_unconditional    
 
         if self.objective == 'pred_noise':
             target = noise
@@ -74,11 +84,61 @@ class ConditionalGaussianDiffusion(GaussianDiffusion):
 
         loss = loss * extract(self.loss_weight, t, loss.shape)
         return loss.mean()
+    
+    def score_distillation_sampling(self, x_start, t, x_cond, w_clf_free: float = 0):
+        if not self.only_unconditional:
+            assert x_cond.shape[-2:] == x_start.shape[-2:], 'x_cond and x_start must have the same Height and Width'
+        
+        noise = default(noise, lambda: torch.randn_like(x_start))
 
-    def forward(self, img, cond_img, t: Optional[torch.Tensor] = None, 
+        # noise sample
+        x_t = self.q_sample(x_start = x_start, t = t, noise = noise)
+
+        # predict and take gradient step
+        model_out = self.model(x_t, t, x_cond)
+        
+        # calculate unconditional score
+        if w_clf_free > 0:
+            assert self.also_unconditional, 'w_clf_free is only available when also_unconditional is True'
+            assert not self.only_unconditional, 'w_clf_free only makes sense when the model was trained in conditional and unconditional mode'
+            x_unconditional = self._generate_unconditional_x_cond(batch_size=x_cond.shape[0], device=x_cond.device)
+            model_out_unconditional = self.model(x_t, t, x_unconditional)
+
+        if self.objective == 'pred_noise':
+            target = noise
+            
+        elif self.objective == 'pred_x0':
+            target = x_start
+       
+        elif self.objective == 'pred_v':
+            # Obtain noise_t 
+            v = self.predict_v(x_start, t, noise)
+            target = v
+       
+        else:
+            raise ValueError(f'unknown objective {self.objective}')
+
+        loss = F.mse_loss(model_out, target, reduction = 'none')
+        loss = reduce(loss, 'b ... -> b', 'mean')
+
+        loss = loss * extract(self.loss_weight, t, loss.shape)
+        return loss.mean()
+    
+        raise NotImplementedError('score_distillation_sampling is not implemented yet')
+    
+    def delta_denoising_score(self, x_start, t, x_cond, sampled_noise_ref: tuple[torch.Tensor], w_clf_free: float = 0):
+        raise NotImplementedError('score_distillation_sampling is not implemented yet')
+    
+    def posterior_distillation_sampling(self, x_start, t, x_cond, sampled_x_ref: tuple[torch.Tensor], w_clf_free: float = 0):
+        raise NotImplementedError('score_distillation_sampling is not implemented yet')
+       
+    def forward(self, img, cond_img, t: Optional[torch.Tensor] = None,
                 min_t: Optional[int] = None, max_t: Optional[int] = None, *args, **kwargs):
         
         b, c, h, w, device, img_size, = *img.shape, img.device, self.image_size
+        
+        if self.only_unconditional:
+            assert cond_img is None, 'cond_img must be None when only_unconditional is True'
         
         # Normalize the image to be between -1 and 1 and check it follows necessary constraints
         img_size = img_size[0] if isinstance(img_size, tuple) else img_size
@@ -91,25 +151,23 @@ class ConditionalGaussianDiffusion(GaussianDiffusion):
                   f'max_value: {img.max()}, min_value: {img.min()}')
             
         # Process conditional image if necessary
-        if not self.only_unconditional:
+        if self.also_unconditional and self.unconditional_rate > 0: 
             assert cond_img.shape[-2:] == img.shape[-2:], 'cond_img and img must have the same shape in H and W'
             
-            if self.also_unconditional:
+            if self.also_unconditional:    
                 assert cond_img.shape[1] > 1, 'cond_img must be one hot encoded if training a single model in conditional and unconditional mode' 
-                
                 # Choose randomly whether it will be a conditional or unconditional forward pass
-                if random.random() < self.uncoditional_rate:
+                if random.random() < self.unconditional_rate:
                     cond_img = self._generate_unconditional_x_cond(batch_size=cond_img.shape[0], device=cond_img.device)
-            
-            cond_img = self.normalize(cond_img)  
-            
-            if cond_img.max() > 1 or cond_img.min() < -1:
-                print('Warning: cond_img is not normalized between -1 and 1'
-                    f'torch.unique(cond_img): {torch.unique(cond_img)}')
-        else:
-            cond_img = None
         
-        # Define noise step t    
+        # Normalize the conditional image to be between -1 and 1 
+        cond_img = self.normalize(cond_img)  
+        
+        if cond_img.max() > 1 or cond_img.min() < -1:
+            print('Warning: cond_img is not normalized between -1 and 1'
+                f'torch.unique(cond_img): {torch.unique(cond_img)}')
+        
+        # Define noise step t if not given    
         if t is None:
             min_t = default(min_t, 0)
             max_t = default(max_t, self.num_timesteps)
@@ -215,6 +273,7 @@ class ConditionalGaussianDiffusion(GaussianDiffusion):
             raise ValueError('DDPM must be in unconditional. Either in `also_unconditional` or `only_unconditional` mode')
         
         return x_cond
+
 
     def set_sampling_timesteps(self, sampling_timesteps):
         self.sampling_timesteps = sampling_timesteps

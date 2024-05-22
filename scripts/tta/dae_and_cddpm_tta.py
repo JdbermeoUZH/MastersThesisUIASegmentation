@@ -105,6 +105,7 @@ def preprocess_cmd_args() -> argparse.Namespace:
     parser.add_argument('--t_ddpm_range', type=float, nargs=2, help='Quantile range of t values for DDPM. Default: [0.2, 0.98]')       
     parser.add_argument('--t_sampling_strategy', type=str, help='Sampling strategy for t values. Default: uniform')
     parser.add_argument('--min_max_quantile', type=float, nargs=2, help='Quantile range for min max clipping. Default: [0.1, 0.975]')
+    parser.add_argument('--unconditional_rate', type=float, help='Rate of unconditional forward passes. Default: 0.0')
     parser.add_argument('--use_y_pred_for_ddpm_loss', type=parse_bool, help='Whether to use predicted segmentation as conditional for DDPM. Default: True')
     parser.add_argument('--use_y_gt_for_ddpm_loss', type=parse_bool, help='Whether to use ground truth segmetnation as conditional for DDPM. ONLY FOR DEBUGGING. Default: False')
     parser.add_argument('--detach_x_norm_from_ddpm_loss', type=parse_bool, help='Whether to detach x_norm from DDPM loss. Default: False')
@@ -259,13 +260,13 @@ if __name__ == '__main__':
     print('Loading segmentation model')
     cpt_type = 'checkpoint_best' if tta_config['load_best_cpt'] \
         else 'checkpoint_last'
-    cpt_fp = os.path.join(seg_dir, train_params_seg[cpt_type])
+    cpt_seg_fp = os.path.join(seg_dir, train_params_seg[cpt_type])
     
     norm, seg, norm_state_source_domain = load_norm_and_seg_from_configs_and_cpt(
         n_classes = n_classes,
         model_params_norm = model_params_norm,
         model_params_seg = model_params_seg,
-        cpt_fp = cpt_fp,
+        cpt_fp = cpt_seg_fp,
         device = device,
         return_norm_state_dict=True,
     )
@@ -274,7 +275,7 @@ if __name__ == '__main__':
     min_max_clip_q = tta_config[tta_mode]['min_max_quantile']   
     
     norm_sd_statistics = load_domain_statistiscs(
-        cpt_fp = cpt_fp,
+        cpt_fp = cpt_seg_fp,
         frozen = True,
         momentum = 0.96,
         min_max_clip_q=min_max_clip_q,
@@ -290,14 +291,20 @@ if __name__ == '__main__':
     )
 
     # DDPM
+    sampling_timesteps          = tta_config[tta_mode]['sampling_timesteps'] 
+    unconditional_rate          = tta_config[tta_mode]['unconditional_rate']
+    cpt_ddpm_fp                 = os.path.join(ddpm_dir, tta_config[tta_mode]['cpt_fn'])
+    img_size                    = dataset_config[dataset]['dim'][-1]
+    
     ddpm = load_cddpm_from_configs_and_cpt(
         train_ddpm_cfg           = train_params_ddpm,
         model_ddpm_cfg           = model_params_ddpm,
         n_classes                = n_classes,
-        cpt_fp                   = os.path.join(ddpm_dir, tta_config[tta_mode]['cpt_fn']),
-        img_size                 = dataset_config[dataset]['dim'][-1],
+        cpt_fp                   = cpt_ddpm_fp,
+        img_size                 = img_size,
         device                   = device,
-        sampling_timesteps       = tta_config[tta_mode]['sampling_timesteps'],
+        sampling_timesteps       = sampling_timesteps,
+        unconditional_rate       = unconditional_rate
     )
    
     # Define the TTADAE object that does the test time adapatation
@@ -313,6 +320,7 @@ if __name__ == '__main__':
     subset_bn_layers            = tta_config[tta_mode]['subset_bn_layers']
     track_running_stats_bn      = tta_config[tta_mode]['track_running_stats_bn']
     
+    # Supress background of x_norm
     seg_with_bg_supp            = tta_config[tta_mode]['seg_with_bg_supp']
     
     # Adaptive beta for DDPM loss
@@ -320,7 +328,7 @@ if __name__ == '__main__':
     adaptive_beta_momentum      = tta_config[tta_mode]['adaptive_beta_momentum']
 
     # Regularization btw x and x_norm
-    x_norm_regularization_eta  = tta_config[tta_mode]['x_norm_regularization_eta']
+    x_norm_regularization_eta   = tta_config[tta_mode]['x_norm_regularization_eta']
     x_norm_regularization_loss  = tta_config[tta_mode]['x_norm_regularization_loss']
     
     # How the segmentation is evaluated
@@ -337,6 +345,8 @@ if __name__ == '__main__':
     use_atlas_only_for_init     = tta_config[tta_mode]['use_atlas_only_for_init']
     
     # DDPM-TTA params    
+    ddpm_loss                   = tta_config[tta_mode]['ddpm_loss']
+    min_max_intenities_norm_imgs= tta_config[tta_mode]['min_max_intenities_norm_imgs']
     minibatch_size_ddpm         = tta_config[tta_mode]['minibatch_size_ddpm']
     frac_vol_diffusion_tta      = tta_config[tta_mode]['frac_vol_diffusion_tta']
     t_ddpm_range                = tta_config[tta_mode]['t_ddpm_range']
@@ -371,6 +381,7 @@ if __name__ == '__main__':
         manually_norm_img_before_seg_tta=manually_norm_img_before_seg_tta,
         normalization_strategy  = normalization_strategy,
         rescale_factor          = rescale_factor,
+        ddpm_loss               = ddpm_loss,
         ddpm_loss_beta          = ddpm_loss_beta,
         use_adaptive_beta       = use_adaptive_beta,
         adaptive_beta_momentum  = adaptive_beta_momentum,
@@ -379,13 +390,13 @@ if __name__ == '__main__':
         frac_vol_diffusion_tta  = frac_vol_diffusion_tta,
         t_ddpm_range            = t_ddpm_range,
         t_sampling_strategy     = t_sampling_strategy,
+        min_max_intenities_norm_imgs=min_max_intenities_norm_imgs,
         use_y_pred_for_ddpm_loss=use_y_pred_for_ddpm_loss,
         use_y_gt_for_ddpm_loss  = use_y_gt_for_ddpm_loss,
         detach_x_norm_from_ddpm_loss=detach_x_norm_from_ddpm_loss,
         use_ddpm_after_step     = use_ddpm_after_step,
         use_ddpm_after_dice     = use_ddpm_after_dice,
         warmup_steps_for_ddpm_loss=warmup_steps_for_ddpm_loss,
-        sampling_timesteps      = sampling_timesteps,
         x_norm_regularization_loss_eta = x_norm_regularization_eta,
         x_norm_regularization_loss = x_norm_regularization_loss,
         wandb_log               = wandb_log,
