@@ -142,9 +142,9 @@ dae_and_ddpm:
   min_max_quantile: [0.1, 0.975]
     
   # Supress background x_norm 
-  seg_with_bg_supp: False
+  bg_supp_x_norm: False
   bg_suppression_opts:
-    type: none                              # none, fixed_value, random_value
+    type: fixed_value                              # none, fixed_value, random_value
     bg_value: -0.5
     bg_value_min: -0.5
     bg_value_max: 1

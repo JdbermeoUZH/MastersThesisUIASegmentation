@@ -16,6 +16,7 @@ from tta_uia_segmentation.src.models import ConditionalGaussianDiffusion
 from tta_uia_segmentation.src.utils.io import write_to_csv
 from tta_uia_segmentation.src.utils.utils import get_seed, stratified_sampling
 from tta_uia_segmentation.src.dataset import DatasetInMemory, utils as du
+from tta_uia_segmentation.src.models.normalization import background_suppression
 
 
 def subtract_gradients_dicts(gradients_old: defaultdict, gradients_new: dict) -> dict:
@@ -363,8 +364,11 @@ class TTADAEandDDPM(TTADAE):
                     self.x_norm_grads_ddpm_loss = defaultdict(int)
                     self.x_norm_grads_x_norm_reg_loss = defaultdict(int)
 
-                x = x.to(device).float()                               
+                x = x.to(device).float()                 
                 n_samples += x.shape[0]
+                
+                if self.bg_supp_x_norm: 
+                    bg_mask = bg_mask.to(device)
                 
                 # Update the statistics of the target domain in the current step
                 if self.update_norm_td_statistics:
@@ -444,6 +448,7 @@ class TTADAEandDDPM(TTADAE):
                         x=x,
                         x_cond=x_cond,
                         t=t,
+                        bg_mask=bg_mask,
                         device=device,  
                         ddpm_reweigh_factor=ddpm_loss_beta * ddpm_reweigh_factor,
                         max_int_norm_imgs=self.norm_td_statistics.max,
@@ -459,6 +464,7 @@ class TTADAEandDDPM(TTADAE):
                             x=x,
                             x_cond=x_cond,
                             t=t,
+                            bg_mask=bg_mask,
                             device=device,  
                             ddpm_reweigh_factor= -1 * ddpm_uncond_loss_gamma * ddpm_reweigh_factor,
                             max_int_norm_imgs=self.norm_td_statistics.max,
@@ -478,6 +484,9 @@ class TTADAEandDDPM(TTADAE):
                     x_norm_grads_old = self._get_gradients_x_norm()
                     
                     x_norm = self.norm(x)
+                    if self.bg_supp_x_norm:
+                        x_norm = background_suppression(x_norm, bg_mask, self.bg_suppression_opts_tta)
+                        
                     x_norm_regularization_loss = self.x_norm_regularization_loss_eta * \
                         self.x_norm_regularization_loss(x_norm, x)
                         
@@ -591,10 +600,15 @@ class TTADAEandDDPM(TTADAE):
         
         if update_norm_td_statistics is None:
             update_norm_td_statistics = self.update_norm_td_statistics
-                
+        
+        mask = None    
         for i in range(0, x.shape[0], minibatch_size):
             t_mb = t[i: i + minibatch_size] if t is not None else None
             x_norm_mb = self.norm(x[i: i + minibatch_size])
+            bg_mask_mb = bg_mask[i: i + minibatch_size]
+            
+            if self.bg_supp_x_norm:    
+                x_norm_mb = background_suppression(x_norm_mb, bg_mask_mb, self.bg_suppression_opts_tta)
             
             if use_unconditional_ddpm:
                 x_cond_mb = self.ddpm._generate_unconditional_x_cond(batch_size=minibatch_size, device=device)
@@ -603,7 +617,7 @@ class TTADAEandDDPM(TTADAE):
                 if x_cond is None:
                     # Use predicted segmentation mask for the DDPM loss
                     _, x_cond_mb, _ = self.forward_pass_seg(
-                        x_norm=x_norm_mb, bg_mask=bg_mask, 
+                        x_norm=x_norm_mb, bg_mask=bg_mask_mb, 
                         bg_suppression_opts=self.bg_suppression_opts_tta, 
                         device=device
                     )
@@ -630,7 +644,7 @@ class TTADAEandDDPM(TTADAE):
                     t_mb,
                     min_t=self.min_t_diffusion_tta,
                     max_t=self.max_t_diffusion_tta,
-                    w_clf_free=self.classifier_free_guidance_weight,
+                    w_clf_free=self.classifier_free_guidance_weight
                 )
             
             elif self.ddpm_loss in ['sds', 'dds', 'pds']:
@@ -641,7 +655,8 @@ class TTADAEandDDPM(TTADAE):
                     type=self.ddpm_loss,
                     min_t=self.min_t_diffusion_tta,
                     max_t=self.max_t_diffusion_tta,
-                    w_clf_free=self.classifier_free_guidance_weight
+                    w_clf_free=self.classifier_free_guidance_weight,
+                    mask=mask,
                 )
     
             else:

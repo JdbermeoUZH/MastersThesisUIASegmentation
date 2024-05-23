@@ -70,7 +70,7 @@ class TTADAE:
         manually_norm_img_before_seg_tta: bool = False,
         manually_norm_img_before_seg_val: bool = False,
         normalization_strategy: Literal['standardize', 'min_max', 'histogram_eq'] = 'standardize',
-        seg_with_bg_supp: bool = False,
+        bg_supp_x_norm: bool = False,
         wandb_log: bool = False,
         device: str = 'cuda',
         ) -> None:
@@ -97,7 +97,7 @@ class TTADAE:
         self.norm_td_statistics.precalculated_quantiles = None
                 
         # Whether the segmentation model uses background suppression of input images
-        self.seg_with_bg_supp = seg_with_bg_supp
+        self.bg_supp_x_norm = bg_supp_x_norm
         self.bg_suppression_opts = bg_suppression_opts
         self.bg_suppression_opts_tta = bg_suppression_opts_tta
         
@@ -356,7 +356,7 @@ class TTADAE:
         if manually_norm_img_before_seg:
             x_norm = self._normalize_image_intensities_to_sd(x_norm)
         
-        if self.seg_with_bg_supp:
+        if self.bg_supp_x_norm:
             bg_mask = bg_mask.to(device)
             x_norm_bg_supp = background_suppression(x_norm, bg_mask, bg_suppression_opts)
             mask, logits = self.seg(x_norm_bg_supp)
