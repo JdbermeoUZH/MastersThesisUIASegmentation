@@ -97,7 +97,7 @@ def preprocess_cmd_args() -> argparse.Namespace:
     parser.add_argument('--normalization_strategy', type=str, help='Normalization strategy to use. Default: None', choices=['standardize', 'min_max', None])
     
     # Seg model params
-    parser.add_argument('--seg_with_bg_supp', type=parse_bool, help='Whether to use background suppression for segmentation. Default: True')
+    parser.add_argument('--bg_supp_x_norm', type=parse_bool, help='Whether to use background suppression for segmentation. Default: True')
     
     # DDPM params
     parser.add_argument('--ddpm_dir', type=str, help='Path to directory where DDPM checkpoints are saved')
@@ -322,7 +322,7 @@ if __name__ == '__main__':
     track_running_stats_bn      = tta_config[tta_mode]['track_running_stats_bn']
     
     # Supress background of x_norm
-    seg_with_bg_supp            = tta_config[tta_mode]['seg_with_bg_supp']
+    bg_supp_x_norm            = tta_config[tta_mode]['bg_supp_x_norm']
     
     # Adaptive beta for DDPM loss
     use_adaptive_beta           = tta_config[tta_mode]['use_adaptive_beta']
@@ -376,7 +376,7 @@ if __name__ == '__main__':
         finetune_bn             = finetune_bn,
         track_running_stats_bn  = track_running_stats_bn,
         subset_bn_layers        = subset_bn_layers,
-        seg_with_bg_supp        = seg_with_bg_supp,
+        bg_supp_x_norm          = bg_supp_x_norm,
         dae_loss_alpha          = dae_loss_alpha,
         alpha                   = alpha,
         beta                    = beta,

@@ -261,7 +261,7 @@ if __name__ == '__main__':
         atlas                   = atlas,
         n_classes               = n_classes,
         rescale_factor          = rescale_factor,
-        seg_with_bg_supp        = seg_with_bg_supp,
+        bg_supp_x_norm        = seg_with_bg_supp,
         bg_suppression_opts     = bg_suppression_opts, 
         bg_suppression_opts_tta = bg_suppression_opts_tta,
         loss_func               = DiceLoss(),
