@@ -88,18 +88,18 @@ dae_and_ddpm:
   # DDPM loss params
   use_adaptive_beta: True
   adaptive_beta_momentum: 0.8
-  classifier_free_guidance_weight: 0.0     # 30, or 100
+  classifier_free_guidance_weight: 100      # 30, or 100
   use_y_pred_for_ddpm_loss: True            # If False, and use_y_gt_for_ddpm_loss is False, then it will use the pseudo label from the DAE
   use_y_gt_for_ddpm_loss: False             # Only true for debugging
   detach_x_norm_from_ddpm_loss: False       # Use only gradients on the segmentation
 
   # Loss functions
-  ddpm_loss: jacobian                       # jacobian, ssd, dds, pds 
-  x_norm_regularization_loss: null          # null, sq_grad, zncc, rsq_sift, sift, mi 
+  ddpm_loss: sds                            # jacobian, ssd, dds, pds 
+  x_norm_regularization_loss: sq_grad       # null, sq_grad, zncc, rsq_sift, sift, mi 
 
   # Finetune batch normalization layers
   finetune_bn: False
-  track_running_stats_bn: False
+  track_running_stats_bn: True
   subset_bn_layers: null                    # [0, 1]. If null, it will use all the layers
 
   # DAE term parameters  

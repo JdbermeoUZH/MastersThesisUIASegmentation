@@ -102,6 +102,7 @@ def preprocess_cmd_args() -> argparse.Namespace:
     # DDPM params
     parser.add_argument('--ddpm_dir', type=str, help='Path to directory where DDPM checkpoints are saved')
     parser.add_argument('--cpt_fn', type=str, help='Name of checkpoint file to load for DDPM')
+    parser.add_argument('--ddpm_loss', type=str, help='Type of DDPM loss. Default: None', choices=['jacobian', 'sds', 'dds', 'pds', None])
     parser.add_argument('--t_ddpm_range', type=float, nargs=2, help='Quantile range of t values for DDPM. Default: [0.2, 0.98]')       
     parser.add_argument('--t_sampling_strategy', type=str, help='Sampling strategy for t values. Default: uniform')
     parser.add_argument('--min_max_quantile', type=float, nargs=2, help='Quantile range for min max clipping. Default: [0.1, 0.975]')
@@ -358,7 +359,11 @@ if __name__ == '__main__':
     use_ddpm_after_step         = tta_config[tta_mode]['use_ddpm_after_step']
     use_ddpm_after_dice         = tta_config[tta_mode]['use_ddpm_after_dice']
     warmup_steps_for_ddpm_loss  = tta_config[tta_mode]['warmup_steps_for_ddpm_loss']
-        
+    
+    # Only use adaptive beta if either of the DDPM losses are used along with the DAE loss
+    use_adaptive_beta = use_adaptive_beta and \
+        ((ddpm_loss_beta > 0 or ddpm_uncond_loss_gamma > 0) and dae_loss_alpha > 0)
+    
     tta = TTADAEandDDPM(
         norm                    = norm,
         seg                     = seg,
@@ -442,9 +447,10 @@ if __name__ == '__main__':
                 
     if ddpm_loss_beta > 0:
         print(f'Using DDPM loss with weight: {ddpm_loss_beta}')
+        print(f'DDPM loss type: {ddpm_loss}')
     
-    if use_adaptive_beta:
-        print(f'Using adaptive beta for DDPM loss with momentum: {adaptive_beta_momentum}')
+        if use_adaptive_beta:
+            print(f'Using adaptive beta for DDPM loss with momentum: {adaptive_beta_momentum}')
             
     if ddpm_uncond_loss_gamma > 0 and ddpm.also_unconditional:
         if classifier_free_guidance_weight is None:
@@ -452,6 +458,9 @@ if __name__ == '__main__':
         else:
             print(f'Using DDPM unconditional loss with weight: {ddpm_uncond_loss_gamma} '
                   f'in classifier free guidance mode with weight: {classifier_free_guidance_weight}')
+            
+        if use_adaptive_beta:
+            print(f'Using adaptive beta for DDPM loss with momentum: {adaptive_beta_momentum}')
             
     if x_norm_regularization_eta > 0:
         print(f'Using x_norm regularization with eta: {x_norm_regularization_eta}'

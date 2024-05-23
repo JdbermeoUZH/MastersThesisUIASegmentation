@@ -1,12 +1,13 @@
 import random
 from tqdm import tqdm
-from typing import Optional
+from typing import Optional, Literal
+from functools import partial
 
 import torch
 import torch.nn.functional as F
 from denoising_diffusion_pytorch import GaussianDiffusion
 from denoising_diffusion_pytorch.denoising_diffusion_pytorch import (
-    default, reduce, rearrange, extract)
+    default, reduce, rearrange, extract, identity, ModelPrediction)
 
 
 class ConditionalGaussianDiffusion(GaussianDiffusion):
@@ -37,6 +38,31 @@ class ConditionalGaussianDiffusion(GaussianDiffusion):
         if not only_unconditional:
             assert self.model.condition, 'Unet model must be defined in conditional mode' 
                 
+    def model_predictions(self, x, t, x_cond, clip_x_start = False, rederive_pred_noise = False):
+        model_output = self.model(x, t, x_cond)
+        maybe_clip = partial(torch.clamp, min = -1., max = 1.) if clip_x_start else identity
+
+        if self.objective == 'pred_noise':
+            pred_noise = model_output
+            x_start = self.predict_start_from_noise(x, t, pred_noise)
+            x_start = maybe_clip(x_start)
+
+            if clip_x_start and rederive_pred_noise:
+                pred_noise = self.predict_noise_from_start(x, t, x_start)
+
+        elif self.objective == 'pred_x0':
+            x_start = model_output
+            x_start = maybe_clip(x_start)
+            pred_noise = self.predict_noise_from_start(x, t, x_start)
+
+        elif self.objective == 'pred_v':
+            v = model_output
+            x_start = self.predict_start_from_v(x, t, v)
+            x_start = maybe_clip(x_start)
+            pred_noise = self.predict_noise_from_start(x, t, x_start)
+
+        return ModelPrediction(pred_noise, x_start)
+    
     def p_losses_conditioned_on_img(self, x_start, t, x_cond, w_clf_free: float = 0,
                                     noise=None, offset_noise_strength=None):
 
@@ -85,7 +111,99 @@ class ConditionalGaussianDiffusion(GaussianDiffusion):
         loss = loss * extract(self.loss_weight, t, loss.shape)
         return loss.mean()
     
-    def score_distillation_sampling(self, x_start, t, x_cond, w_clf_free: float = 0):
+    
+    def distillation_loss(
+        self,
+        img,
+        cond_img,
+        t: Optional[torch.Tensor] = None,
+        type: Literal['sds', 'dds', 'pds'] = 'sds',
+        min_t: Optional[int] = None, max_t: Optional[int] = None, 
+        *args, **kwargs
+        ):
+        
+        if not self.only_unconditional:
+            assert cond_img.shape[-2:] == img.shape[-2:], 'cond_img and img must have the same Height and Width'
+            
+        img = self.normalize(img)
+        if img.max() > 1 or img.min() < -1:
+            print('Warning: img is not normalized between -1 and 1'
+                  f'max_value: {img.max()}, min_value: {img.min()}')
+        
+        # Normalize the conditional image to be between -1 and 1 
+        cond_img = self.normalize(cond_img)  
+        
+        if cond_img.max() > 1 or cond_img.min() < -1:
+            print('Warning: cond_img is not normalized between -1 and 1'
+                f'torch.unique(cond_img): {torch.unique(cond_img)}')
+        
+        # Define noise step t if not given    
+        if t is None:
+            min_t = default(min_t, 0)
+            max_t = default(max_t, self.num_timesteps)
+            b = img.shape[0]
+            t = torch.randint(min_t, max_t, (b,), device=img.device).long()
+        else:
+            if min_t is not None and max_t is not None:
+                assert (min_t <= t).all() and (t <= max_t).all(), f't must be between {min_t} and {max_t}, but got {t}'
+                
+        if type == 'sds':
+            return self.score_distillation_sampling(img, cond_img, t, *args, **kwargs)
+        elif type == 'dds':
+            return self.delta_denoising_score(img, t, cond_img, *args, **kwargs)
+        elif type == 'pds':
+            return self.posterior_distillation_sampling(img, t, cond_img, *args, **kwargs)
+        else:
+            raise ValueError(f'Unknown distillation loss type: {type}')
+    
+    
+    def score_distillation_sampling(self, x_start, x_cond, t, w_clf_free: float = 0, mask = None, noise = None):
+        """
+        Based on implementation from: https://github.com/google/prompt-to-prompt/blob/main/DDS_zeroshot.ipynb
+         and https://github.com/ashawkey/stable-dreamfusion/blob/5550b91862a3af7842bb04875b7f1211e5095a63/assets/advanced.md    
+        
+        """
+        
+        with torch.inference_mode():
+            noise = default(noise, lambda: torch.randn_like(x_start))
+
+            # latent t
+            x_t = self.q_sample(x_start = x_start, t = t, noise = noise)
+
+            # Get model predictions
+            model_preds = self.model_predictions(x_t, t, x_cond) 
+            pred_noise = model_preds.pred_noise
+        
+            # calculate unconditional score
+            if w_clf_free > 0:
+                assert self.also_unconditional, 'w_clf_free is only available when also_unconditional is True'
+                assert not self.only_unconditional, 'w_clf_free only makes sense when the model was trained in conditional and unconditional mode'
+
+                x_unconditional = self._generate_unconditional_x_cond(batch_size=x_cond.shape[0], device=x_cond.device)
+                model_preds_unconditional = self.model_predictions(x_t, t, x_unconditional)
+                pred_noise = (1 + w_clf_free) * pred_noise - w_clf_free * model_preds_unconditional.pred_noise
+            
+            # Calculate SDS term
+            score = (pred_noise - noise)
+            score = torch.nan_to_num(score, nan = 0.0, posinf = 0.0, neginf = 0.0)
+            score = score * mask if mask is not None else score
+        
+        # Form an expression that will have as gradients: score * sqrt_alphas_cumprod_t for x and score for x_cond
+        x_start = extract(self.sqrt_alphas_cumprod, t, x_start.shape) * x_start 
+        
+        if self.condition_by_concat:
+            x = torch.cat([x_start, x_cond], dim = 1)
+        else:
+            # If not, it means we are conditioning by multiplication
+            x = x_start * x_cond
+        
+        loss = score.clone() * x
+        loss = reduce(loss, 'b ... -> b', 'mean')
+            
+        return loss.mean()
+        
+        
+    def delta_denoising_score(self, x_start, t, x_cond, sampled_noise_ref: tuple[torch.Tensor], w_clf_free: float = 0):
         if not self.only_unconditional:
             assert x_cond.shape[-2:] == x_start.shape[-2:], 'x_cond and x_start must have the same Height and Width'
         
@@ -94,40 +212,24 @@ class ConditionalGaussianDiffusion(GaussianDiffusion):
         # noise sample
         x_t = self.q_sample(x_start = x_start, t = t, noise = noise)
 
-        # predict and take gradient step
-        model_out = self.model(x_t, t, x_cond)
+        # Get model predictions
+        model_preds = self.model_predictions(x_t, t, x_cond) 
+        pred_noise = model_preds.pred_noise
         
         # calculate unconditional score
         if w_clf_free > 0:
             assert self.also_unconditional, 'w_clf_free is only available when also_unconditional is True'
             assert not self.only_unconditional, 'w_clf_free only makes sense when the model was trained in conditional and unconditional mode'
             x_unconditional = self._generate_unconditional_x_cond(batch_size=x_cond.shape[0], device=x_cond.device)
-            model_out_unconditional = self.model(x_t, t, x_unconditional)
-
-        if self.objective == 'pred_noise':
-            target = noise
+            model_preds_unconditional = self.model_predictions(x_t, t, x_unconditional)
             
-        elif self.objective == 'pred_x0':
-            target = x_start
-       
-        elif self.objective == 'pred_v':
-            # Obtain noise_t 
-            v = self.predict_v(x_start, t, noise)
-            target = v
-       
-        else:
-            raise ValueError(f'unknown objective {self.objective}')
-
-        loss = F.mse_loss(model_out, target, reduction = 'none')
+            pred_noise = (1 + w_clf_free) * pred_noise - w_clf_free * model_preds_unconditional.pred_noise
+            
+        loss = F.mse_loss(pred_noise, sampled_noise_ref[t], reduction = 'none')
         loss = reduce(loss, 'b ... -> b', 'mean')
 
         loss = loss * extract(self.loss_weight, t, loss.shape)
         return loss.mean()
-    
-        raise NotImplementedError('score_distillation_sampling is not implemented yet')
-    
-    def delta_denoising_score(self, x_start, t, x_cond, sampled_noise_ref: tuple[torch.Tensor], w_clf_free: float = 0):
-        raise NotImplementedError('score_distillation_sampling is not implemented yet')
     
     def posterior_distillation_sampling(self, x_start, t, x_cond, sampled_x_ref: tuple[torch.Tensor], w_clf_free: float = 0):
         raise NotImplementedError('score_distillation_sampling is not implemented yet')

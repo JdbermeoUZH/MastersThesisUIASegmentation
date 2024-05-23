@@ -60,7 +60,7 @@ class TTADAEandDDPM(TTADAE):
         track_running_stats_bn: bool = False,
         subset_bn_layers: Optional[list[str]] = None,
         dae_loss: Optional[callable] = DiceLoss(),
-        ddpm_loss: Literal['jacobian', 'sds', 'ddds', 'pds'] = 'jacobian',
+        ddpm_loss: Literal['jacobian', 'sds', 'dds', 'pds'] = 'jacobian',
         x_norm_regularization_loss: Optional[Literal['sift', 'rsq_sift', 'zncc', 'mi', 'sq_grad']] = 'rsq_grad',
         x_norm_kwargs: dict = {},
         use_adaptive_beta: bool = False,
@@ -623,8 +623,6 @@ class TTADAEandDDPM(TTADAE):
                 print(f'WARNING: x_norm_mb.max()={x_norm_mb_ddpm.max()}, x_norm_mb.min()={x_norm_mb.min()}')
             
             # Calculate the DDPM loss and backpropagate
-            # TODO: 
-            # - Implement the 4 different strategies for the DDPM loss and add conditional free guidance
             if self.ddpm_loss == 'jacobian':
                 ddpm_loss = ddpm_reweigh_factor * self.ddpm(
                     x_norm_mb_ddpm, 
@@ -635,17 +633,19 @@ class TTADAEandDDPM(TTADAE):
                     w_clf_free=self.classifier_free_guidance_weight,
                 )
             
-            elif self.ddpm_loss == 'sds':
-                raise NotImplementedError('SDS loss not implemented')
-            
-            elif self.ddpm_loss == 'ddds':
-                raise NotImplementedError('DDDS loss not implemented')
-            
-            elif self.ddpm_loss == 'pds':
-                raise NotImplementedError('PDS loss not implemented')
-            
+            elif self.ddpm_loss in ['sds', 'dds', 'pds']:
+                ddpm_loss = ddpm_reweigh_factor * self.ddpm.distillation_loss(
+                    x_norm_mb_ddpm, 
+                    x_cond_mb,
+                    t_mb,
+                    type=self.ddpm_loss,
+                    min_t=self.min_t_diffusion_tta,
+                    max_t=self.max_t_diffusion_tta,
+                    w_clf_free=self.classifier_free_guidance_weight
+                )
+    
             else:
-                raise ValueError(f'Invalid DDPM loss: {self.ddpm_loss}, options are: jacobian, sds, ddds, pds')
+                raise ValueError(f'Invalid DDPM loss: {self.ddpm_loss}, options are: jacobian, sds, dds, pds')
             
             ddpm_loss.backward()
             
