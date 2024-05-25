@@ -11,13 +11,14 @@ stop:  null       # Index of the test dataset to stop at
 
 seg_dir: /scratch_net/biwidl319/jbermeo/data/models/brain/segmentation/hcp_t1/no_bg_supp_norm_w_3x3_conv
 load_best_cpt: True
+classes_of_interest: null
 
 num_workers: 0
 device: cuda
 seed: 0
 
 bg_suppression_opts:
-  type: none  # possible values: none, fixed_value, random_value
+  type: fixed_value  # possible values: none, fixed_value, random_value
   bg_value: -0.5
   bg_value_min: -0.5
   bg_value_max: 1
@@ -86,7 +87,7 @@ dae_and_ddpm:
   x_norm_regularization_eta: 0.0
 
   # DDPM loss params
-  use_adaptive_beta: True
+  use_adaptive_beta: False
   adaptive_beta_momentum: 0.8
   classifier_free_guidance_weight: 100      # 30, or 100
   use_y_pred_for_ddpm_loss: True            # If False, and use_y_gt_for_ddpm_loss is False, then it will use the pseudo label from the DAE
@@ -136,15 +137,17 @@ dae_and_ddpm:
   const_aug_per_volume: False
 
   # Normalize intensities before segmentation
-  manually_norm_img_before_seg_val: False
+  manually_norm_img_before_seg_val: True
   manually_norm_img_before_seg_tta: False
   normalization_strategy: standardize       # standardize, min_max, null
   min_max_quantile: [0.1, 0.975]
-    
+
   # Supress background x_norm 
-  bg_supp_x_norm: False
+  bg_supp_x_norm_dae: True
+  bg_supp_x_norm_ddpm: False
+  bg_supp_x_norm_eval: False
   bg_suppression_opts:
-    type: fixed_value                              # none, fixed_value, random_value
+    type: fixed_value                       # none, fixed_value, random_value
     bg_value: -0.5
     bg_value_min: -0.5
     bg_value_max: 1

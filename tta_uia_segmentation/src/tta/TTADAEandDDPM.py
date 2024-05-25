@@ -74,6 +74,7 @@ class TTADAEandDDPM(TTADAE):
         detach_x_norm_from_ddpm_loss: bool = False,
         use_y_pred_for_ddpm_loss: bool = False,
         use_y_gt_for_ddpm_loss: bool = False,    # Of course use only for debugging
+        bg_supp_x_norm_ddpm: bool = False,
         use_ddpm_after_step: Optional[int] = None,
         use_ddpm_after_dice: Optional[float] = None,
         warmup_steps_for_ddpm_loss: Optional[int] = None,
@@ -122,6 +123,7 @@ class TTADAEandDDPM(TTADAE):
         self.norm_td_statistics.max = min_max_intenities_norm_imgs[1] 
          
         # Optimization loop parameters for the DDPM loss
+        self.bg_supp_x_norm_ddpm = bg_supp_x_norm_ddpm
         self.minibatch_size_ddpm = minibatch_size_ddpm
         self.frac_vol_diffusion_tta = frac_vol_diffusion_tta
         
@@ -367,7 +369,7 @@ class TTADAEandDDPM(TTADAE):
                 x = x.to(device).float()                 
                 n_samples += x.shape[0]
                 
-                if self.bg_supp_x_norm: 
+                if self.bg_supp_x_norm_dae or self.bg_supp_x_norm_ddpm: 
                     bg_mask = bg_mask.to(device)
                 
                 # Update the statistics of the target domain in the current step
@@ -384,7 +386,7 @@ class TTADAEandDDPM(TTADAE):
                     x_norm = self.norm(x)
                     
                     _, mask, _ = self.forward_pass_seg(
-                        x, bg_mask, self.bg_suppression_opts_tta, device,
+                        x, bg_mask, self.bg_supp_dae, self.bg_suppression_opts_tta, device,
                         manually_norm_img_before_seg=self.manually_norm_img_before_seg_tta
                     )
                     
@@ -484,8 +486,6 @@ class TTADAEandDDPM(TTADAE):
                     x_norm_grads_old = self._get_gradients_x_norm()
                     
                     x_norm = self.norm(x)
-                    if self.bg_supp_x_norm:
-                        x_norm = background_suppression(x_norm, bg_mask, self.bg_suppression_opts_tta)
                         
                     x_norm_regularization_loss = self.x_norm_regularization_loss_eta * \
                         self.x_norm_regularization_loss(x_norm, x)
@@ -601,13 +601,12 @@ class TTADAEandDDPM(TTADAE):
         if update_norm_td_statistics is None:
             update_norm_td_statistics = self.update_norm_td_statistics
         
-        mask = None    
         for i in range(0, x.shape[0], minibatch_size):
             t_mb = t[i: i + minibatch_size] if t is not None else None
             x_norm_mb = self.norm(x[i: i + minibatch_size])
             bg_mask_mb = bg_mask[i: i + minibatch_size]
             
-            if self.bg_supp_x_norm:    
+            if self.bg_supp_x_norm_ddpm:    
                 x_norm_mb = background_suppression(x_norm_mb, bg_mask_mb, self.bg_suppression_opts_tta)
             
             if use_unconditional_ddpm:
@@ -655,15 +654,13 @@ class TTADAEandDDPM(TTADAE):
                     type=self.ddpm_loss,
                     min_t=self.min_t_diffusion_tta,
                     max_t=self.max_t_diffusion_tta,
-                    w_clf_free=self.classifier_free_guidance_weight,
-                    mask=mask,
+                    w_clf_free=self.classifier_free_guidance_weight
                 )
     
             else:
                 raise ValueError(f'Invalid DDPM loss: {self.ddpm_loss}, options are: jacobian, sds, dds, pds')
-            
+
             ddpm_loss.backward()
-            
             ddpm_loss_value += ddpm_loss.detach()
                                     
         return ddpm_loss_value
@@ -757,7 +754,7 @@ class TTADAEandDDPM(TTADAE):
         gradients_dict = defaultdict(int)
         for name, param in self.norm.named_parameters():
             if param.grad is not None:
-                gradients_dict[name] = param.grad.clone().detach()  # Store gradients and detach to avoid memory leaks
+                gradients_dict[name] = param.grad.detach().clone()  # Store gradients and detach to avoid memory leaks
                 
         return gradients_dict
     
@@ -786,6 +783,8 @@ class TTADAEandDDPM(TTADAE):
         last_layer_name = [name for name, _ in self.norm.named_parameters() if 'weight' in name][-1]
         norm_x_norm_out_grad_dae_loss_current = torch.norm(self.x_norm_grads_dae_loss[last_layer_name])
         norm_x_norm_out_grad_ddpm_loss_current = torch.norm(self.x_norm_grads_ddpm_loss[last_layer_name])   
+        
+        # TODO: Divide by the adaptive gradient before updating the adaptive beta
         
         # Calculate EMA norms of the gradients of the last layer of the normalizer wrt the DAE and DDPM loss
         if self.norm_x_norm_out_grad_dae_loss is None:

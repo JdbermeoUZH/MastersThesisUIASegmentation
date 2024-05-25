@@ -65,12 +65,14 @@ class TTADAE:
         learning_rate: float = 1e-3,
         alpha: float = 1.0,
         beta: float = 0.25,
+        classes_of_interest: Optional[list[int]] = None,
         use_atlas_only_for_init: bool = False,
         update_norm_td_statistics: bool = False,
         manually_norm_img_before_seg_tta: bool = False,
         manually_norm_img_before_seg_val: bool = False,
         normalization_strategy: Literal['standardize', 'min_max', 'histogram_eq'] = 'standardize',
-        bg_supp_x_norm: bool = False,
+        bg_supp_x_norm_dae: bool = False,
+        bg_supp_x_norm_eval: bool = False,
         wandb_log: bool = False,
         device: str = 'cuda',
         ) -> None:
@@ -82,6 +84,7 @@ class TTADAE:
         self.norm_sd_statistics = norm_sd_statistics
         
         self.n_classes = n_classes
+        self.classes_of_interest = classes_of_interest
         
         # Strategy for normalizing the image intensities to match those of the source domain
         self.normalization_strategy = normalization_strategy
@@ -97,7 +100,8 @@ class TTADAE:
         self.norm_td_statistics.precalculated_quantiles = None
                 
         # Whether the segmentation model uses background suppression of input images
-        self.bg_supp_x_norm = bg_supp_x_norm
+        self.bg_supp_x_norm_dae = bg_supp_x_norm_dae
+        self.bg_supp_x_norm_eval = bg_supp_x_norm_eval
         self.bg_suppression_opts = bg_suppression_opts
         self.bg_suppression_opts_tta = bg_suppression_opts_tta
         
@@ -254,7 +258,7 @@ class TTADAE:
                         self.norm_td_statistics.update_step_statistics(self.norm(x))
                 
                 _, mask, _ = self.forward_pass_seg(
-                    x, bg_mask, self.bg_suppression_opts_tta, device,
+                    x, bg_mask, self.bg_supp_x_norm_dae, self.bg_suppression_opts_tta, device,
                     manually_norm_img_before_seg=self.manually_norm_img_before_seg_tta)
 
                 if self.rescale_factor is not None:
@@ -344,6 +348,7 @@ class TTADAE:
         self, 
         x: Optional[torch.Tensor] = None,
         bg_mask: Optional[torch.Tensor] = None,
+        bg_supp_x_norm: bool = False,
         bg_suppression_opts: Optional[dict] = None,
         device: Optional[Union[str, torch.device]] = None,
         x_norm: Optional[torch.Tensor] = None,
@@ -356,7 +361,7 @@ class TTADAE:
         if manually_norm_img_before_seg:
             x_norm = self._normalize_image_intensities_to_sd(x_norm)
         
-        if self.bg_supp_x_norm:
+        if bg_supp_x_norm:
             bg_mask = bg_mask.to(device)
             x_norm_bg_supp = background_suppression(x_norm, bg_mask, bg_suppression_opts)
             mask, logits = self.seg(x_norm_bg_supp)
@@ -399,10 +404,12 @@ class TTADAE:
         iteration=-1,
         device: Optional[Union[str, torch.device]] = None,
         logdir: Optional[str] = None,
-        manually_norm_img_before_seg: Optional[bool] = None
+        manually_norm_img_before_seg: Optional[bool] = None,
+        classes_of_interest=None,
     ):
         bg_suppression_opts = bg_suppression_opts or self.bg_suppression_opts
         manually_norm_img_before_seg = manually_norm_img_before_seg or self.manually_norm_img_before_seg_val
+        classes_of_interest = classes_of_interest or self.classes_of_interest
         
         # Get original images
         x_original, y_original, bg = volume_dataset.dataset.get_original_images(index)
@@ -460,6 +467,7 @@ class TTADAE:
             for x, _, bg_mask in volume_dataloader:
                 x_norm_part, y_pred_part, _ = self.forward_pass_seg(
                     x.to(device), bg_mask.to(device), 
+                    self.bg_supp_x_norm_eval,
                     self.bg_suppression_opts, device,
                     manually_norm_img_before_seg=manual_norm_value
                     )
@@ -497,6 +505,19 @@ class TTADAE:
 
             dices, dices_fg = dice_score(y_pred, y_original, soft=False, reduction='none', smooth=1e-5)
             print(f'Iteration {iteration} - dice score' + log_suffix + f': {dices_fg.mean().item()}')
+            
+            if classes_of_interest is not None:
+                dices_classes_of_interest = dices[:, classes_of_interest, ...].nanmean().item()    
+                print(f'Iteration {iteration} - dice score classes of interest {classes_of_interest}' + 
+                      ' dices_classes_of_interest')
+                
+                if self.wandb_log:
+                    wandb.log(
+                        {
+                            f'dice_score_classes_of_interest/img_{index:03d}{log_suffix}': dices_classes_of_interest,
+                            'tta_step': iteration
+                        }
+                    )
             
             if self.wandb_log:
                 wandb.log(
@@ -624,6 +645,9 @@ class TTADAE:
         wandb.define_metric("tta_step")
         wandb.define_metric('dice_score_fg/*', step_metric='tta_step')
         wandb.define_metric('tta_loss/*', step_metric='tta_step')
+        
+        if self.classes_of_interest is not None:
+            wandb.define_metric('dice_score_classes_of_interest/*', step_metric='tta_step')
 
     def _save_checkpoint(self, logdir: str, dataset_name: str, index: int) -> None:
         os.makedirs(os.path.join(logdir, 'checkpoints'), exist_ok=True)

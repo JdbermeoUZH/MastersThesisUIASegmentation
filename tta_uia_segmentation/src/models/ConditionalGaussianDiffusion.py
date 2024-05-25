@@ -121,7 +121,7 @@ class ConditionalGaussianDiffusion(GaussianDiffusion):
         min_t: Optional[int] = None, max_t: Optional[int] = None, 
         *args, **kwargs
         ):
-        
+                
         if not self.only_unconditional:
             assert cond_img.shape[-2:] == img.shape[-2:], 'cond_img and img must have the same Height and Width'
             
@@ -146,7 +146,7 @@ class ConditionalGaussianDiffusion(GaussianDiffusion):
         else:
             if min_t is not None and max_t is not None:
                 assert (min_t <= t).all() and (t <= max_t).all(), f't must be between {min_t} and {max_t}, but got {t}'
-                
+                  
         if type == 'sds':
             return self.score_distillation_sampling(img, cond_img, t, *args, **kwargs)
         elif type == 'dds':

@@ -97,7 +97,9 @@ def preprocess_cmd_args() -> argparse.Namespace:
     parser.add_argument('--normalization_strategy', type=str, help='Normalization strategy to use. Default: None', choices=['standardize', 'min_max', None])
     
     # Seg model params
-    parser.add_argument('--bg_supp_x_norm', type=parse_bool, help='Whether to use background suppression for segmentation. Default: True')
+    parser.add_argument('--bg_supp_x_norm_dae', type=parse_bool, help='Whether to use background suppression for DAE loss. Default: True')
+    parser.add_argument('--bg_supp_x_norm_ddpm', type=parse_bool, help='Whether to use background suppression for DDPM. Default: False')
+    parser.add_argument('--bg_supp_x_norm_eval', type=parse_bool, help='Whether to use background suppression for evaluation. Default: False')
     
     # DDPM params
     parser.add_argument('--ddpm_dir', type=str, help='Path to directory where DDPM checkpoints are saved')
@@ -322,7 +324,9 @@ if __name__ == '__main__':
     track_running_stats_bn      = tta_config[tta_mode]['track_running_stats_bn']
     
     # Supress background of x_norm
-    bg_supp_x_norm            = tta_config[tta_mode]['bg_supp_x_norm']
+    bg_supp_x_norm_dae          = tta_config[tta_mode]['bg_supp_x_norm_dae']
+    bg_supp_x_norm_ddpm         = tta_config[tta_mode]['bg_supp_x_norm_ddpm']
+    bg_supp_x_norm_eval         = tta_config[tta_mode]['bg_supp_x_norm_eval']
     
     # Adaptive beta for DDPM loss
     use_adaptive_beta           = tta_config[tta_mode]['use_adaptive_beta']
@@ -376,7 +380,9 @@ if __name__ == '__main__':
         finetune_bn             = finetune_bn,
         track_running_stats_bn  = track_running_stats_bn,
         subset_bn_layers        = subset_bn_layers,
-        bg_supp_x_norm          = bg_supp_x_norm,
+        bg_supp_x_norm_dae      = bg_supp_x_norm_dae,
+        bg_supp_x_norm_ddpm     = bg_supp_x_norm_ddpm,
+        bg_supp_x_norm_eval     = bg_supp_x_norm_eval,        
         dae_loss_alpha          = dae_loss_alpha,
         alpha                   = alpha,
         beta                    = beta,
