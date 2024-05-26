@@ -783,8 +783,7 @@ class TTADAEandDDPM(TTADAE):
         last_layer_name = [name for name, _ in self.norm.named_parameters() if 'weight' in name][-1]
         norm_x_norm_out_grad_dae_loss_current = torch.norm(self.x_norm_grads_dae_loss[last_layer_name])
         norm_x_norm_out_grad_ddpm_loss_current = torch.norm(self.x_norm_grads_ddpm_loss[last_layer_name])   
-        
-        # TODO: Divide by the adaptive gradient before updating the adaptive beta
+        norm_x_norm_out_grad_dae_loss_current *= (1 / self.adaptive_beta_momentum)  # Get gradient norm without the adaptive beta
         
         # Calculate EMA norms of the gradients of the last layer of the normalizer wrt the DAE and DDPM loss
         if self.norm_x_norm_out_grad_dae_loss is None:

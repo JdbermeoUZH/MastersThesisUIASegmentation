@@ -258,7 +258,6 @@ if __name__ == '__main__':
         model_ddpm_cfg=model_ddpm_cfg,
         n_classes=n_classes,  
         cpt_fp=os.path.join(args.ddpm_dir, args.cpt_fn),
-        img_size=img_size,
         device=device
         )
     ddpm.eval()

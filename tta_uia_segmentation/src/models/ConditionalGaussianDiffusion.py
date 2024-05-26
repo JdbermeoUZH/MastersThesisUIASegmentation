@@ -64,6 +64,7 @@ class ConditionalGaussianDiffusion(GaussianDiffusion):
         return ModelPrediction(pred_noise, x_start)
     
     def p_losses_conditioned_on_img(self, x_start, t, x_cond, w_clf_free: float = 0,
+                                    pixel_weights: Optional[torch.Tensor] = None, 
                                     noise=None, offset_noise_strength=None):
 
         if not self.only_unconditional:
@@ -89,7 +90,6 @@ class ConditionalGaussianDiffusion(GaussianDiffusion):
         if w_clf_free > 0:
             assert self.also_unconditional, 'w_clf_free is only available when also_unconditional is True'
             assert not self.only_unconditional, 'w_clf_free only makes sense when the model was trained in conditional and unconditional mode'
-            print('DEBUG: Delete me, using w_clf_free: ', w_clf_free) # TODO
             x_unconditional = self._generate_unconditional_x_cond(batch_size=x_cond.shape[0], device=x_cond.device)
             model_out_unconditional = self.model(x, t, x_unconditional)
             
@@ -106,6 +106,7 @@ class ConditionalGaussianDiffusion(GaussianDiffusion):
             raise ValueError(f'unknown objective {self.objective}')
 
         loss = F.mse_loss(model_out, target, reduction = 'none')
+        loss = pixel_weights * loss if pixel_weights is not None else loss
         loss = reduce(loss, 'b ... -> b', 'mean')
 
         loss = loss * extract(self.loss_weight, t, loss.shape)
@@ -235,9 +236,11 @@ class ConditionalGaussianDiffusion(GaussianDiffusion):
         raise NotImplementedError('score_distillation_sampling is not implemented yet')
        
     def forward(self, img, cond_img, t: Optional[torch.Tensor] = None,
-                min_t: Optional[int] = None, max_t: Optional[int] = None, *args, **kwargs):
+                min_t: Optional[int] = None, max_t: Optional[int] = None,
+                pixel_weights: Optional[torch.Tensor] = None, 
+                *args, **kwargs):
         
-        b, c, h, w, device, img_size, = *img.shape, img.device, self.image_size
+        b, _, h, w, device, img_size, = *img.shape, img.device, self.image_size
         
         if self.only_unconditional:
             assert cond_img is None, 'cond_img must be None when only_unconditional is True'
@@ -261,6 +264,7 @@ class ConditionalGaussianDiffusion(GaussianDiffusion):
                 # Choose randomly whether it will be a conditional or unconditional forward pass
                 if random.random() < self.unconditional_rate:
                     cond_img = self._generate_unconditional_x_cond(batch_size=cond_img.shape[0], device=cond_img.device)
+                    pixel_weights = None
         
         # Normalize the conditional image to be between -1 and 1 
         cond_img = self.normalize(cond_img)  
@@ -278,7 +282,8 @@ class ConditionalGaussianDiffusion(GaussianDiffusion):
             if min_t is not None and max_t is not None:
                 assert (min_t <= t).all() and (t <= max_t).all(), f't must be between {min_t} and {max_t}, but got {t}' 
         
-        return self.p_losses_conditioned_on_img(img, t, cond_img, *args, **kwargs)      
+        return self.p_losses_conditioned_on_img(img, t, cond_img, pixel_weights=pixel_weights,
+                                                *args, **kwargs)      
     
     @torch.inference_mode()
     def p_sample_loop(self, img_shape, x_cond, return_all_timesteps = False):

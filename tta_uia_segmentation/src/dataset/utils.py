@@ -1,3 +1,5 @@
+from typing import Optional
+
 import numpy as np
 import torch
 import torch.nn as nn
@@ -73,3 +75,50 @@ def normalize_to_neg_one_to_one(img):
 
 def unnormalize_to_zero_to_one(t):
     return (t + 1) * 0.5
+
+
+def calculate_class_weights(
+    labels: np.ndarray, n_classes: int, 
+    normalize: bool = True, 
+    classes_of_interest: list = None,
+    background: int = 0,
+    clip_classes_of_interest_at_factor: Optional[float] = None,
+    ):
+        
+    if classes_of_interest is not None and len(classes_of_interest) > 0:
+        new_labels = np.zeros_like(labels)
+
+        # Map all clasess of interest (usually one) to class 2
+        new_labels = new_labels + np.where(np.isin(labels, classes_of_interest), 2, 0)
+        
+        # Map all other classes that are not background to class 1
+        new_labels = new_labels + np.where(np.logical_not(np.isin(labels, [background] + classes_of_interest)), 1, 0)
+
+        labels = new_labels
+        n_classes_old = n_classes
+        n_classes = np.unique(labels).size
+
+    class_counts = np.zeros(n_classes)
+    class_counts += np.bincount(labels.flatten(), minlength=n_classes)
+    class_freq = class_counts / class_counts.sum()
+    
+    class_weights = 1 / class_freq
+    class_weights = np.nan_to_num(class_weights, nan=0, posinf=0)
+    
+    if clip_classes_of_interest_at_factor is not None and classes_of_interest is not None \
+        and class_weights[2] / class_weights[1] > clip_classes_of_interest_at_factor:
+            class_weights[2] = class_weights[1] * clip_classes_of_interest_at_factor
+     
+    if normalize:
+        class_weights /= class_weights.sum()
+        
+    if classes_of_interest is not None and len(classes_of_interest) > 0:
+        new_class_weights = np.zeros(n_classes_old)
+        new_class_weights[background] = class_weights[0]
+        new_class_weights[classes_of_interest] = class_weights[2]
+        
+        classes_of_no_interest = [c for c in range(n_classes_old) if c not in [background] + classes_of_interest]
+        new_class_weights[classes_of_no_interest] = class_weights[1]
+        class_weights = new_class_weights
+        
+    return class_weights

@@ -88,7 +88,7 @@ ddpm:
   batch_size:                   2
   gradient_accumulate_every:    64
   num_workers:                  3
-  dataset:                      umc    # brain: hcp_t1, hcp_t2, abide_caltech, abide_stanford; wmh: nuhs, umc, vu
+  dataset:                      umc_w_synthseg_labels # brain: hcp_t1, hcp_t2, abide_caltech, abide_stanford; wmh: nuhs, umc, vu, or + 'w_synthseg_labels'
   norm_with_nn_on_fly:          True
   use_original_imgs:            False
   one_hot_encode:               True
@@ -99,22 +99,25 @@ ddpm:
   also_unconditional:           False
   only_unconditional:           False
   unconditional_rate:           0.2
+  class_weighing:               'balanced'  # 'none', 'balanced', 'custom'
+  classes_of_interest:          [16]        # Lesion class is 16 for WMH + synthseg labels, otherwise it is 1 
+  clip_classes_of_interest_at_factor: null  # null for no clipping, or 10. It is maximum ratio between weight of the class of interest and the weight of the other classes excluding the background
 
-  objective:                    pred_v   # default is pred_v
-  learning_rate:                8e-5      # 1e-4 in the constructor
+  objective:                    pred_v      # default is pred_v
+  learning_rate:                8e-5        # 1e-4 in the constructor
   amp:                          True
-  train_num_steps:              75000      # 7,000,000 or 100,000 in the original script
-  timesteps:                    1000      # Range of noising steps to sample from during training. 1000 in the constructor  
-  sampling_timesteps:           100       # Number of sampling steps to generate images. If less than 1000, will use DDIM sampling. If null, will be the same as timesteps => linear denoising steps
-  save_and_sample_every:        2500       # 1000 in the constructor 
-  num_validation_samples:       100       # Num of images to sample to check performance during training
-  num_viz_samples:              50        # Must have an interger square root to store images in a square grid
+  train_num_steps:              75000       # btw 12,500 and 50,000
+  timesteps:                    1000        # Range of noising steps to sample from during training. 1000 in the constructor  
+  sampling_timesteps:           100         # Number of sampling steps to generate images. If less than 1000, will use DDIM sampling. If null, will be the same as timesteps => linear denoising steps
+  save_and_sample_every:        2500        # 1000 in the constructor 
+  num_validation_samples:       100         # Num of images to sample to check performance during training
+  num_viz_samples:              50          # Must have an interger square root to store images in a square grid
   log_val_loss_every:           250
 
   logdir:                       /scratch_net/biwidl319/jbermeo/logs/wmh/umc/ddpm/normalized_imgs/3x3_norm_filters/3_18/batch_size_128_cond_by_concat
   wandb_project:                mt-ddpm
   
-  norm_dir:                     /scratch_net/biwidl319/jbermeo/data/models/wmh/segmentation/umc/no_bg_supp_norm_w_3x3_conv
+  norm_dir:                     /scratch_net/biwidl319/jbermeo/data/models/wmh/segmentation/umc_w_synthseg_labels/no_bg_supp_norm_w_3x3
   load_best_cpt:                True
   
   augmentation:                 

@@ -99,6 +99,9 @@ ddpm:
   also_unconditional:           False
   only_unconditional:           False
   unconditional_rate:           0.2
+  class_weighing:               'none'   # 'none', 'balanced', 'custom'
+  classes_of_interest:          null     # Lesion class is 16 for WMH + synthseg labels, otherwise it is 1 
+  clip_classes_of_interest_at_factor: null  # null for no clipping, or 10. It is maximum ratio between weight of the class of interest and the weight of the other classes excluding the background
 
   objective:                    pred_v   # default is pred_v
   learning_rate:                8e-5     # 1e-4 in the constructor

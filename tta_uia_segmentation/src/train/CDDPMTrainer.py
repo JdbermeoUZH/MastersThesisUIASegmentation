@@ -21,7 +21,7 @@ from torchmetrics.functional.regression import mean_absolute_error
 
 from denoising_diffusion_pytorch.fid_evaluation import FIDEvaluation
 from denoising_diffusion_pytorch.denoising_diffusion_pytorch import (
-    cycle, has_int_squareroot, Trainer, divisible_by, num_to_groups, exists)
+    cycle, Trainer, divisible_by, exists)
 from denoising_diffusion_pytorch.version import __version__
 
 from tta_uia_segmentation.src.models import ConditionalGaussianDiffusion
@@ -207,7 +207,7 @@ class CDDPMTrainer(Trainer):
                     img, cond_img = img.to(device), cond_img.to(device)
 
                     with self.accelerator.autocast():
-                        loss = self.model(img, cond_img)
+                        loss = self.model(img, cond_img, pixel_weights=pixel_weights)
                         loss = loss / self.gradient_accumulate_every
                         total_loss += loss.item()
 

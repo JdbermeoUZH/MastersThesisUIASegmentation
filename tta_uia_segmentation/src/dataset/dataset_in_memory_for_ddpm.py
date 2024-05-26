@@ -1,5 +1,5 @@
 import random 
-from typing import Optional
+from typing import Optional, Literal
 
 import h5py
 import torch
@@ -64,6 +64,9 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
         num_shards: int = 1,
         always_search_for_min_max: bool = False,
         class_weights: Optional[dict[float, float]] = None,
+        class_weighing: Literal['none', 'balanced', 'custom'] = 'none',
+        clip_classes_of_interest_at_factor: Optional[float] = None,
+        classes_of_interest: Optional[list[int]] = None,
         invalid_images_args: dict[str, float] = None,
         invalid_labels_args: dict[str, float] = None,
         *args,
@@ -96,7 +99,20 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
         self.images_min, self.images_max = np.inf, -np.inf
         
         # Define the class weights
-        self.class_weights = class_weights    
+        self.class_weights = class_weights   
+        
+        if class_weighing == 'balanced' and self.labels is not None:
+            self.class_weights = du.calculate_class_weights(
+                self.labels, self.n_classes, 
+                classes_of_interest=classes_of_interest,
+                clip_classes_of_interest_at_factor=clip_classes_of_interest_at_factor) 
+            print('Class weights: ', self.class_weights)
+        else:    
+            if self.class_weights is None:
+                class_weighing = 'none'
+                self.class_weights = None
+            elif self.class_weights is not None:
+                class_weighing = 'custom'
         
         # Save the invalid image and mask arguments
         self.invalid_images_args = invalid_images_args
@@ -143,7 +159,7 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
         
         # Apply class weights to the weights map 
         if self.class_weights is not None:
-            for class_id, class_weight in self.class_weights.items():
+            for class_id, class_weight in enumerate(self.class_weights):
                 weights[labels == class_id] = class_weight
         
         # Use the normalization model to normalize the images, if one is given
@@ -228,12 +244,9 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
             
             assert len(sample_dataset) > 0, 'Sample dataset is empty'
             
-            for img, *_ in sample_dataset:                
-                current_max, current_min = img.max(), img.min()
-                if current_min < images_min:
-                    images_min = current_min
-                if current_max > images_max:
-                    images_max = current_max
+            for img, *_ in sample_dataset:        
+                images_min = min(images_min, img.min())
+                images_max = max(images_max, img.max())
             
             self.normalize = normalize_old
             

@@ -68,6 +68,9 @@ def preprocess_cmd_args() -> argparse.Namespace:
     parser.add_argument('--objective', type=str, help='Objective to use for training. Default: gaussian')
     parser.add_argument('--also_unconditional', type=parse_bool, help='Whether to also train an unconditional model. Default: False')
     parser.add_argument('--only_unconditional', type=parse_bool, help='Whether to train only the unconditional model. Default: False')
+    parser.add_argument('--class_weighing', type=str, help='Which type of class weighing to use. Default: "none"')
+    parser.add_argument('--classes_of_interest', type=int, nargs='*', help='Classes to focus on when calculating class weights. Default: None')
+    parser.add_argument('--clip_classes_of_interest_at_factor', type=float, help='Factor by which to clip the class weights of the classes of interest. Default: 10.0')
     parser.add_argument('--batch_size', type=int, help='Batch size for training. Default: 4')
     parser.add_argument('--gradient_accumulate_every', type=int, help='Number of steps to accumulate gradients over. Default: 1')
     parser.add_argument('--train_num_steps', type=int, help='Total number of training steps. Default: 50000') 
@@ -226,6 +229,9 @@ if __name__ == '__main__':
         resolution_proc = dataset_config[dataset]['resolution_proc'],
         dim_proc        = dataset_config[dataset]['dim'],
         n_classes       = n_classes,
+        class_weighing  = train_config[train_type]['class_weighing'],
+        classes_of_interest = train_config[train_type]['classes_of_interest'],
+        clip_classes_of_interest_at_factor = train_config[train_type]['clip_classes_of_interest_at_factor'],
         aug_params      = train_config[train_type]['augmentation'],
         rescale_factor  = train_config[train_type]['rescale_factor'],
         bg_suppression_opts = train_config[train_type]['bg_suppression_opts'],
@@ -278,7 +284,19 @@ if __name__ == '__main__':
         condition_by_concat=not condition_by_mult,
         only_unconditional=only_unconditional,
     )
-
+    
+    # Store in logdir the max and min, and class weights of the model (if any)
+    ddpm_additional_params = {
+        'max_intensity': train_dataset.images_max.item(),
+        'min_intensity': train_dataset.images_min.item(),
+    }
+    
+    if train_dataset.class_weights is not None:
+        ddpm_additional_params['class_weights'] = train_dataset.class_weights.tolist()
+    
+    if accelerator.is_main_process:
+        dump_config(os.path.join(logdir, 'ddpm_additional_params.yaml'), ddpm_additional_params)
+    
     # Execute the training loop
     # :=========================================================================:
     if accelerator.is_main_process: print('Defining trainer: training loop, optimizer and loss')

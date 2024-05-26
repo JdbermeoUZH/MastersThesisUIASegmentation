@@ -28,6 +28,8 @@ def load_icddpm_from_configs_and_cpt(
     device: torch.device,
 ) -> tuple[ConditionalUnet, SpacedDiffusion, nn.Module]:
     
+    
+    
     unet_model = create_model_conditioned_on_seg_mask(
         image_size = train_ddpm_cfg['image_size'][-1],
         image_channels = image_channels,
@@ -73,7 +75,6 @@ def load_cddpm_from_configs_and_cpt(
     model_ddpm_cfg: dict,
     n_classes: int,
     cpt_fp: str,
-    img_size: int,
     device: torch.device,
     sampling_timesteps: Optional[int] = None,
     unconditional_rate: Optional[float] = None ) -> ConditionalGaussianDiffusion:
@@ -92,9 +93,10 @@ def load_cddpm_from_configs_and_cpt(
         condition_by_concat=not train_ddpm_cfg['condition_by_mult'],
     ).to(device)
 
+    image_size = train_ddpm_cfg['image_size'][-1] * train_ddpm_cfg['rescale_factor'][-1]
     ddpm = ConditionalGaussianDiffusion(
         model=model,
-        image_size = img_size,
+        image_size = image_size,
         timesteps = timesteps,    # Range of steps in diffusion process
         sampling_timesteps = sampling_timesteps,
         also_unconditional = train_ddpm_cfg['also_unconditional'],
