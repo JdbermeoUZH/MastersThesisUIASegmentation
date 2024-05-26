@@ -87,7 +87,7 @@ dae_and_ddpm:
   x_norm_regularization_eta: 0.0
 
   # DDPM loss params
-  use_adaptive_beta: True
+  use_adaptive_beta: False
   adaptive_beta_momentum: 0.8
   classifier_free_guidance_weight: 100      # 30, or 100
   use_y_pred_for_ddpm_loss: True            # If False, and use_y_gt_for_ddpm_loss is False, then it will use the pseudo label from the DAE
@@ -111,7 +111,7 @@ dae_and_ddpm:
   use_atlas_only_for_init: False
 
   # DDPM params
-  min_max_intenities_norm_imgs: [0.32381030917167664, 1.2784711122512817]
+  min_max_intenities_norm_imgs: [-0.37569791078567505, 0.639999508857727]
   update_norm_td_statistics: True
   unconditional_rate: 0                     # It is the rate at which it does forward passes in unconditional mode
   #   switch and warmup
@@ -137,13 +137,15 @@ dae_and_ddpm:
   const_aug_per_volume: False
 
   # Normalize intensities before segmentation
-  manually_norm_img_before_seg_val: False
+  manually_norm_img_before_seg_val: True
   manually_norm_img_before_seg_tta: False
   normalization_strategy: standardize       # standardize, min_max, null
   min_max_quantile: [0.1, 0.975]
     
   # Supress background x_norm 
-  bg_supp_x_norm: False
+  bg_supp_x_norm_dae: True
+  bg_supp_x_norm_ddpm: False
+  bg_supp_x_norm_eval: False
   bg_suppression_opts:
     type: fixed_value                              # none, fixed_value, random_value
     bg_value: -0.5

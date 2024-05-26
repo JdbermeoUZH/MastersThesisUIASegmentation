@@ -71,7 +71,7 @@ class ConditionalGaussianDiffusion(GaussianDiffusion):
             assert x_cond.shape[-2:] == x_start.shape[-2:], 'x_cond and x_start must have the same Height and Width'
         
         noise = default(noise, lambda: torch.randn_like(x_start))
-
+        
         # offset noise - https://www.crosslabs.org/blog/diffusion-with-offset-noise
 
         offset_noise_strength = default(offset_noise_strength, self.offset_noise_strength)
@@ -200,7 +200,7 @@ class ConditionalGaussianDiffusion(GaussianDiffusion):
         
         loss = score.clone() * x
         loss = reduce(loss, 'b ... -> b', 'mean')
-            
+        
         return loss.mean()
         
         

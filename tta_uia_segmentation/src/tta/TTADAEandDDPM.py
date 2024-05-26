@@ -635,6 +635,21 @@ class TTADAEandDDPM(TTADAE):
             if x_norm_mb_ddpm.max() > 1 + min_max_tolerance or x_norm_mb_ddpm.min() < 0 - min_max_tolerance:
                 print(f'WARNING: x_norm_mb.max()={x_norm_mb_ddpm.max()}, x_norm_mb.min()={x_norm_mb.min()}')
             
+            # Rescale the input image to the same size as the DDPM, if necessary
+            if x_norm_mb.shape[-1] / self.ddpm.image_size != 1:
+                rescale_factor = self.ddpm.image_size / x_norm_mb.shape[-1]
+                rescale_factor = (1, rescale_factor, rescale_factor)
+                
+                x_norm_mb_ddpm = F.interpolate(
+                    x_norm_mb_ddpm.permute(1, 0, 2, 3).unsqueeze(0), 
+                    scale_factor=rescale_factor, mode='trilinear')
+                x_norm_mb_ddpm = x_norm_mb_ddpm.squeeze(0).permute(1, 0, 2, 3)
+                
+                x_cond_mb = F.interpolate(
+                    x_cond_mb.permute(1, 0, 2, 3).unsqueeze(0),
+                    scale_factor=rescale_factor, mode='trilinear')
+                x_cond_mb = x_cond_mb.squeeze(0).permute(1, 0, 2, 3)
+                            
             # Calculate the DDPM loss and backpropagate
             if self.ddpm_loss == 'jacobian':
                 ddpm_loss = ddpm_reweigh_factor * self.ddpm(

@@ -308,9 +308,6 @@ if __name__ == '__main__':
         sampling_timesteps       = sampling_timesteps,
         unconditional_rate       = unconditional_rate
     )
-    
-    breakpoint()
-    print('Verify the image_size is the correct one for 128x128 models')
    
     # Define the TTADAE object that does the test time adapatation
     # :=========================================================================:    
