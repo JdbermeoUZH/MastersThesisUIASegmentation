@@ -93,6 +93,7 @@ ddpm:
   use_original_imgs:            False
   one_hot_encode:               True
   normalize:                    min_max
+  norm_q_range:                 [0.001, 0.999]
   image_size:                   [1, 256, 256]
   rescale_factor:               [1, 1, 1]
   condition_by_mult:            False

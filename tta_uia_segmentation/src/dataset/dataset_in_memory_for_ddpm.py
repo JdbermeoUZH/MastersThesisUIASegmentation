@@ -55,6 +55,7 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
         norm: Optional[torch.nn.Module],
         use_original_imgs: bool = False,
         normalize: str = 'min_max',
+        norm_q_range: tuple[float, float] = (0., 1.),
         one_hot_encode: bool = True, 
         intensity_value_range: Optional[tuple[float, float]] = None,
         norm_device: str = 'cpu',
@@ -91,6 +92,7 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
         self.normalized_img_path = paths_normalized_h5[self.split] if paths_normalized_h5 is not None else None
         
         self.normalize = normalize
+        self.norm_q_range = norm_q_range
         self.norm_neg_one_to_one = norm_neg_one_to_one
         self.one_hot_encode = one_hot_encode
         self.num_vols = int(self.images.shape[0] / self.dim_proc[0]) if self.image_size[0] == 1 else self.images.shape[0]
@@ -243,10 +245,20 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
             sample_dataset = DataLoader(sample_dataset, batch_size=4, num_workers=2)
             
             assert len(sample_dataset) > 0, 'Sample dataset is empty'
-            
-            for img, *_ in sample_dataset:        
-                images_min = min(images_min, img.min())
-                images_max = max(images_max, img.max())
+            if self.norm_q_range != (0., 1.):
+                images = []
+
+            for img, *_ in sample_dataset:   
+                if self.norm_q_range == (0., 1.):        
+                    images_min = min(images_min, img.min())
+                    images_max = max(images_max, img.max())
+                else:
+                  images.append(img)
+                  
+            if self.norm_q_range != (0., 1.):
+                images = torch.cat(images, dim=0)
+                images_min = torch.quantile(images, self.norm_q_range[0])
+                images_max = torch.quantile(images, self.norm_q_range[1])  
             
             self.normalize = normalize_old
             

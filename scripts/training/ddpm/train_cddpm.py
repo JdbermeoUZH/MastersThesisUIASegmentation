@@ -90,6 +90,7 @@ def preprocess_cmd_args() -> argparse.Namespace:
     parser.add_argument('--rescale_factor', type=float, nargs='+', help='Rescale factor for images in dataset')
     
     parser.add_argument('--norm_dir', type=str, help='Path to directory where normalization model is saved')
+    parser.add_argument('--norm_q_range', type=float, nargs=2, help='Quantile range for normalization model')
     
     args = parser.parse_args()
     
@@ -224,6 +225,7 @@ if __name__ == '__main__':
         use_original_imgs = train_config[train_type]['use_original_imgs'],
         one_hot_encode  = train_config[train_type]['one_hot_encode'],
         normalize       = train_config[train_type]['normalize'],
+        norm_q_range    = train_config[train_type]['norm_q_range'],
         paths_original  = dataset_config[dataset]['paths_original'],
         image_size      = train_config[train_type]['image_size'],
         resolution_proc = dataset_config[dataset]['resolution_proc'],
