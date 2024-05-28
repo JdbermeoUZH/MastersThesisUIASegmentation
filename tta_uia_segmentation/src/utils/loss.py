@@ -27,7 +27,8 @@ def onehot_to_class(onehot, class_dim=1, keepdim=True):
     return onehot.argmax(dim=class_dim, keepdim=keepdim)
 
 
-def dice_score(mask_pred, mask_gt, soft=True, reduction='mean', bg_channel=0, k=1, smooth=0, epsilon=1e-10):
+def dice_score(mask_pred, mask_gt, soft=True, reduction='mean', bg_channel=0, k=1, smooth=0, epsilon=1e-10,
+               pixels_to_use: torch.Tensor = None):
     """ 
     Assumes that mask_pred and mask_gt are one-hot encoded.
     
@@ -61,6 +62,12 @@ def dice_score(mask_pred, mask_gt, soft=True, reduction='mean', bg_channel=0, k=
     if not soft:
         n_classes = mask_pred.shape[1]
         mask_pred = class_to_onehot(onehot_to_class(mask_pred), n_classes)
+        
+    if pixels_to_use is not None:
+        breakpoint()
+        print('check this works')
+        mask_pred = mask_pred[pixels_to_use]
+        mask_gt = mask_gt[pixels_to_use]
 
     N, C = mask_pred.shape[0:2]
     mask_pred = mask_pred.reshape(N, C, -1)

@@ -62,6 +62,8 @@ class TTADAEandDDPM(TTADAE):
         subset_bn_layers: Optional[list[str]] = None,
         dae_loss: Optional[callable] = DiceLoss(),
         ddpm_loss: Literal['jacobian', 'sds', 'dds', 'pds'] = 'jacobian',
+        ddpm_loss_only_on_classes: Optional[list[int]] = None,
+        dae_loss_except_on_classes: Optional[list[int]] = None, 
         x_norm_regularization_loss: Optional[Literal['sift', 'rsq_sift', 'zncc', 'mi', 'sq_grad']] = 'rsq_grad',
         x_norm_kwargs: dict = {},
         use_adaptive_beta: bool = False,
@@ -84,8 +86,6 @@ class TTADAEandDDPM(TTADAE):
         super().__init__(loss_func=dae_loss, **kwargs)
         self.ddpm = ddpm
         
-        self.ddpm_loss = ddpm_loss
-        
         # Loss weights
         # :===============================================================:
         self.dae_loss_alpha = dae_loss_alpha
@@ -93,11 +93,17 @@ class TTADAEandDDPM(TTADAE):
         self.ddpm_uncond_loss_gamma = ddpm_uncond_loss_gamma
         self.x_norm_regularization_loss_eta = x_norm_regularization_loss_eta
         
+        # DAE loss parameters
+        # :===============================================================:
+        self.dae_loss_except_on_classes = dae_loss_except_on_classes
+        
         # DDPM loss parameters
         # :===============================================================:
+        self.ddpm_loss = ddpm_loss
         self.classifier_free_guidance_weight = classifier_free_guidance_weight
         self.use_y_pred_for_ddpm_loss = use_y_pred_for_ddpm_loss   
         self.detach_x_norm_from_ddpm_loss = detach_x_norm_from_ddpm_loss 
+        self.ddpm_loss_only_on_classes = ddpm_loss_only_on_classes
         
         # Parameters for adaptive weight to balance the DAE and DDPM loss
         self.use_adaptive_beta = use_adaptive_beta
@@ -273,7 +279,8 @@ class TTADAEandDDPM(TTADAE):
                     num_workers=num_workers,
                     index=index,
                     iteration=step,
-                    bg_suppression_opts=self.bg_suppression_opts
+                    bg_suppression_opts=self.bg_suppression_opts,
+                    classes_of_interest=self.classes_of_interest
                 )
                 self.test_scores.append(dices_fg.mean().item())
 
@@ -386,14 +393,23 @@ class TTADAEandDDPM(TTADAE):
                     x_norm = self.norm(x)
                     
                     _, mask, _ = self.forward_pass_seg(
-                        x, bg_mask, self.bg_supp_dae, self.bg_suppression_opts_tta, device,
+                        x, bg_mask, self.bg_supp_x_norm_dae, self.bg_suppression_opts_tta, device,
                         manually_norm_img_before_seg=self.manually_norm_img_before_seg_tta
                     )
                     
                     if self.rescale_factor is not None:
                         mask = self.rescale_volume(mask)
 
-                    dae_loss = self.dae_loss_alpha * self.loss_func(mask, y_pl)
+                    if self.dae_loss_except_on_classes is not None:
+                        with torch.no_grad():
+                            pixels_to_use = torch.ones_like(y_pl)
+                            breakpoint()
+                            pixels_to_use = torch.where(    
+                                torch.isin(y_pl.round(), self.dae_loss_except_on_classes), 0, 1)
+                    else:
+                        pixels_to_use = None
+                        
+                    dae_loss = self.dae_loss_alpha * self.loss_func(mask, y_pl, pixels_to_use=pixels_to_use)
                     
                     if accumulate_over_volume:
                         dae_loss = dae_loss / len(volume_dataloader)
@@ -556,7 +572,7 @@ class TTADAEandDDPM(TTADAE):
         
         dice_scores = {i * calculate_dice_every: score for i, score in enumerate(self.test_scores)}
 
-        return self.norm_dict, self.metrics_best, dice_scores
+        return self.norm_seg_dict, self.metrics_best, dice_scores
     
     def _calculate_ddpm_gradients(
         self,
@@ -649,7 +665,15 @@ class TTADAEandDDPM(TTADAE):
                     x_cond_mb.permute(1, 0, 2, 3).unsqueeze(0),
                     scale_factor=rescale_factor, mode='trilinear')
                 x_cond_mb = x_cond_mb.squeeze(0).permute(1, 0, 2, 3)
-                            
+            
+            if self.ddpm_loss_only_on_classes is not None:
+                with torch.no_grad():
+                    pixel_weights = torch.zeros_like(x_cond_mb)
+                    pixel_weights = torch.where(
+                        torch.isin(x_cond_mb, self.ddpm_loss_only_on_classes), 1, 0)
+            else:
+                pixel_weights = None
+                                
             # Calculate the DDPM loss and backpropagate
             if self.ddpm_loss == 'jacobian':
                 ddpm_loss = ddpm_reweigh_factor * self.ddpm(
@@ -658,7 +682,8 @@ class TTADAEandDDPM(TTADAE):
                     t_mb,
                     min_t=self.min_t_diffusion_tta,
                     max_t=self.max_t_diffusion_tta,
-                    w_clf_free=self.classifier_free_guidance_weight
+                    w_clf_free=self.classifier_free_guidance_weight,
+                    pixel_weights=pixel_weights
                 )
             
             elif self.ddpm_loss in ['sds', 'dds', 'pds']:
@@ -669,7 +694,8 @@ class TTADAEandDDPM(TTADAE):
                     type=self.ddpm_loss,
                     min_t=self.min_t_diffusion_tta,
                     max_t=self.max_t_diffusion_tta,
-                    w_clf_free=self.classifier_free_guidance_weight
+                    w_clf_free=self.classifier_free_guidance_weight,
+                    pixel_weights=pixel_weights
                 )
     
             else:
@@ -748,8 +774,8 @@ class TTADAEandDDPM(TTADAE):
                 
                 bn_layer_i.track_running_stats = self.track_running_stats_bn
                     
-    def reset_initial_state(self, state_dict: dict) -> None:
-        super().reset_initial_state(state_dict)
+    def reset_initial_state(self, state_dict_norm_seg: dict, state_dict_seg: dict) -> None:
+        super().reset_initial_state(state_dict_norm_seg)
         
         self._set_state_bn_layers()
         

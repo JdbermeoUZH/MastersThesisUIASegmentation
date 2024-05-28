@@ -368,7 +368,7 @@ if __name__ == '__main__':
         for key in norm_dict.keys():
             print(f'Model at minimum {key} = {metrics_best[key]}')
 
-            dae_tta.load_state_dict_norm(norm_dict[key])
+            dae_tta.load_state_norm_seg_dict(norm_dict[key])
             
             scores, _ = dae_tta.test_volume(
                 volume_dataset=volume_dataset,

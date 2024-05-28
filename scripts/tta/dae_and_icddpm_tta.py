@@ -435,7 +435,7 @@ if __name__ == '__main__':
             #  but the one of the last step
             print(f'Model at minimum {key} (best agreement with PL) = {metrics_best[key]}')
 
-            tta.load_state_dict_norm(norm_dict[key])
+            tta.load_state_norm_seg_dict(norm_dict[key])
             scores, _ = tta.test_volume(
                 volume_dataset=volume_dataset,
                 dataset_name=dataset,

@@ -4,7 +4,7 @@ import argparse
 
 #-------------------------------------
 # Default args
-output_dir_def = '/scratch_net/biwidl319/jbermeo/results/brain/ddpm/'
+output_dir_def = '/scratch_net/biwidl319/jbermeo/results/wmh/ddpm/'
 num_iterations_def = 100 
 num_t_samples_per_img_def = 20 
 batch_size_def = 16

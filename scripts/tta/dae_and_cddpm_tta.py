@@ -79,6 +79,9 @@ def preprocess_cmd_args() -> argparse.Namespace:
     parser.add_argument('--x_norm_regularization_loss', type=str, help='Type of x_norm regularization loss. Default: None', choices=['sift', 'zncc', 'mi', 'sq_grad', None])
     parser.add_argument('--x_norm_regularization_eta', type=float, help='Gamma for x_norm regularization loss. Default: 1.0')
     
+    parser.add_argument('--dae_loss_except_on_classes', type=int, nargs='+', help='Classes to exclude from DAE loss. Default: None')
+    parser.add_argument('--ddpm_loss_only_on_classes', type=int, nargs='+', help='Classes to include in DDPM loss. Default: None')
+    
     parser.add_argument('--finetune_bn', type=parse_bool, help='Finetune batchnorm layers. Default: False')
     parser.add_argument('--track_running_stats_bn', type=parse_bool, help='Track running stats of batchnorm layers. Default: False')
     parser.add_argument('--subset_bn_layers', type=int, nargs='+', help='Subset of batchnorm layers to finetune. Default: None')
@@ -265,7 +268,7 @@ if __name__ == '__main__':
         else 'checkpoint_last'
     cpt_seg_fp = os.path.join(seg_dir, train_params_seg[cpt_type])
     
-    norm, seg, norm_state_source_domain = load_norm_and_seg_from_configs_and_cpt(
+    norm, seg, norm_state_sd, seg_state_sd = load_norm_and_seg_from_configs_and_cpt(
         n_classes = n_classes,
         model_params_norm = model_params_norm,
         model_params_seg = model_params_seg,
@@ -341,12 +344,14 @@ if __name__ == '__main__':
     manually_norm_img_before_seg_val= tta_config[tta_mode]['manually_norm_img_before_seg_val']
     manually_norm_img_before_seg_tta= tta_config[tta_mode]['manually_norm_img_before_seg_tta']
     normalization_strategy      = tta_config[tta_mode]['normalization_strategy']
+    classes_of_interest         = tta_config[tta_mode]['classes_of_interest']
     
     # DAE-TTA params
     alpha                       = tta_config[tta_mode]['alpha']
     beta                        = tta_config[tta_mode]['beta']
     rescale_factor              = train_params_dae['dae']['rescale_factor']
     use_atlas_only_for_init     = tta_config[tta_mode]['use_atlas_only_for_init']
+    dae_loss_except_on_classes  = tta_config[tta_mode]['dae_loss_except_on_classes']
     
     # DDPM-TTA params    
     ddpm_loss                   = tta_config[tta_mode]['ddpm_loss']
@@ -362,6 +367,7 @@ if __name__ == '__main__':
     use_ddpm_after_step         = tta_config[tta_mode]['use_ddpm_after_step']
     use_ddpm_after_dice         = tta_config[tta_mode]['use_ddpm_after_dice']
     warmup_steps_for_ddpm_loss  = tta_config[tta_mode]['warmup_steps_for_ddpm_loss']
+    ddpm_loss_only_on_classes   = tta_config[tta_mode]['ddpm_loss_only_on_classes']
     
     # Only use adaptive beta if either of the DDPM losses are used along with the DAE loss
     use_adaptive_beta = use_adaptive_beta and \
@@ -386,12 +392,15 @@ if __name__ == '__main__':
         alpha                   = alpha,
         beta                    = beta,
         use_atlas_only_for_init = use_atlas_only_for_init,
+        dae_loss_except_on_classes=dae_loss_except_on_classes,
         update_norm_td_statistics=update_norm_td_statistics,
         manually_norm_img_before_seg_val=manually_norm_img_before_seg_val,
         manually_norm_img_before_seg_tta=manually_norm_img_before_seg_tta,
+        classes_of_interest     = classes_of_interest,
         normalization_strategy  = normalization_strategy,
         rescale_factor          = rescale_factor,
         ddpm_loss               = ddpm_loss,
+        ddpm_loss_only_on_classes=ddpm_loss_only_on_classes,
         ddpm_loss_beta          = ddpm_loss_beta,
         use_adaptive_beta       = use_adaptive_beta,
         adaptive_beta_momentum  = adaptive_beta_momentum,
@@ -483,9 +492,9 @@ if __name__ == '__main__':
 
         volume_dataset = Subset(test_dataset, indices)
 
-        tta.reset_initial_state(norm_state_source_domain)
+        tta.reset_initial_state(norm_state_sd, seg_state_sd)
 
-        norm_dict, metrics_best, dice_scores_wrt_gt = tta.tta(
+        norm_seg_dict, metrics_best, dice_scores_wrt_gt = tta.tta(
             volume_dataset = volume_dataset,
             dataset_name = dataset,
             index = i,
@@ -537,11 +546,11 @@ if __name__ == '__main__':
             metrics_best,
         )
 
-        for key in norm_dict.keys():
+        for key in norm_seg_dict.keys():
             # Save the normalization statistics of the best model (model with higest agreement to PL)
             print(f'Model at minimum {key} (best agreement with PL) = {metrics_best[key]}')
 
-            tta.load_state_dict_norm(norm_dict[key])
+            tta.load_state_norm_seg_dict(norm_seg_dict[key])
             scores, _ = tta.test_volume(
                 volume_dataset=volume_dataset,
                 dataset_name=dataset,

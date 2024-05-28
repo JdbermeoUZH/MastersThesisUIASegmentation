@@ -93,6 +93,7 @@ dae_and_ddpm:
   use_y_pred_for_ddpm_loss: True            # If False, and use_y_gt_for_ddpm_loss is False, then it will use the pseudo label from the DAE
   use_y_gt_for_ddpm_loss: False             # Only true for debugging
   detach_x_norm_from_ddpm_loss: False       # Use only gradients on the segmentation
+  ddpm_loss_only_on_classes: null
 
   # Loss functions
   ddpm_loss: sds                            # jacobian, ssd, dds, pds 
@@ -109,6 +110,7 @@ dae_and_ddpm:
   alpha: 1.0
   beta: 0.25 
   use_atlas_only_for_init: False
+  dae_loss_except_on_classes: null
 
   # DDPM params
   min_max_intenities_norm_imgs: [-0.7377170324325562, 0.24169665575027466]
@@ -141,6 +143,7 @@ dae_and_ddpm:
   manually_norm_img_before_seg_tta: False
   normalization_strategy: standardize       # standardize, min_max, null
   min_max_quantile: [0.1, 0.975]
+  classes_of_interest: null                 # 16 for wmh + synthseg, null for brain and wmh  
 
   # Supress background x_norm 
   bg_supp_x_norm_dae: True

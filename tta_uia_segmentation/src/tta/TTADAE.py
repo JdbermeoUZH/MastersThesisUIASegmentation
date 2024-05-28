@@ -128,9 +128,10 @@ class TTADAE:
         self.tta_losses = []
         self.test_scores = []
 
-        self.norm_dict = {
+        self.norm_seg_dict = {
             'best_score': {
                 'norm_state_dict': copy.deepcopy(self.norm.state_dict()),
+                'seg_state_dict': copy.deepcopy(self.seg.state_dict()),
                 'norm_td_statistics': asdict(self.norm_td_statistics)
                 }
         }
@@ -307,7 +308,7 @@ class TTADAE:
         
         dice_scores = {i * calculate_dice_every: score for i, score in enumerate(self.test_scores)}
 
-        return self.norm_dict, self.metrics_best, dice_scores
+        return self.norm_seg_dict, self.metrics_best, dice_scores
     
     
     def _normalize_image_intensities_to_sd(self, x_norm: torch.Tensor) -> torch.Tensor:
@@ -509,8 +510,8 @@ class TTADAE:
             if classes_of_interest is not None:
                 dices_classes_of_interest = dices[:, classes_of_interest, ...].nanmean().item()    
                 print(f'Iteration {iteration} - dice score classes of interest {classes_of_interest}' + 
-                      ' dices_classes_of_interest')
-                
+                      f' dices_classes_of_interest: {dices_classes_of_interest}')
+
                 if self.wandb_log:
                     wandb.log(
                         {
@@ -595,8 +596,9 @@ class TTADAE:
 
         if self.metrics_best['best_score'] < dice:
             # Store the weights of the model with the highest agreement with the pseudo label
-            self.norm_dict['best_score']['norm_state_dict'] = copy.deepcopy(self.norm.state_dict())
-            self.norm_dict['best_score']['norm_td_statistics'] = asdict(self.norm_td_statistics)
+            self.norm_seg_dict['best_score']['norm_state_dict'] = copy.deepcopy(self.norm.state_dict())
+            self.norm_seg_dict['best_score']['seg_state_dict'] = copy.deepcopy(self.seg.state_dict())
+            self.norm_seg_dict['best_score']['norm_td_statistics'] = asdict(self.norm_td_statistics)
             self.metrics_best['best_score'] = dice
             
         pl_dataloader =  DataLoader(
@@ -656,10 +658,10 @@ class TTADAE:
         save_checkpoint(
             path=os.path.join(logdir, 'checkpoints',
                             f'checkpoint_tta_{dataset_name}_{index:02d}_best_score.pth'),
-            norm_state_dict=self.norm_dict['best_score']['norm_state_dict'],
-            seg_state_dict=self.seg.state_dict(),
+            norm_state_dict=self.norm_seg_dict['best_score']['norm_state_dict'],
+            seg_state_dict=self.norm_seg_dict['best_score']['seg_state_dict'],
             norm_sd_statistics=asdict(self.norm_sd_statistics),
-            norm_td_statistics=self.norm_dict['best_score']['norm_td_statistics'],
+            norm_td_statistics=self.norm_seg_dict['best_score']['norm_td_statistics'],
         )
         
         # Save the normalizer weights in the last step
@@ -676,10 +678,11 @@ class TTADAE:
         self.use_only_dae_pl = use_only_dae_pl
         
     def reset_initial_state(self, state_dict: dict) -> None:
-        self.norm.load_state_dict(state_dict)
-        self.norm_dict = {
+        self.load_state_norm_seg_dict(state_dict)
+        self.norm_seg_dict = {
             'best_score': {
                 'norm_state_dict': copy.deepcopy(self.norm.state_dict()),
+                'seg_state_dict': copy.deepcopy(self.seg.state_dict()),
                 'norm_td_statistics': asdict(self.norm_td_statistics)
                 }
         }
@@ -710,6 +713,7 @@ class TTADAE:
         self.norm_td_statistics.quantile_cal = None
         self.norm_td_statistics.precalculated_quantiles = None
         
-    def load_state_dict_norm(self, state_dict: dict) -> None:
+    def load_state_norm_seg_dict(self, state_dict: dict) -> None:
         self.norm.load_state_dict(state_dict['norm_state_dict'])
+        self.seg.load_state_dict(state_dict['seg_state_dict'])
         self.norm_td_statistics = DomainStatistics(**state_dict['norm_td_statistics'])

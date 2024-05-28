@@ -158,7 +158,8 @@ class ConditionalGaussianDiffusion(GaussianDiffusion):
             raise ValueError(f'Unknown distillation loss type: {type}')
     
     
-    def score_distillation_sampling(self, x_start, x_cond, t, w_clf_free: float = 0, mask = None, noise = None):
+    def score_distillation_sampling(self, x_start, x_cond, t, w_clf_free: float = 0, 
+                                    pixel_weights: Optional[torch.Tensor] = None, noise = None):
         """
         Based on implementation from: https://github.com/google/prompt-to-prompt/blob/main/DDS_zeroshot.ipynb
          and https://github.com/ashawkey/stable-dreamfusion/blob/5550b91862a3af7842bb04875b7f1211e5095a63/assets/advanced.md    
@@ -187,7 +188,7 @@ class ConditionalGaussianDiffusion(GaussianDiffusion):
             # Calculate SDS term
             score = (pred_noise - noise)
             score = torch.nan_to_num(score, nan = 0.0, posinf = 0.0, neginf = 0.0)
-            score = score * mask if mask is not None else score
+            score = score * pixel_weights if pixel_weights is not None else score
         
         # Form an expression that will have as gradients: score * sqrt_alphas_cumprod_t for x and score for x_cond
         x_start = extract(self.sqrt_alphas_cumprod, t, x_start.shape) * x_start 
@@ -202,35 +203,9 @@ class ConditionalGaussianDiffusion(GaussianDiffusion):
         loss = reduce(loss, 'b ... -> b', 'mean')
         
         return loss.mean()
-        
-        
+            
     def delta_denoising_score(self, x_start, t, x_cond, sampled_noise_ref: tuple[torch.Tensor], w_clf_free: float = 0):
-        if not self.only_unconditional:
-            assert x_cond.shape[-2:] == x_start.shape[-2:], 'x_cond and x_start must have the same Height and Width'
-        
-        noise = default(noise, lambda: torch.randn_like(x_start))
-
-        # noise sample
-        x_t = self.q_sample(x_start = x_start, t = t, noise = noise)
-
-        # Get model predictions
-        model_preds = self.model_predictions(x_t, t, x_cond) 
-        pred_noise = model_preds.pred_noise
-        
-        # calculate unconditional score
-        if w_clf_free > 0:
-            assert self.also_unconditional, 'w_clf_free is only available when also_unconditional is True'
-            assert not self.only_unconditional, 'w_clf_free only makes sense when the model was trained in conditional and unconditional mode'
-            x_unconditional = self._generate_unconditional_x_cond(batch_size=x_cond.shape[0], device=x_cond.device)
-            model_preds_unconditional = self.model_predictions(x_t, t, x_unconditional)
-            
-            pred_noise = (1 + w_clf_free) * pred_noise - w_clf_free * model_preds_unconditional.pred_noise
-            
-        loss = F.mse_loss(pred_noise, sampled_noise_ref[t], reduction = 'none')
-        loss = reduce(loss, 'b ... -> b', 'mean')
-
-        loss = loss * extract(self.loss_weight, t, loss.shape)
-        return loss.mean()
+        raise NotImplementedError('delta_denoising_score is not implemented yet')
     
     def posterior_distillation_sampling(self, x_start, t, x_cond, sampled_x_ref: tuple[torch.Tensor], w_clf_free: float = 0):
         raise NotImplementedError('score_distillation_sampling is not implemented yet')

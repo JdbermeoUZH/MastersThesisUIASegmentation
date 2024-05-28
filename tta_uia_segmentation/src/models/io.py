@@ -169,12 +169,16 @@ def load_norm_and_seg_from_configs_and_cpt(
     norm.load_state_dict(checkpoint['norm_state_dict'])
     seg.load_state_dict(checkpoint['seg_state_dict'])
     norm_state_dict = checkpoint['norm_state_dict']
+    seg_state_dict = checkpoint['seg_state_dict']
+    
+    return_tuple = (norm, seg, None, None)
     
     if return_norm_state_dict:
-        return norm, seg, norm_state_dict   
-    else:
-        return norm, seg
+        return_tuple[2] = norm_state_dict
+    if return_norm_state_dict:
+        return_tuple[3] = seg_state_dict
     
+    return return_tuple
 
 def load_domain_statistiscs(
     cpt_fp: str,
