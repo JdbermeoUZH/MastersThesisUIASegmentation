@@ -106,8 +106,6 @@ class ConditionalGaussianDiffusion(GaussianDiffusion):
             raise ValueError(f'unknown objective {self.objective}')
 
         loss = F.mse_loss(model_out, target, reduction = 'none')
-        breakpoint()
-        print('Check this if does not disrupt the gradients')
         loss = pixel_weights * loss if pixel_weights is not None else loss
         loss = reduce(loss, 'b ... -> b', 'mean')
 
