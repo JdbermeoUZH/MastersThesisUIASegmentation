@@ -188,6 +188,7 @@ class ConditionalGaussianDiffusion(GaussianDiffusion):
             # Calculate SDS term
             score = (pred_noise - noise)
             score = torch.nan_to_num(score, nan = 0.0, posinf = 0.0, neginf = 0.0)
+            breakpoint()
             score = score * pixel_weights if pixel_weights is not None else score
         
         # Form an expression that will have as gradients: score * sqrt_alphas_cumprod_t for x and score for x_cond

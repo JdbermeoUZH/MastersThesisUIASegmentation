@@ -399,17 +399,8 @@ class TTADAEandDDPM(TTADAE):
                     
                     if self.rescale_factor is not None:
                         mask = self.rescale_volume(mask)
-
-                    if self.dae_loss_except_on_classes is not None:
-                        with torch.no_grad():
-                            pixels_to_use = torch.ones_like(y_pl)
-                            breakpoint()
-                            pixels_to_use = torch.where(    
-                                torch.isin(y_pl.round(), self.dae_loss_except_on_classes), 0, 1)
-                    else:
-                        pixels_to_use = None
                         
-                    dae_loss = self.dae_loss_alpha * self.loss_func(mask, y_pl, pixels_to_use=pixels_to_use)
+                    dae_loss = self.dae_loss_alpha * self.loss_func(mask, y_pl, classes_to_exclude=self.dae_loss_except_on_classes)
                     
                     if accumulate_over_volume:
                         dae_loss = dae_loss / len(volume_dataloader)
@@ -435,7 +426,7 @@ class TTADAEandDDPM(TTADAE):
                     # Fix x_cond depending on the configuration
                     if self.use_y_gt_for_ddpm_loss:
                         # Only for debugging
-                        x_cond = y_gt.type(torch.int8).to(device)
+                        x_cond = y_gt.float().to(device)
                         
                     elif not self.use_y_pred_for_ddpm_loss:
                         x_cond = y_pl.to(device)
@@ -668,9 +659,10 @@ class TTADAEandDDPM(TTADAE):
             
             if self.ddpm_loss_only_on_classes is not None:
                 with torch.no_grad():
-                    pixel_weights = torch.zeros_like(x_cond_mb)
+                    x_cond_mb_categorical = du.onehot_to_class(x_cond_mb)
+                    pixel_weights = torch.zeros_like(x_cond_mb_categorical)
                     pixel_weights = torch.where(
-                        torch.isin(x_cond_mb, self.ddpm_loss_only_on_classes), 1, 0)
+                        torch.isin(x_cond_mb_categorical, torch.Tensor(self.ddpm_loss_only_on_classes).to(x_cond_mb.device)), 1, 0)
             else:
                 pixel_weights = None
                                 
