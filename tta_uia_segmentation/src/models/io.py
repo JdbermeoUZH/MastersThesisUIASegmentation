@@ -143,7 +143,7 @@ def load_norm_and_seg_from_configs_and_cpt(
     model_params_seg: dict,
     cpt_fp: str,
     device: torch.device,
-    return_norm_state_dict: bool = False
+    return_norm_seg_state_dict: bool = False
 )-> Union[tuple[Normalization, UNet, dict], tuple[Normalization, UNet]]:
     norm = Normalization(
         n_layers                = model_params_norm['n_layers'],
@@ -166,19 +166,20 @@ def load_norm_and_seg_from_configs_and_cpt(
     ).to(device)
     
     checkpoint = torch.load(cpt_fp, map_location=device)
-    norm.load_state_dict(checkpoint['norm_state_dict'])
-    seg.load_state_dict(checkpoint['seg_state_dict'])
     norm_state_dict = checkpoint['norm_state_dict']
     seg_state_dict = checkpoint['seg_state_dict']
+    norm.load_state_dict(norm_state_dict)
+    seg.load_state_dict(seg_state_dict)
     
-    return_tuple = (norm, seg, None, None)
-    
-    if return_norm_state_dict:
-        return_tuple[2] = norm_state_dict
-    if return_norm_state_dict:
-        return_tuple[3] = seg_state_dict
-    
-    return return_tuple
+    if return_norm_seg_state_dict:
+        norm_seg_state_dict = {
+            'norm_state_dict': norm_state_dict,
+            'seg_state_dict': seg_state_dict,
+        }
+        return norm, seg, norm_seg_state_dict
+
+    else:
+        return norm, seg
 
 def load_domain_statistiscs(
     cpt_fp: str,

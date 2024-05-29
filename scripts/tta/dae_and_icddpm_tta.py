@@ -238,7 +238,7 @@ if __name__ == '__main__':
         model_params_seg = model_params_seg,
         cpt_fp = os.path.join(seg_dir, train_params_seg[cpt_type]),
         device = device,
-        return_norm_state_dict=True,
+        return_norm_seg_state_dict=True,
     )
     print('Segmentation model loaded')
        

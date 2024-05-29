@@ -10,6 +10,7 @@ TODO:
 import os
 import sys
 import argparse
+from dataclasses import asdict
 
 import wandb
 import torch
@@ -268,13 +269,13 @@ if __name__ == '__main__':
         else 'checkpoint_last'
     cpt_seg_fp = os.path.join(seg_dir, train_params_seg[cpt_type])
     
-    norm, seg, norm_state_sd, seg_state_sd = load_norm_and_seg_from_configs_and_cpt(
+    norm, seg, norm_seg_state_sd = load_norm_and_seg_from_configs_and_cpt(
         n_classes = n_classes,
         model_params_norm = model_params_norm,
         model_params_seg = model_params_seg,
         cpt_fp = cpt_seg_fp,
         device = device,
-        return_norm_state_dict=True,
+        return_norm_seg_state_dict=True,
     )
     
     # Load statistics of the source domain
@@ -286,6 +287,9 @@ if __name__ == '__main__':
         momentum = 0.96,
         min_max_clip_q=min_max_clip_q,
     )
+    
+    norm_seg_state_sd['norm_td_statistics'] = asdict(norm_sd_statistics)
+
     print('Segmentation model loaded')
     
     # DAE
@@ -492,7 +496,7 @@ if __name__ == '__main__':
 
         volume_dataset = Subset(test_dataset, indices)
 
-        tta.reset_initial_state(norm_state_sd, seg_state_sd)
+        tta.reset_initial_state(norm_seg_state_sd)
 
         norm_seg_dict, metrics_best, dice_scores_wrt_gt = tta.tta(
             volume_dataset = volume_dataset,

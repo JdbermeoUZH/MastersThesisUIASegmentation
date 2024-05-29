@@ -774,7 +774,7 @@ class TTADAEandDDPM(TTADAE):
                 
                 bn_layer_i.track_running_stats = self.track_running_stats_bn
                     
-    def reset_initial_state(self, state_dict_norm_seg: dict, state_dict_seg: dict) -> None:
+    def reset_initial_state(self, state_dict_norm_seg: dict) -> None:
         super().reset_initial_state(state_dict_norm_seg)
         
         self._set_state_bn_layers()
@@ -809,7 +809,7 @@ class TTADAEandDDPM(TTADAE):
             log_dict[f'norm_x_norm_out_grad_dae_loss/img_{index:03d}'] = \
                 torch.norm(self.x_norm_grads_dae_loss[last_layer_name])
         
-        if self.ddpm_loss_beta > 0:
+        if self.use_ddpm_loss:
             log_dict[f'norm_x_norm_out_grad_ddpm_loss/img_{index:03d}'] = \
                 torch.norm(self.x_norm_grads_ddpm_loss[last_layer_name])
                 
