@@ -519,7 +519,19 @@ class TTADAE:
                             'tta_step': iteration
                         }
                     )
-            
+
+                export_images(
+                    x_original,
+                    x_norm,
+                    y_original[:, [0, classes_of_interest], ...],
+                    y_pred[:, [0, classes_of_interest], ...],
+                    x_guidance=x_guidance,
+                    y_dae=y_dae_or_atlas[:, [0, classes_of_interest], ...] if y_dae_or_atlas is not None else None,
+                    n_classes=self.n_classes,
+                    output_dir=os.path.join(logdir, 'segmentations_classes_of_interest' + log_suffix),
+                    image_name=f'{dataset_name}_test_{index:03}_{iteration:03}{appendix}{log_suffix}.png'
+                )
+                        
             if self.wandb_log:
                 wandb.log(
                     {

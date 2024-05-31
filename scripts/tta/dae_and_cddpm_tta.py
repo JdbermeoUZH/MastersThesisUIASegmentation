@@ -306,10 +306,11 @@ if __name__ == '__main__':
     cpt_ddpm_fp                 = os.path.join(ddpm_dir, tta_config[tta_mode]['cpt_fn'])
     img_size                    = dataset_config[dataset]['dim'][-1]
     
+    ddpm_loss_only_on_classes   = tta_config[tta_mode]['ddpm_loss_only_on_classes']
     ddpm = load_cddpm_from_configs_and_cpt(
         train_ddpm_cfg           = train_params_ddpm,
         model_ddpm_cfg           = model_params_ddpm,
-        n_classes                = n_classes,
+        n_classes                = n_classes if ddpm_loss_only_on_classes is None else len(ddpm_loss_only_on_classes) + 1,
         cpt_fp                   = cpt_ddpm_fp,
         device                   = device,
         sampling_timesteps       = sampling_timesteps,
@@ -516,6 +517,7 @@ if __name__ == '__main__':
         )
         
         # Calculate dice scores for the last step
+        tta.norm.eval()
         dice_scores[i, :], _ = tta.test_volume(
             volume_dataset = volume_dataset,
             dataset_name = dataset,
@@ -524,6 +526,8 @@ if __name__ == '__main__':
             num_workers = num_workers,
             device = device,
             logdir = logdir,
+            bg_suppression_opts=bg_suppression_opts,
+            classes_of_interest=classes_of_interest,
         )
         
         dice_scores_wrt_gt[num_steps] = dice_scores[i, 1:].mean().item() 
@@ -563,6 +567,7 @@ if __name__ == '__main__':
                 num_workers=num_workers,
                 appendix=f'_min_{key}',
                 bg_suppression_opts=bg_suppression_opts,
+                classes_of_interest=classes_of_interest,
                 logdir=logdir,
                 device=device,
             )

@@ -55,10 +55,11 @@ seed                    = 1234
 device                  = 'cpu' if not  torch.cuda.is_available() else 'cuda'
 mismatch_mode           = 'none' #'same_patient_very_different_labels'  # 'same_patient_very_different_labels', 'same_patient_similar_labels', 'different_patient_similar_labels', 'none'
 n_mismatches            = 10
-num_t_samples_per_img   = 5 # 20
-num_iterations          = 50 # 500
+num_t_samples_per_img   = 20 # 20
+num_iterations          = 100 # 500
 with_augmentation       = False
-weights_cond_free_guidance = [30, 100]
+weights_cond_free_guidance = [0.1, 1, 10, 30, 100]
+min_max_quantile        = (0.001, 0.999)
 # :===============================================================:
 
 mismatch_args_per_dataset_type = {
@@ -251,12 +252,14 @@ if __name__ == '__main__':
         normalize       = train_ddpm_cfg['normalize'],
         image_size      = train_ddpm_cfg['image_size'],
         resolution_proc = dataset_params_sd['resolution_proc'],
+        rescale_factor  = train_ddpm_cfg['rescale_factor'],
         dim_proc        = dataset_params_sd['dim'],
         n_classes       = dataset_params_sd['n_classes'],
         aug_params      = train_ddpm_cfg['augmentation'] if args.with_augmentation else None,
         deformation     = None,
         load_original   = True,
-        bg_suppression_opts = None
+        bg_suppression_opts = None,
+        norm_q_range    = min_max_quantile
     )
     
     (dataset_td,) = get_datasets(
@@ -268,14 +271,16 @@ if __name__ == '__main__':
         use_original_imgs = train_ddpm_cfg['use_original_imgs'],
         one_hot_encode  = train_ddpm_cfg['one_hot_encode'],
         normalize       = train_ddpm_cfg['normalize'],
+        norm_q_range    = train_ddpm_cfg['norm_q_range'],
         image_size      = train_ddpm_cfg['image_size'],
         resolution_proc = dataset_params_td['resolution_proc'],
+        rescale_factor  = train_ddpm_cfg['rescale_factor'],
         dim_proc        = dataset_params_td['dim'],
         n_classes       = dataset_params_td['n_classes'],
         aug_params      = train_ddpm_cfg['augmentation'] if args.with_augmentation else None,
         deformation     = None,
         load_original   = True,
-        bg_suppression_opts = None
+        bg_suppression_opts = None,
     )
        
     # Load trained ddpm
@@ -286,7 +291,7 @@ if __name__ == '__main__':
     ddpm = load_cddpm_from_configs_and_cpt(
         train_ddpm_cfg=train_ddpm_cfg,
         model_ddpm_cfg=model_ddpm_cfg,
-        n_classes=n_classes,  
+        n_classes=n_classes if ,  
         cpt_fp=os.path.join(args.ddpm_dir, args.cpt_fn),
         device=device
         )
@@ -310,11 +315,12 @@ if __name__ == '__main__':
     metrics_per_t_sd = {
         'conditional': defaultdict(list),
         'unconditional': defaultdict(list),
+        **{f'conditional_w_cfg_{w}': defaultdict(list) for w in weights_cond_free_guidance},
     } 
     metrics_per_t_td = {
         'conditional': defaultdict(list),
         'unconditional': defaultdict(list),
-
+        **{f'conditional_w_cfg_{w}': defaultdict(list) for w in weights_cond_free_guidance},
     } 
     
     vol_depth = dataset_sd.dim_proc[0]     
@@ -389,6 +395,12 @@ if __name__ == '__main__':
                 ddpm_loss_sample_sd_uncond = ddpm.p_losses_conditioned_on_img(
                     img_sd, t_sd, seg_uncond_sd) if ddpm.also_unconditional else torch.tensor(0)
                 
+                for w_cfg in weights_cond_free_guidance:
+                    metrics_per_t_sd[f'conditional_w_cfg_{w_cfg}'][t].append(
+                        ddpm.p_losses_conditioned_on_img(
+                            img_sd, t_sd, seg_sd, w_clf_free=w_cfg).item()
+                    )
+                    
             metrics_per_t_sd['conditional'][t].append(ddpm_loss_sample_sd_cond.item())
             metrics_per_t_sd['unconditional'][t].append(ddpm_loss_sample_sd_uncond.item())
 
@@ -421,6 +433,12 @@ if __name__ == '__main__':
                         ddpm.p_losses_conditioned_on_img(img_mismatch_b, t_tch, seg_mismatch)
                     ddpm_loss_sample_td_uncond += (1 / len(mismatch_dl)) * \
                         ddpm.p_losses_conditioned_on_img(img_mismatch_b, t_tch, seg_mismatch_uncond) if ddpm.also_unconditional else torch.tensor(0)
+                        
+                    for w_cfg in weights_cond_free_guidance:
+                        metrics_per_t_td[f'conditional_w_cfg_{w_cfg}'][t].append(
+                            ddpm.p_losses_conditioned_on_img(
+                                img_mismatch_b, t_tch, seg_mismatch, w_clf_free=w_cfg).item()
+                        )
 
             metrics_per_t_td['conditional'][t].append(ddpm_loss_sample_td_cond.item())
             metrics_per_t_td['unconditional'][t].append(ddpm_loss_sample_td_uncond.item())

@@ -658,13 +658,15 @@ class TTADAEandDDPM(TTADAE):
                 x_cond_mb = x_cond_mb.squeeze(0).permute(1, 0, 2, 3)
             
             if self.ddpm_loss_only_on_classes is not None:
-                with torch.no_grad():
-                    x_cond_mb_categorical = du.onehot_to_class(x_cond_mb)
-                    pixel_weights = torch.zeros_like(x_cond_mb_categorical)
-                    pixel_weights = torch.where(
-                        torch.isin(x_cond_mb_categorical, torch.Tensor(self.ddpm_loss_only_on_classes).to(x_cond_mb.device)), 1, 0)
-            else:
-                pixel_weights = None
+                # with torch.no_grad():
+                #     x_cond_mb_categorical = du.onehot_to_class(x_cond_mb)
+                #     pixel_weights = torch.zeros_like(x_cond_mb_categorical)
+                #     pixel_weights = torch.where(
+                #         torch.isin(x_cond_mb_categorical, torch.Tensor(self.ddpm_loss_only_on_classes).to(x_cond_mb.device)), 1, 0)
+
+                x_cond_mb = x_cond_mb[:, torch.Tensor([0] + self.ddpm_loss_only_on_classes).to(x_cond_mb.device).int()]
+
+            pixel_weights = None
                                 
             # Calculate the DDPM loss and backpropagate
             if self.ddpm_loss == 'jacobian':
