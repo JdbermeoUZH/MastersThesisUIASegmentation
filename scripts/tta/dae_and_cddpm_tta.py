@@ -111,13 +111,12 @@ def preprocess_cmd_args() -> argparse.Namespace:
     parser.add_argument('--ddpm_loss', type=str, help='Type of DDPM loss. Default: None', choices=['jacobian', 'sds', 'dds', 'pds', None])
     parser.add_argument('--t_ddpm_range', type=float, nargs=2, help='Quantile range of t values for DDPM. Default: [0.2, 0.98]')       
     parser.add_argument('--t_sampling_strategy', type=str, help='Sampling strategy for t values. Default: uniform')
-    parser.add_argument('--min_max_quantile', type=float, nargs=2, help='Quantile range for min max clipping. Default: [0.1, 0.975]')
     parser.add_argument('--unconditional_rate', type=float, help='Rate of unconditional forward passes. Default: 0.0')
     parser.add_argument('--use_y_pred_for_ddpm_loss', type=parse_bool, help='Whether to use predicted segmentation as conditional for DDPM. Default: True')
     parser.add_argument('--use_y_gt_for_ddpm_loss', type=parse_bool, help='Whether to use ground truth segmetnation as conditional for DDPM. ONLY FOR DEBUGGING. Default: False')
     parser.add_argument('--detach_x_norm_from_ddpm_loss', type=parse_bool, help='Whether to detach x_norm from DDPM loss. Default: False')
     parser.add_argument('--minibatch_size_ddpm', type=int, help='Minibatch size for DDPM. Default: 2')
-   
+    parser.add_argument('--min_max_intenities_norm_imgs', type=float, nargs=2, help='Min and max intensities for normalization before evaluating DDPM')
     parser.add_argument('--update_norm_td_statistics', type=parse_bool, help='Whether to update the normalization statistics. Default: False')
     
     # DAE and Atlas params
@@ -138,14 +137,17 @@ def preprocess_cmd_args() -> argparse.Namespace:
     parser.add_argument('--dataset', type=str, help='Name of dataset to use for tta.')
     parser.add_argument('--split', type=str, help='Name of split to use for tta')
     
-    # Probably not used arguments
     parser.add_argument('--n_classes', type=int, help='Number of classes in dataset.')
+    parser.add_argument('--classes_of_interest' , type=int, nargs='+')
     parser.add_argument('--image_size', type=int, nargs='+', help='Size of images in dataset.')
     parser.add_argument('--resolution_proc', type=float, nargs='+', help='Resolution of images in dataset.')
     parser.add_argument('--rescale_factor', type=float, help='Rescale factor for images in dataset.')
     
     # Backround suppression for normalized images
     parser.add_argument('--bg_supression_type', choices=['fixed_value', 'random_value', 'none', None], help='Type of background suppression to use. Default: none')
+    
+    parser.add_argument('--min_max_quantile', type=float, nargs=2, help='Quantile range for min max clipping with manual normalization. Default: [0.1, 0.975]')
+
     args = parser.parse_args()
     
     _check_args(args)

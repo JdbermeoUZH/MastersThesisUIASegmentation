@@ -1,18 +1,3 @@
-"""
-TODO:
- - Add automatic resizing to evaluate 128x128 DDPMs
- 
- - Check what is going wrong with the following situation
-        python -u 3_ddpm_loss_multiple_t_and_imgs.py \
-        --ddpm_dir /scratch_net/biwidl319/jbermeo/logs/wmh/ddpm/umc_w_synthseg_labels/normalized_imgs/3x3_norm_filters/4_26/batch_size_130_dim_64_dim_mults_1_2_2_2_cond_by_concatenation_with_unconditional_training_rate_0.95 \
-        --cpt_fn model-5.pt \
-        --num_iterations 100 \
-        --out_dir /scratch_net/biwidl319/jbermeo/results/wmh/ddpm/ \
-        --dataset_sd umc_w_synthseg_labels --split_sd val \
-        --dataset_td umc_w_synthseg_labels --split_td val \
-        --mismatch_mode \
-        --exp_name batch_size_130_dim_64_dim_mults_1_2_2_2_cond_by_concatenation_with_unconditional_training_rate_0.95
-"""
 import os
 import sys
 import yaml
@@ -291,7 +276,7 @@ if __name__ == '__main__':
     ddpm = load_cddpm_from_configs_and_cpt(
         train_ddpm_cfg=train_ddpm_cfg,
         model_ddpm_cfg=model_ddpm_cfg,
-        n_classes=n_classes if ,  
+        n_classes=n_classes,  
         cpt_fp=os.path.join(args.ddpm_dir, args.cpt_fn),
         device=device
         )

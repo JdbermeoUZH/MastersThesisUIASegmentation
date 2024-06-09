@@ -9,7 +9,7 @@ conda activate /scratch_net/biwidl319/jbermeo/GNN-Domain-Generalization-main/net
 
 python dae_and_cddpm_tta.py \
  /scratch_net/biwidl319/jbermeo/MastersThesisUIASegmentation/config/datasets.yaml \
- /scratch_net/biwidl319/jbermeo/MastersThesisUIASegmentation/config/tta/tta_wmh_umc.yaml \
+ /scratch_net/biwidl319/jbermeo/MastersThesisUIASegmentation/config/tta/tta_wmh_umc_w_synthseg_labels.yaml \
  "$@"  
 #  --start 0 \
 #  --stop 2 \

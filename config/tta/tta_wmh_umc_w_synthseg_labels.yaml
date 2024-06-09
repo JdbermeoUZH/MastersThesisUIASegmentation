@@ -3,15 +3,15 @@ tta_mode: dae_and_diffusion # no_tta, gnn, gt, dae, dae_and_diffusion
 start_new_exp: False
 wandb_log: True
 
-dataset: hcp_t2   # brain: hcp_t1, hcp_t2, abide_caltech, abide_stanford; wmh: nuhs, umc, vu
+dataset: nuhs_w_synthseg_labels   # brain: hcp_t1, hcp_t2, abide_caltech, abide_stanford; wmh: nuhs, umc, vu
 split:   val       # val, test
 image_size: [1, 256, 256]
 start: null       # Index of the test dataset to start at
 stop:  null       # Index of the test dataset to stop at
 
-seg_dir: /scratch_net/biwidl319/jbermeo/data/models/brain/segmentation/hcp_t1/no_bg_supp_norm_w_3x3_conv
+seg_dir: /scratch_net/biwidl319/jbermeo/data/models/wmh/segmentation/umc_w_synthseg_labels/no_bg_supp_norm_w_3x3
 load_best_cpt: True
-classes_of_interest: null
+classes_of_interest: [16]
 
 num_workers: 0
 device: cuda
@@ -28,18 +28,18 @@ bg_suppression_opts:
 
 
 dae:
-  wandb_project: mt-tta-brain # mt-tta-brain-hcp_t2
+  wandb_project: mt-tta-wmh
   logdir: /scratch_net/biwidl319/jbermeo/logs/brain/tta/debugging/dae_only/3_01/lr_1em3_grad_acc_1x1_conv_norm
   dae_dir: /scratch_net/biwidl319/jbermeo/data/models/brain/dae/hcp_t1
   
   seg_with_bg_supp: False
 
   accumulate_over_volume: True
-  batch_size: 16
+  batch_size: 32
   dataset_repetition: 1
-  num_steps: 1000  # 500 for brain, 2700 for wmh
-  update_dae_output_every: 25
-  calculate_dice_every: 25  # 25 for brain, 135 for wmh (nuhs, umc, vu)
+  num_steps: 2700  # 500 for brain, 2700 for wmh
+  update_dae_output_every: 270
+  calculate_dice_every: 135  # 25 for brain, 135 for wmh (nuhs, umc, vu)
   alpha: 1.0
   beta: 0.25
   learning_rate: 0.001
@@ -47,7 +47,7 @@ dae:
   const_aug_per_volume: False
   
   bg_suppression_opts:
-    type: none  # possible values: none, fixed_value, random_value
+    type: fixed_value  # possible values: none, fixed_value, random_value
     bg_value: -0.5
     bg_value_min: -0.5
     bg_value_max: 1
@@ -74,11 +74,11 @@ dae:
 
 
 dae_and_ddpm:
-  wandb_project: mt-tta-brain # mt-tta-brain-hcp_t2
-  logdir: /scratch_net/biwidl319/jbermeo/logs/brain/tta/tests/4_17
-  dae_dir: /scratch_net/biwidl319/jbermeo/data/models/brain/dae/hcp_t1
-  ddpm_dir: /scratch_net/biwidl319/jbermeo/logs/brain/ddpm/hcp_t1/normalized_imgs/3x3_norm_filters/4_26/batch_size_130_dim_64_dim_mults_1_2_2_2_cond_by_concatenation_with_unconditional_training_rate_0.75
-  cpt_fn: 'model-6.pt'
+  wandb_project: mt-tta-wmh-w_synthseg_labels
+  logdir: /scratch_net/biwidl319/jbermeo/logs/wmh/tta/dae_and_cddpm/tests/04_02
+  dae_dir: /scratch_net/biwidl319/jbermeo/data/models/wmh/dae/umc_w_synthseg_labels
+  ddpm_dir: /scratch_net/biwidl319/jbermeo/logs/wmh/ddpm/umc_w_synthseg_labels/normalized_imgs/3x3_norm_filters/5_26/norm_q_0.001_0.999/batch_size_130_dim_64_dim_mults_1_2_2_2_uncond_rate_0.2_imgsize_128x128_no_class_balancing
+  cpt_fn: 'model-4.pt' 
   
   # Loss weights
   dae_loss_alpha: 1.0
@@ -96,7 +96,7 @@ dae_and_ddpm:
   ddpm_loss_only_on_classes: null
 
   # Loss functions
-  ddpm_loss: jacobian                            # jacobian, ssd, dds, pds 
+  ddpm_loss: jacobian                       # jacobian, ssd, dds, pds 
   x_norm_regularization_loss: sq_grad       # null, sq_grad, zncc, rsq_sift, sift, mi 
 
   # Finetune batch normalization layers
@@ -105,15 +105,15 @@ dae_and_ddpm:
   subset_bn_layers: null                    # [0, 1]. If null, it will use all the layers
 
   # DAE term parameters  
-  update_dae_output_every: 200              # 25 for brain, 135 for wmh (nuhs, umc, vu). Try 200 for brain and 270 for wmh for more stable convergence
-  calculate_dice_every: 50    
+  update_dae_output_every: 270              # 25 for brain, 135 for wmh (nuhs, umc, vu). Try 200 for brain and 270 for wmh for more stable convergence
+  calculate_dice_every: 54    
   alpha: 1.0
   beta: 0.25 
   use_atlas_only_for_init: False
   dae_loss_except_on_classes: null
-
+  
   # DDPM params
-  min_max_intenities_norm_imgs: [-0.7627120614051819, 0.26643848419189453]
+  min_max_intenities_norm_imgs: [-0.37569791078567505, 0.639999508857727]
   update_norm_td_statistics: True
   unconditional_rate: 0                     # It is the rate at which it does forward passes in unconditional mode
   #   switch and warmup
@@ -134,7 +134,7 @@ dae_and_ddpm:
   learning_rate: 0.001
   accumulate_over_volume: True
   batch_size: 32
-  dataset_repetition: 1
+  dataset_repetition: 2
   save_checkpoints: True
   const_aug_per_volume: False
 
@@ -142,15 +142,15 @@ dae_and_ddpm:
   manually_norm_img_before_seg_val: True
   manually_norm_img_before_seg_tta: False
   normalization_strategy: standardize       # standardize, min_max, null
-  min_max_quantile: [0.025, 0.975]
-  classes_of_interest: null                 # 16 for wmh + synthseg, null for brain and wmh  
+  min_max_quantile: [0.1, 0.975]
+  classes_of_interest: 16                   # 16 for wmh + synthseg, null for brain and wmh  
 
   # Supress background x_norm 
   bg_supp_x_norm_dae: True
   bg_supp_x_norm_ddpm: False
   bg_supp_x_norm_eval: False
   bg_suppression_opts:
-    type: fixed_value                       # none, fixed_value, random_value
+    type: fixed_value                              # none, fixed_value, random_value
     bg_value: -0.5
     bg_value_min: -0.5
     bg_value_max: 1
