@@ -206,6 +206,7 @@ class CDDPMTrainer(Trainer):
                     img, cond_img, pixel_weights = next(self.train_dl)
                     img, cond_img = img.to(device), cond_img.to(device)
 
+
                     with self.accelerator.autocast():
                         loss = self.model(img, cond_img, pixel_weights=pixel_weights)
                         loss = loss / self.gradient_accumulate_every

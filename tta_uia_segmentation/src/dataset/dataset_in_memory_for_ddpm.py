@@ -133,7 +133,7 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
             self.images_min, self.images_max = self._find_min_max_in_normalized_imgs()
             
         assert self.images_min != np.inf and self.images_max != -np.inf, 'Could not determine min and max values of normalized images'
-        
+                
         print(f'Min and max values of normalized images: {self.images_min}, {self.images_max}')
         
 
@@ -172,12 +172,9 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
                 images = self.norm(images[None, ...]).squeeze(0)
                 
         # Update the min and max values of the images, in case a larger value is observed
-        img_max, img_min = images.max(), images.min()   
         if self.always_search_for_min_max:
-            if img_min < self.images_min:
-                self.images_min = img_min
-            if img_max > self.images_max:
-                self.images_max = img_max
+            self.images_max = max(self.images_max, images.max())
+            self.images_min = min(self.images_min, images.min())
 
         # Normalize image and label map to [0, 1]
         if self.normalize == 'min_max':

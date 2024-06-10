@@ -88,8 +88,10 @@ def preprocess_cmd_args() -> argparse.Namespace:
     parser.add_argument('--image_size', type=int, nargs='+', help='Size of images in dataset')
     parser.add_argument('--resolution_proc', type=float, nargs='+', help='Resolution of images in dataset')
     parser.add_argument('--rescale_factor', type=float, nargs='+', help='Rescale factor for images in dataset')
+    parser.add_argument('--use_original_imgs', type=parse_bool, help='Whether to use original images for training. Default: False')
+    parser.add_argument('--norm_with_nn_on_fly', type=parse_bool, help='Whether to normalize with nn on the fly. Default: False')
     
-    parser.add_argument('--norm_dir', type=str, help='Path to directory where normalization model is saved')
+    parser.add_argument('--norm_dir', type=str, nargs='*', help='Path to directory where normalization model is saved')
     parser.add_argument('--norm_q_range', type=float, nargs=2, help='Quantile range for normalization model')
     
     args = parser.parse_args()
@@ -175,17 +177,21 @@ if __name__ == '__main__':
     else:
         os.makedirs(logdir, exist_ok=True)
         
-        params_norm = load_config(os.path.join(
-        train_config[train_type]['norm_dir'], 'params.yaml'))
-
-        model_params_norm = params_norm['model']['normalization_2D']
-        train_params_norm = params_norm['training']
-
         params = {
             'dataset': dataset_config, 
-            'model': {**model_config,  'norm': model_params_norm},
-            'training': {**train_config, 'norm': train_params_norm}, 
+            'model': {**model_config,  'norm': dict()},
+            'training': {**train_config, 'norm': dict()}, 
         }
+        
+        if not train_config[train_type]['use_original_imgs']:
+            params_norm = load_config(os.path.join(
+                train_config[train_type]['norm_dir'], 'params.yaml'))
+            model_params_norm = params_norm['model']['normalization_2D']
+            train_params_norm = params_norm['training']
+            
+            params['model']['norm'] = model_params_norm
+            params['training']['norm'] = train_params_norm
+
 
         if accelerator.is_main_process: dump_config(os.path.join(logdir, 'params.yaml'), params)
 
