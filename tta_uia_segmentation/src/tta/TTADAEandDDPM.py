@@ -338,8 +338,16 @@ class TTADAEandDDPM(TTADAE):
                     batch_size=batch_size,
                     num_workers=num_workers,                            
                 )
+                
+                noise_dl = self._sample_noise_for_ddpm_loss(
+                    num_samples=batch_size * len(b_i_for_ddpm_loss),
+                    batch_size=batch_size,
+                    num_workers=num_workers,
+                )
+                
             else:
                 t_dl = [[None]] * len(volume_dataloader)
+                noise_dl = [[None]] * len(volume_dataloader)
                                         
             # :===========================================:
             # Adapting to the target distribution
@@ -365,7 +373,7 @@ class TTADAEandDDPM(TTADAE):
             if const_aug_per_volume:
                 volume_dataset.dataset.set_seed(get_seed())
                     
-            for b_i, ((x, y_gt,_,_, bg_mask), (y_pl,), (t,)) in enumerate(zip(volume_dataloader, label_dataloader, t_dl)):
+            for b_i, ((x, y_gt,_,_, bg_mask), (y_pl,), (t, ), (noise, )) in enumerate(zip(volume_dataloader, label_dataloader, t_dl, noise_dl)):
                 x_norm = None        
                 if not accumulate_over_volume:
                     self.optimizer.zero_grad()
@@ -421,6 +429,7 @@ class TTADAEandDDPM(TTADAE):
                     
                 if calculate_ddpm_loss_gradients:
                     t = t.to(device)
+                    noise = noise.to(device)
                     n_samples_diffusion += x.shape[0] 
                     
                     # Fix x_cond depending on the configuration
@@ -457,6 +466,7 @@ class TTADAEandDDPM(TTADAE):
                         x=x,
                         x_cond=x_cond,
                         t=t,
+                        noise=noise,
                         bg_mask=bg_mask,
                         device=device,  
                         ddpm_reweigh_factor=ddpm_loss_beta * ddpm_reweigh_factor,
@@ -473,6 +483,7 @@ class TTADAEandDDPM(TTADAE):
                             x=x,
                             x_cond=x_cond,
                             t=t,
+                            noise=noise,
                             bg_mask=bg_mask,
                             device=device,  
                             ddpm_reweigh_factor= -1 * ddpm_uncond_loss_gamma * ddpm_reweigh_factor,
@@ -571,6 +582,7 @@ class TTADAEandDDPM(TTADAE):
         device: str,
         x_cond: Optional[torch.Tensor] = None,
         t: Optional[torch.Tensor] = None,
+        noise: Optional[torch.Tensor] = None,
         bg_mask: Optional[torch.Tensor] = None,
         ddpm_reweigh_factor: float = 1,
         min_int_norm_imgs: float = 0,
@@ -610,6 +622,7 @@ class TTADAEandDDPM(TTADAE):
         
         for i in range(0, x.shape[0], minibatch_size):
             t_mb = t[i: i + minibatch_size] if t is not None else None
+            noise_mb = noise[i: i + minibatch_size] if noise is not None else None
             x_norm_mb = self.norm(x[i: i + minibatch_size])
             bg_mask_mb = bg_mask[i: i + minibatch_size]
             
@@ -651,7 +664,8 @@ class TTADAEandDDPM(TTADAE):
                     x_norm_mb_ddpm.permute(1, 0, 2, 3).unsqueeze(0), 
                     scale_factor=rescale_factor, mode='trilinear')
                 x_norm_mb_ddpm = x_norm_mb_ddpm.squeeze(0).permute(1, 0, 2, 3)
-                
+            
+            if x_cond_mb.shape[-1] / self.ddpm.image_size != 1:    
                 x_cond_mb = F.interpolate(
                     x_cond_mb.permute(1, 0, 2, 3).unsqueeze(0),
                     scale_factor=rescale_factor, mode='trilinear')
@@ -669,11 +683,13 @@ class TTADAEandDDPM(TTADAE):
             pixel_weights = None
                                 
             # Calculate the DDPM loss and backpropagate
+
             if self.ddpm_loss == 'jacobian':
                 ddpm_loss = ddpm_reweigh_factor * self.ddpm(
                     x_norm_mb_ddpm, 
                     x_cond_mb,
                     t_mb,
+                    noise=noise_mb,
                     min_t=self.min_t_diffusion_tta,
                     max_t=self.max_t_diffusion_tta,
                     w_clf_free=self.classifier_free_guidance_weight,
@@ -685,6 +701,7 @@ class TTADAEandDDPM(TTADAE):
                     x_norm_mb_ddpm, 
                     x_cond_mb,
                     t_mb,
+                    noise=noise_mb,
                     type=self.ddpm_loss,
                     min_t=self.min_t_diffusion_tta,
                     max_t=self.max_t_diffusion_tta,
@@ -739,6 +756,20 @@ class TTADAEandDDPM(TTADAE):
             num_workers=num_workers,
             drop_last=False,
         )        
+        
+    def _sample_noise_for_ddpm_loss(
+        self, num_samples: int,  
+        batch_size: int, num_workers: int) -> torch.utils.data.DataLoader:
+        noise = torch.randn((num_samples, self.ddpm.channels, 
+                             int(self.ddpm.image_size), int(self.ddpm.image_size)))
+        
+        return DataLoader(
+            TensorDataset(noise),
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=num_workers,
+            drop_last=False,
+        )
     
     def _define_custom_wandb_metrics(self):
         wandb.define_metric(f'tta_step')
