@@ -77,7 +77,7 @@ dae_and_ddpm:
   wandb_project: mt-tta-wmh
   logdir: /scratch_net/biwidl319/jbermeo/logs/wmh/tta/dae_and_cddpm/tests/04_02
   dae_dir: /scratch_net/biwidl319/jbermeo/data/models/wmh/dae/umc
-  ddpm_dir: /scratch_net/biwidl319/jbermeo/logs/wmh/ddpm/umc/normalized_imgs/3x3_norm_filters/5_29/norm_q_0.001_0.999/batch_size_130_dim_64_dim_mults_1_2_2_2_uncond_rate_0.2_imgsize_128x128_no_class_balancing
+  ddpm_dir: /scratch_net/biwidl319/jbermeo/logs/wmh/ddpm/umc/normalized_imgs/3x3_norm_filters/no_synthseg_labels/6_07/norm_q_0.001_0.999/batch_size_130_dim_64_dim_mults_1_2_2_2_uncond_rate_0.2_imgsize_128x128_no_class_balancing
   cpt_fn: 'model-4.pt' 
   
   # Loss weights
@@ -143,7 +143,7 @@ dae_and_ddpm:
   manually_norm_img_before_seg_tta: False
   normalization_strategy: standardize       # standardize, min_max, null
   min_max_quantile: [0.1, 0.975]
-  classes_of_interest: 16                   # 16 for wmh + synthseg, null for brain and wmh  
+  classes_of_interest: null                   # 16 for wmh + synthseg, null for brain and wmh  
 
   # Supress background x_norm 
   bg_supp_x_norm_dae: True
