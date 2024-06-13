@@ -1,12 +1,3 @@
-""" 
-
-TODO:
-
- - Change model selection to either the one with total lowest loss or the one at the last iteration.
-    - Currently it is choosing the one with the highest dice score agreement with the pseudo-label from the DAE.
-
-
-"""
 import os
 import sys
 import argparse

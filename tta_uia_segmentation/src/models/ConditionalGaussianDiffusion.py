@@ -93,8 +93,8 @@ class ConditionalGaussianDiffusion(GaussianDiffusion):
             x_unconditional = self._generate_unconditional_x_cond(batch_size=x_cond.shape[0], device=x_cond.device)
             model_out_unconditional = self.model(x, t, x_unconditional)
             
-            model_out = (1 + w_clf_free) * model_out - w_clf_free * model_out_unconditional    
-            # model_out = model_out - w_clf_free / (1 + w_clf_free) * model_out_unconditional
+            #model_out = (1 + w_clf_free) * model_out - w_clf_free * model_out_unconditional    
+            model_out = model_out - w_clf_free / (1 + w_clf_free) * model_out_unconditional
 
         if self.objective == 'pred_noise':
             target = noise

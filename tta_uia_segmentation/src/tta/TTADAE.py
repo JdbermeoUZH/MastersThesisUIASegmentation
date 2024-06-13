@@ -539,15 +539,12 @@ class TTADAE:
                         'tta_step': iteration
                     }
                 )
-                
-            if manually_norm_img_before_seg and manual_norm_mode == 'with_manual_normlization':
-                dices_out = dices.cpu()
-                dices_fg_out = dices_fg.cpu()
             
-            elif not manually_norm_img_before_seg:
+            # Overall without manual norm is performing better, so return that one
+            if manual_norm_mode != 'with_manual_normlization':
                 dices_out = dices.cpu()
                 dices_fg_out = dices_fg.cpu()
-        
+                    
         assert dices_out is not None and dices_fg_out is not None, 'Dice scores will not be returned.'
         
         return dices_out.cpu(), dices_fg_out.cpu()
@@ -658,6 +655,7 @@ class TTADAE:
     def _define_custom_wandb_metrics(self):
         wandb.define_metric("tta_step")
         wandb.define_metric('dice_score_fg/*', step_metric='tta_step')
+        wandb.define_metric('dice_score_classes_of_interest/*', step_metric='tta_step')
         wandb.define_metric('tta_loss/*', step_metric='tta_step')
         
         if self.classes_of_interest is not None:
