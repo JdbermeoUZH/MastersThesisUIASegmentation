@@ -182,7 +182,7 @@ diffusionTTA:
   ddpm_dir: /scratch_net/biwidl319/jbermeo/logs/brain/ddpm/hcp_t1/original_sd_imgs/06_09/batch_size_130_dim_64_dim_mults_1_2_2_2_uncond_rate_0.2_imgsize_128x128_no_class_balancing_norm_q_0.001_0.999
   cpt_fn: 'model-6.pt'
 
-  num_steps:  5                           # 5 for original algo (it accumulates gradients over the entire volume for entire batch size)
+  num_steps:  20                           # 5 for original algo (it accumulates gradients over the entire volume for entire batch size)
   num_t_noise_pairs_per_img: 180
   batch_size: 256                         # Used for eval and during training
   minibatch_size_ddpm: 16                  # 8 for small GPUs, 32-64 for A6000
