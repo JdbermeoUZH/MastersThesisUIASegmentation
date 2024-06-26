@@ -75,6 +75,7 @@ class TTADAE:
         bg_supp_x_norm_eval: bool = False,
         wandb_log: bool = False,
         device: str = 'cuda',
+        optimizer: Optional[torch.optim.Optimizer] = None,
         ) -> None:
     
         self.norm = norm
@@ -94,10 +95,13 @@ class TTADAE:
         self.manually_norm_img_before_seg_tta = manually_norm_img_before_seg_tta
         self.manually_norm_img_before_seg_val = manually_norm_img_before_seg_val
         
-        self.norm_td_statistics = DomainStatistics(**asdict(norm_sd_statistics))
-        self.norm_td_statistics.frozen = not update_norm_td_statistics
-        self.norm_td_statistics.quantile_cal = None
-        self.norm_td_statistics.precalculated_quantiles = None
+        if norm_sd_statistics is not None:
+            self.norm_td_statistics = DomainStatistics(**asdict(norm_sd_statistics))
+            self.norm_td_statistics.frozen = not update_norm_td_statistics
+            self.norm_td_statistics.quantile_cal = None
+            self.norm_td_statistics.precalculated_quantiles = None
+        else:
+            self.norm_td_statistics = None
                 
         # Whether the segmentation model uses background suppression of input images
         self.bg_supp_x_norm_dae = bg_supp_x_norm_dae
@@ -119,10 +123,11 @@ class TTADAE:
         self.loss_func = loss_func
         self.learning_rate = learning_rate
         
-        self.optimizer = torch.optim.Adam(
-            self.norm.parameters(),
-            lr=learning_rate
-        )
+        if optimizer is None:
+            self.optimizer = torch.optim.Adam(
+                self.norm.parameters(),
+                lr=learning_rate
+            )
         
         # Setting up metrics for model selection.
         self.tta_losses = []
@@ -132,7 +137,7 @@ class TTADAE:
             'best_score': {
                 'norm_state_dict': copy.deepcopy(self.norm.state_dict()),
                 'seg_state_dict': copy.deepcopy(self.seg.state_dict()),
-                'norm_td_statistics': asdict(self.norm_td_statistics)
+                'norm_td_statistics': asdict(self.norm_td_statistics) if self.norm_td_statistics is not None else None
                 }
         }
         self.metrics_best = {'best_score': 0}
@@ -607,7 +612,7 @@ class TTADAE:
             # Store the weights of the model with the highest agreement with the pseudo label
             self.norm_seg_dict['best_score']['norm_state_dict'] = copy.deepcopy(self.norm.state_dict())
             self.norm_seg_dict['best_score']['seg_state_dict'] = copy.deepcopy(self.seg.state_dict())
-            self.norm_seg_dict['best_score']['norm_td_statistics'] = asdict(self.norm_td_statistics)
+            self.norm_seg_dict['best_score']['norm_td_statistics'] = asdict(self.norm_td_statistics) if self.norm_td_statistics is not None else None
             self.metrics_best['best_score'] = dice
             
         pl_dataloader =  DataLoader(
@@ -706,7 +711,6 @@ class TTADAE:
         self.dae.eval()
         self.dae.requires_grad_(False)
         
-        print('DEBUG DELETE ME: resetting optimizer state')
         self.optimizer = torch.optim.Adam(
             self.norm.parameters(),
             lr=self.learning_rate
@@ -727,3 +731,21 @@ class TTADAE:
         self.norm.load_state_dict(state_dict['norm_state_dict'])
         self.seg.load_state_dict(state_dict['seg_state_dict'])
         self.norm_td_statistics = DomainStatistics(**state_dict['norm_td_statistics'])
+        
+    def _get_current_pseudo_label(self, label_dataloader: DataLoader = None) -> Optional[torch.Tensor]:
+        if self.using_atlas_pl:
+            y_dae_or_atlas = self.atlas.detach().cpu()
+        
+        elif self.using_dae_pl and label_dataloader is not None:
+            y_dae_or_atlas = []
+            for (y_dae_mb,) in label_dataloader:
+                y_dae_or_atlas.append(y_dae_mb)
+            y_dae_or_atlas = torch.vstack(y_dae_or_atlas)
+            y_dae_or_atlas = y_dae_or_atlas.permute(1, 0, 2, 3).unsqueeze(0) # make NCDHW
+            y_dae_or_atlas = y_dae_or_atlas[:, :, 0:self.atlas.shape[2]] # To handle dataset repetitions of the atlas
+            y_dae_or_atlas = y_dae_or_atlas.detach().cpu()
+        
+        else:
+            y_dae_or_atlas = None
+        
+        return y_dae_or_atlas

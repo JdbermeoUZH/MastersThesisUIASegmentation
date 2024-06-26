@@ -1,6 +1,7 @@
 import os
 import copy
 from tqdm import tqdm
+from collections import defaultdict
 from typing import Optional, Union, Literal   
 
 import wandb
@@ -9,6 +10,8 @@ import numpy as np
 from torch.nn import functional as F
 from torch.utils.data import ConcatDataset, DataLoader, TensorDataset
 
+
+from tta_uia_segmentation.src.tta import TTADAE
 from tta_uia_segmentation.src.models import ConditionalGaussianDiffusion
 from tta_uia_segmentation.src.utils.io import save_checkpoint, write_to_csv
 from tta_uia_segmentation.src.utils.loss import dice_score
@@ -17,15 +20,42 @@ from tta_uia_segmentation.src.utils.utils import get_seed, stratified_sampling
 from tta_uia_segmentation.src.dataset import DatasetInMemory, utils as du
 
 
-class DiffusionTTA:
+def subtract_gradients_dicts(gradients_old: defaultdict, gradients_new: dict) -> dict:
+                
+        gradients_diff = {}
+        for param_name in gradients_new.keys():
+            gradients_diff[param_name] = gradients_new[param_name] - gradients_old[param_name]
+        
+        assert set(gradients_new.keys()) == set(gradients_old.keys()), \
+            'gradients_dict_2 must have the same keys as gradients_dict_1'
+            
+        return gradients_diff  
+    
+    
+def add_gradients_dicts(gradients_dict_1: defaultdict, gradients_dict_2: dict) -> dict:
+            
+        gradients_sum = {}
+        for param_name in gradients_dict_2.keys():
+            gradients_sum[param_name] = gradients_dict_1[param_name] + gradients_dict_2[param_name]
+        
+        assert set(gradients_dict_2.keys()) == set(gradients_dict_1.keys()), \
+            'gradients_dict_2 must have the same keys as gradients_dict_1'
+            
+        return gradients_sum      
+    
+
+class DiffusionTTA_and_TTADAE(TTADAE):
     
     def __init__(
         self,
         norm: torch.nn.Module,
         seg: torch.nn.Module,
         ddpm: ConditionalGaussianDiffusion,
+        dae: torch.nn.Module,
         learning_rate: float,
         n_classes: int,
+        dae_loss_alpha: float = 1.0,
+        ddpm_loss_beta: float = 1.0,
         classes_of_interest: Optional[list[int]] = None,
         learning_rate_norm: Optional[float] = None, 
         learning_rate_seg: Optional[float] = None,
@@ -41,16 +71,32 @@ class DiffusionTTA:
         w_cfg: float = 0.0,
         minibatch_size_ddpm: int = 2,
         wandb_log: bool = False,
+        **kwargs
         ) -> None:
         
         self.norm = norm
         self.seg = seg
         self.ddpm = ddpm
+        self.dae = dae  
+        
+        self.dae_loss_alpha = dae_loss_alpha
+        self.ddpm_loss_beta = ddpm_loss_beta
+        
+        # Initialize TTADAE class
+        super().__init__(norm=norm, seg=seg, dae=dae,
+                         learning_rate=learning_rate,
+                         n_classes=n_classes,
+                         norm_sd_statistics=None,**kwargs)
         
         # Save the initial state of the networks
         self.norm_dict_sd = copy.deepcopy(self.norm.state_dict())
         self.seg_dict_sd = copy.deepcopy(self.seg.state_dict())
         self.ddpm_dict_sd = copy.deepcopy(self.ddpm.state_dict())
+        self.dae_dict_sd = copy.deepcopy(self.dae.state_dict())
+        
+        # Define dictionary to store the gradients of norm
+        self.x_norm_grads_dae_loss = defaultdict(int)
+        self.x_norm_grads_ddpm_loss = defaultdict(int)
         
         # Define learning rates and optimizer     
         self.learning_rate = learning_rate
@@ -66,10 +112,6 @@ class DiffusionTTA:
             ]
         )
         
-        # Setting up metrics for model selection.
-        self.tta_losses = []
-        self.tta_score = []
-
         # DDPM loss parameters  
         self.ddpm_loss = ddpm_loss
         self.w_cfg = w_cfg
@@ -114,10 +156,12 @@ class DiffusionTTA:
         dataset_name: str,
         index: int,
         num_steps: int,
+        accumulate_over_volume: bool,
         num_t_noise_pairs_per_img: int,
         batch_size: int,
         num_workers: int,
         calculate_dice_every: int,
+        update_dae_output_every: int,
         dataset_repetition: int,
         const_aug_per_volume: bool,
         device: str,
@@ -134,6 +178,14 @@ class DiffusionTTA:
         self.tta_losses = []
         self.tta_score = []
         
+        pseudo_label_dataloader = None
+        
+        if self.rescale_factor is not None:
+            assert (batch_size * self.rescale_factor[0]) % 1 == 0
+            pseudo_label_batch_size = int(batch_size * self.rescale_factor[0])
+        else:
+            pseudo_label_batch_size = batch_size
+            
         # Define the sampler object for the volume dataset
         volume_dataloader = DataLoader(
             ConcatDataset([volume_dataset] * dataset_repetition),
@@ -143,19 +195,18 @@ class DiffusionTTA:
             drop_last=False,
         )
         
-        for step in range(num_steps):
-            print(f'Step: {step}')
+        for step in tqdm(range(num_steps)):
             # Measure segmentation performance during adaptation
             # :===========================================: 
-            self.norm.eval()
-            #self.seg.eval()
-            volume_dataset.dataset.set_augmentation(False)
-            
             if step % calculate_dice_every == 0 and calculate_dice_every != -1:
-
+                self.norm.eval()
+                #self.seg.eval()
+                volume_dataset.dataset.set_augmentation(False)
+                y_dae_or_atlas = self._get_current_pseudo_label(pseudo_label_dataloader)
                 _, dices_fg = self.test_volume(
                     volume_dataset=volume_dataset,
                     dataset_name=dataset_name,
+                    y_dae_or_atlas=y_dae_or_atlas,
                     logdir=logdir,
                     device=device,
                     num_workers=num_workers,
@@ -166,35 +217,104 @@ class DiffusionTTA:
                 )
                 self.tta_score.append(dices_fg.mean().item())
 
-            # Reset the state of the networks and dataloader
-            self.norm.train() if self.fit_norm_params else self.norm.eval()
-            self.seg.train() if self.fit_seg_params else self.seg.eval()
-            volume_dataset.dataset.set_augmentation(True)
+                # Reset the state of the networks and dataloader
+                self.norm.train() if self.fit_norm_params else self.norm.eval()
+                self.seg.train() if self.fit_seg_params else self.seg.eval()
+                volume_dataset.dataset.set_augmentation(True)
 
-
-            # Adapting based on image likelihood
+            # DAE: Get pseudo label for current step 
             # :===========================================:
-            
+            if step % update_dae_output_every == 0 and self.dae_loss_alpha > 0:
+                if step == 0 or self.beta <= 1.0:
+                    dice_dae, _, pseudo_label_dataloader = self.generate_pseudo_labels(
+                        dae_dataloader=volume_dataloader,
+                        label_batch_size=pseudo_label_batch_size,
+                        device=device,
+                        num_workers=num_workers,
+                        dataset_repetition=dataset_repetition
+                    )
+                else:
+                    pseudo_label_dataloader = [[None]] * len(volume_dataloader)
+             
+            # DDPM: Get (t, epsilon) tuples for the current step if using a given pair for the entire volume
+            # :===========================================:
             # Sample t and noise for the DDPM
-            t_noise_dl = self._sample_t_noise_pairs(
-                num_samples=num_t_noise_pairs_per_img,
-                dl_batch_size=batch_size,
-                num_workers=num_workers,
-                num_imgs_per_volume=len(volume_dataset) * dataset_repetition
-            )
+            if self.pair_sampling_type == 'one_per_volume':
+                t_noise_dl = self._sample_t_noise_pairs(
+                    num_samples=num_t_noise_pairs_per_img,
+                    dl_batch_size=batch_size,
+                    num_workers=num_workers,
+                    pair_sampling_type=self.pair_sampling_type  
+                )
             
-            # Fit the parameters of the networks
-            ddpm_loss = 0
+            # Adapt
+            # :===========================================:
+            step_tta_loss = 0
+            step_dae_loss = 0
+            step_ddpm_loss = 0
             n_samples = 0
             
-            self.optimizer.zero_grad()
+            if accumulate_over_volume:
+                self.optimizer.zero_grad()
+                self.x_norm_grads_dae_loss = defaultdict(int)
+                self.x_norm_grads_ddpm_loss = defaultdict(int)
 
             if const_aug_per_volume:
                 volume_dataset.dataset.set_seed(get_seed())
-                            
-            for ((t,), (noise,)) in tqdm(t_noise_dl, total=num_t_noise_pairs_per_img):
-                for x, *_ in volume_dataloader:
-                    ddpm_reweigh_factor = 1 / ( num_t_noise_pairs_per_img * len(volume_dataloader) )
+        
+            for (x, _,_,_, bg_mask), (y_pl,) in zip(volume_dataloader, pseudo_label_dataloader):
+                if not accumulate_over_volume:
+                    self.optimizer.zero_grad()
+                    self.x_norm_grads_dae_loss = defaultdict(int)
+                    self.x_norm_grads_ddpm_loss = defaultdict(int)
+                    
+                x = x.to(device).float()    
+                y_pl = y_pl.to(device)
+                bg_mask = bg_mask.to(device).float()                 
+                n_samples += x.shape[0]
+
+                # 1) DAE loss: Calculate gradients from the segmentation task on the pseudo label  
+                # :===============================================================:  
+                if self.dae_loss_alpha > 0:
+                    x_norm_grads_old = self._get_gradients_x_norm()
+                    
+                    _, mask, _ = self.forward_pass_seg(
+                        x, bg_mask, self.bg_supp_x_norm_dae, self.bg_suppression_opts_tta, device,
+                        manually_norm_img_before_seg=self.manually_norm_img_before_seg_tta
+                    )
+                    
+                    if self.rescale_factor is not None:
+                        mask = self.rescale_volume(mask)
+                        
+                    dae_loss = self.dae_loss_alpha * self.loss_func(mask, y_pl)
+                    
+                    if accumulate_over_volume:
+                        dae_loss = dae_loss / len(volume_dataloader)
+
+                    dae_loss.backward()
+                    
+                    # Get the gradient for the last layer of the normalizer
+                    x_norm_grads_new = self._get_gradients_x_norm()
+                    self.x_norm_grads_dae_loss = add_gradients_dicts(
+                        self.x_norm_grads_dae_loss,
+                        subtract_gradients_dicts(x_norm_grads_old, x_norm_grads_new),
+                    )
+                    
+                # 2) DDPM gradient calculation 
+                if self.pair_sampling_type == 'one_per_image':
+                    t_noise_dl = self._sample_t_noise_pairs(
+                        num_samples=num_t_noise_pairs_per_img,
+                        dl_batch_size=batch_size, 
+                        num_workers=num_workers,
+                        pair_sampling_type=self.pair_sampling_type
+                    )
+                
+                x_norm_grads_old = self._get_gradients_x_norm()
+                for (t,), (noise,) in t_noise_dl:
+                    ddpm_reweigh_factor = 1 / (num_t_noise_pairs_per_img)
+                    
+                    if accumulate_over_volume:
+                        ddpm_reweigh_factor *= 1 / len(volume_dataloader) 
                     
                     assert x.shape[0] == t.shape[0] == noise.shape[0], 'Number of samples must match'      
                                         
@@ -207,20 +327,37 @@ class DiffusionTTA:
                         min_int_imgs=self.min_intensity_imgs,
                         max_int_imgs=self.max_intensity_imgs,
                     )
+                    
+                x_norm_grads_new = self._get_gradients_x_norm()
+                self.x_norm_grads_ddpm_loss = add_gradients_dicts(
+                    self.x_norm_grads_ddpm_loss,
+                    subtract_gradients_dicts(x_norm_grads_old, x_norm_grads_new),
+                )
+                    
+                if not accumulate_over_volume:
+                    self.optimizer.step()
+                    if self.wandb_log: self._log_x_norm_out_gradient_magnitudes(index, step)
                                                     
-                    with torch.no_grad():
-                        ddpm_loss += ddpm_loss.detach() * x.shape[0]
-                        n_samples += x.shape[0]
+                with torch.no_grad():
+                    step_dae_loss += (dae_loss.detach() * x.shape[0]).item() \
+                        if self.dae_loss_alpha > 0 else 0             
+                            
+                    step_ddpm_loss += (ddpm_loss.detach() * x.shape[0]).item() \
+                        if self.ddpm_loss_beta > 0 else 0
+                
+                step_tta_loss = step_dae_loss + step_ddpm_loss                                                                    
                         
-            self.optimizer.step()
-
-            ddpm_loss = (ddpm_loss / n_samples).item()
-            
-            self.tta_losses.append(ddpm_loss)
-
+                self.tta_losses.append(step_tta_loss)        
+        
+            if accumulate_over_volume:
+                self.optimizer.step()
+                if self.wandb_log: self._log_x_norm_out_gradient_magnitudes(index, step)
+                
             if self.wandb_log:
                 wandb.log({
-                    f'ddpm_loss/img_{index}': ddpm_loss, 
+                    f'dae_loss/img_{index:03d}': step_dae_loss, 
+                    f'ddpm_loss/img_{index:03d}': step_ddpm_loss,
+                    f'total_loss/img_{index:03d}': step_tta_loss, 
                     'tta_step': step
                     }
                 )  
@@ -242,128 +379,6 @@ class DiffusionTTA:
         dice_scores = {i * calculate_dice_every: score for i, score in enumerate(self.tta_score)}
 
         return dice_scores
-    
-    '''
-    def tta_original_algorithm(
-        self,
-        volume_dataset: DatasetInMemory,
-        dataset_name: str,
-        n_classes: int, 
-        index: int,
-        bg_suppression_opts: dict,
-        bg_suppression_opts_tta: dict,
-        num_steps: int = 5,
-        batch_size: int = 8,
-        batch_size_ddpm: int = 180,
-        minibatch_size_ddpm: int = 2,
-        num_workers: int = cpu_count(),
-        device: str = 'cuda',
-        logdir: Optional[str] = None,     
-    ):  
-        """
-        TTA algorithm as described in the original paper.
-        
-        See https://openreview.net/pdf?id=gUTVpByfVX
-        
-        The algorithm is applied on each image individually.
-        
-        Each step of the TTA algorithm consists of the following steps:
-        1. Compute current segmentation label estimate
-        2. Sample `batch_size` (noise, timestep) tuples and calculate the gradients of the DDPM
-        3. Calculate and accumulate the reverse process gradients for the sampled tuples
-        4. Update the parameters of the Segmentation network and the DDPM   
-         
-        """ 
-        self.tta_score = []
-        
-        self.norm.train() if self.fit_norm_params else self.norm.eval()
-        self.seg.train() if self.fit_seg_params else self.seg.eval()
-        self.ddpm.train() if self.fit_ddpm_params else self.ddpm.eval()
-        
-        # Load the sample of cuts on which to perform TTA
-        volume_dataloader = DataLoader(
-            volume_dataset,
-            batch_size=batch_size,
-            shuffle=False,
-            num_workers=num_workers,
-            drop_last=False,
-        )
-        
-        vol_estimates = {k: {'x_norm':[], 'y_pred': []} for k in range(num_steps)}
-        
-        for x, _,_,_, bg_mask in tqdm(volume_dataloader):
-            x = x.to(device).float()      
-            bg_mask = bg_mask.to(device)
-            
-            # Reset the state of the networks
-            self.norm.load_state_dict(self.norm_dict)
-            self.seg.load_state_dict(self.seg_dict)
-            self.ddpm.load_state_dict(self.ddpm_dict)
-            
-            for step in range(num_steps):
-                print('Step:', step)
-                self.optimizer.zero_grad()
-    
-                # Get the predicted segmentation
-                x_norm = self.norm(x)
-                y_pred, _  = self.seg(x_norm)
-                
-                # Accumulate gradients over the batch_size
-                for i in tqdm(range(batch_size_ddpm)):
-                    not_last_batch = i < batch_size_ddpm - 1
-                    self.calculate_ddpm_gradients(
-                        x.clone(), 
-                        y_pred,
-                        minibatch_size=minibatch_size_ddpm,
-                        retain_graph=not_last_batch
-                    )
-                    
-                self.optimizer.step()
-                
-                # Get the current estimate for the image
-                with torch.no_grad():
-                    x_norm = self.norm(x)
-                    x_norm = background_suppression(x_norm, bg_mask, bg_suppression_opts)
-                    y_pred, _  = self.seg(x_norm)
-                    vol_estimates[step]['x_norm'].append(x_norm.cpu())
-                    vol_estimates[step]['y_pred'].append(y_pred.cpu())
-        
-        # Measure segmentation performance during adaptation
-        x_original, y_original, _ = volume_dataset.dataset.get_original_images(index)
-        _, _, D, H, W = y_original.shape  # xyz = HWD   
-        
-        for step, pred_list in vol_estimates.items():
-            x_norm = torch.vstack(pred_list['x_norm'])
-            y_pred = torch.vstack(pred_list['y_pred'])
-            
-            # Rescale x and y to the original resolution
-            x_norm = x_norm.permute(1, 0, 2, 3).unsqueeze(0)  # convert to NCDHW (with N=1)
-            y_pred = y_pred.permute(1, 0, 2, 3).unsqueeze(0)  # convert to NCDHW (with N=1)
-
-            x_norm = F.interpolate(x_norm, size=(D, H, W), mode='trilinear')
-            y_pred = F.interpolate(y_pred, size=(D, H, W), mode='trilinear')
-            
-            export_images(
-                x_original,
-                x_norm,
-                y_original,
-                y_pred,
-                n_classes=n_classes,
-                output_dir=os.path.join(logdir, 'segmentations'),
-                image_name=f'{dataset_name}_test_{index:03}_{step:03}.png'
-            )
-            
-            _, dices_fg = dice_score(y_pred, y_original, soft=False, reduction='none', smooth=1e-5)
-            print(f'Step {step} - dice score {dices_fg.mean().item()}')
-            self.tta_score.append(dices_fg.mean().item())
-
-        write_to_csv(
-            os.path.join(logdir, 'tta_score', f'{dataset_name}_{index:03d}.csv'),
-            np.array([self.tta_score]).T,
-            header=['tta_score'],
-            mode='w',
-        )
-    '''    
     
     def _calculate_ddpm_gradients(
         self,
@@ -469,17 +484,18 @@ class DiffusionTTA:
         return ddpm_loss_value
     
     def _sample_t_noise_pairs(
-        self, num_samples: int,
-        dl_batch_size: int, num_workers: int, 
-        num_imgs_per_volume: int,
+        self, 
+        num_samples: int,
+        dl_batch_size: int,
+        num_workers: int, 
+        pair_sampling_type: Literal['one_per_volume', 'one_per_image'] = 'one_per_volume',
         num_groups_stratified_sampling: int = 32,
-         
         ) -> torch.utils.data.DataLoader:
         
         num_samples_orig = num_samples
         
-        if self.pair_sampling_type == 'one_per_image':
-            num_samples = num_samples * num_imgs_per_volume
+        if pair_sampling_type == 'one_per_image':
+            num_samples = num_samples * dl_batch_size
         
         # Sample t values
         if self.t_sampling_strategy == 'uniform':
@@ -502,11 +518,12 @@ class DiffusionTTA:
                              int(self.ddpm.image_size), int(self.ddpm.image_size)))
         
         if self.pair_sampling_type == 'one_per_volume':
-            t_values = t_values.repeat_interleave(num_imgs_per_volume)
-            noise = noise.repeat_interleave(num_imgs_per_volume, dim=0)
+            t_values = t_values.repeat_interleave(dl_batch_size)
+            noise = noise.repeat_interleave(dl_batch_size, dim=0)
+            num_samples = num_samples * dl_batch_size
         
         assert len(t_values) == len(noise), 'Number of samples must match the number of noise samples'
-        assert len(t_values) == num_samples_orig * num_imgs_per_volume, 'Number of samples must match the number of noise samples'
+        assert len(t_values) == num_samples, 'Number of samples must match the number of noise samples'
                     
         t_dl = DataLoader(
             TensorDataset(t_values),
@@ -539,6 +556,31 @@ class DiffusionTTA:
             seg_state_dict=self.seg.state_dict(),
             ddpm_state_dict=None if save_ddpm else self.ddpm.state_dict(), 
         )
+        
+    def _log_x_norm_out_gradient_magnitudes(self, index, step):
+        # Get the name of the last layer
+        last_layer_name = [name for name, _ in self.norm.named_parameters() if 'weight' in name][-1]
+        
+        log_dict = {'tta_step': step}
+        
+        if self.dae_loss_alpha > 0:
+            log_dict[f'norm_x_norm_out_grad_dae_loss/img_{index:03d}'] = \
+                torch.norm(self.x_norm_grads_dae_loss[last_layer_name])
+        
+        if self.ddpm_loss_beta > 0:
+            log_dict[f'norm_x_norm_out_grad_ddpm_loss/img_{index:03d}'] = \
+                torch.norm(self.x_norm_grads_ddpm_loss[last_layer_name])  
+        
+        wandb.log(log_dict)
+
+        
+    def _get_gradients_x_norm(self) -> dict:
+        gradients_dict = defaultdict(int)
+        for name, param in self.norm.named_parameters():
+            if param.grad is not None:
+                gradients_dict[name] = param.grad.detach().clone()  # Store gradients and detach to avoid memory leaks
+                
+        return gradients_dict
     
     @torch.inference_mode()
     def test_volume(
@@ -549,6 +591,7 @@ class DiffusionTTA:
         num_workers: int,
         batch_size: int, 
         appendix='',
+        y_dae_or_atlas: Optional[torch.Tensor] = None,  
         iteration=-1,
         device: Optional[Union[str, torch.device]] = None,
         logdir: Optional[str] = None,
@@ -609,11 +652,15 @@ class DiffusionTTA:
         x_norm = F.interpolate(x_norm, size=(D, H, W), mode='trilinear')
         y_pred = F.interpolate(y_pred, size=(D, H, W), mode='trilinear')
             
+        if y_dae_or_atlas is not None:
+            y_dae_or_atlas = F.interpolate(y_dae_or_atlas, size=(D, H, W), mode='trilinear')
+        
         export_images(
             x_original,
             x_norm,
             y_original,
             y_pred,
+            y_dae=y_dae_or_atlas,
             n_classes=self.n_classes,
             output_dir=os.path.join(logdir, 'segmentations'),
             image_name=f'{dataset_name}_test_{index:03}_{iteration:03}{appendix}.png'
@@ -648,20 +695,48 @@ class DiffusionTTA:
                 x_norm,
                 y_original[:, [0, classes_of_interest], ...],
                 y_pred[:, [0, classes_of_interest], ...],
-                n_classes=self.n_classes,
-                output_dir=os.path.join(logdir, 'segmentations_classes_of_interest'),
+                y_dae=y_dae_or_atlas[:, [0, classes_of_interest], ...] if y_dae_or_atlas is not None else None,
+                n_classes=self.n_classes,                output_dir=os.path.join(logdir, 'segmentations_classes_of_interest'),
                 image_name=f'{dataset_name}_test_{index:03}_{iteration:03}{appendix}.png'
             )
             
         return dices.cpu(), dices_fg.cpu()
     
     def reset_initial_state(self):
+        self.x_norm_grads_dae_loss = defaultdict(int)          
+        self.x_norm_grads_ddpm_loss = defaultdict(int)         
+        
         self.norm.load_state_dict(self.norm_dict_sd)
         self.seg.load_state_dict(self.seg_dict_sd)
         self.ddpm.load_state_dict(self.ddpm_dict_sd)
+        
+        # Reset Optimizer
+        self.optimizer = torch.optim.Adam(
+            self.norm.parameters(),
+            lr=self.learning_rate
+        )
+        
+        # Reset flags and state info related to TTA-DAE
+        self.norm_seg_dict = {
+            'best_score': {
+                'norm_state_dict': copy.deepcopy(self.norm.state_dict()),
+                'seg_state_dict': copy.deepcopy(self.seg.state_dict())
+                }
+        }
+        self.metrics_best['best_score'] = 0
+        self.tta_losses = []
+        self.test_scores = []
+        
+        # DAE PL states
+        self.use_only_dae_pl = self.alpha == 0 and self.beta == 0
+        self.using_dae_pl = False
+        self.using_atlas_pl = False
+
     
     def _define_custom_wandb_metrics(self, ):
         wandb.define_metric(f'tta_step')
         wandb.define_metric(f'ddpm_loss/*', step_metric=f'tta_step')
         wandb.define_metric(f'dice_score_fg/*', step_metric=f'tta_step')    
-        wandb.define_metric(f'dice_score_classes_of_interest/*', step_metric=f'tta_step')
+        
+        if self.classes_of_interest is not None:
+            wandb.define_metric(f'dice_score_classes_of_interest/*', step_metric=f'tta_step')

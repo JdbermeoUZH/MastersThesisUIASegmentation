@@ -12,12 +12,13 @@ import matplotlib.pyplot as plt
 sys.path.append(os.path.normpath(os.path.join(
     os.path.dirname(__file__), '..', '..')))
 
-from tta_uia_segmentation.src.tta import DiffusionTTA
+from tta_uia_segmentation.src.tta import DiffusionTTA_and_TTADAE
 from tta_uia_segmentation.src.dataset.dataset_in_memory import get_datasets
 from tta_uia_segmentation.src.models.io import (
     load_cddpm_from_configs_and_cpt,
-    load_norm_and_seg_from_configs_and_cpt
-)
+    load_norm_and_seg_from_configs_and_cpt,
+    load_dae_and_atlas_from_configs_and_cpt
+    )
 from tta_uia_segmentation.src.utils.io import (
     load_config, dump_config, print_config, write_to_csv, rewrite_config_arguments)
 from tta_uia_segmentation.src.utils.utils import seed_everything, define_device
@@ -26,7 +27,7 @@ from tta_uia_segmentation.src.utils.logging import setup_wandb
 
 torch.autograd.set_detect_anomaly(True)
 
-tta_mode = 'diffusionTTA'
+tta_mode = 'diffusionTTA_and_DAE'
 
 def preprocess_cmd_args() -> argparse.Namespace:
     """_
@@ -54,10 +55,14 @@ def preprocess_cmd_args() -> argparse.Namespace:
     # TTA loop
     # -------------:
     # optimization params
+    parser.add_argument('--dae_loss_alpha', type=float, help='Weight for DAE loss. Default: 1.0')
+    parser.add_argument('--ddpm_loss_beta', type=float, help='Weight for DDPM loss. Default: 1.0')
+    
     parser.add_argument('--learning_rate', type=float, help='Learning rate for optimizer. Default: 8e-5')
     parser.add_argument('--learning_rate_norm', type=float, help='Learning rate for optimizer. Default: None')
     parser.add_argument('--learning_rate_seg', type=float, help='Learning rate for optimizer. Default: None')
     parser.add_argument('--learning_rate_ddpm', type=float, help='Learning rate for optimizer. Default: None')  
+    
     parser.add_argument('--num_steps', type=int, help='Number of steps to take in TTA loop. Default: 100')
     parser.add_argument('--num_t_noise_pairs_per_img', type=int, help='Number of t, noise pairs per image. Default: 180')
     parser.add_argument('--pair_sampling_type', type=str, help='Type of sampling for t, noise pairs. Default: "uniform"', choices=['one_per_volume', 'one_per_image'])
@@ -72,6 +77,9 @@ def preprocess_cmd_args() -> argparse.Namespace:
     parser.add_argument('--t_ddpm_range', type=float, nargs=2, help='Quantile range of t values for DDPM. Default: [0.2, 0.98]')       
     parser.add_argument('--t_sampling_strategy', type=str, help='Sampling strategy for t values. Default: uniform')
     parser.add_argument('--min_max_intenities_norm_imgs', type=float, nargs=2, help='Min and max intensities for normalization before evaluating DDPM')
+   
+    # DAE dir
+    parser.add_argument('--dae_dir', type=str, help='Path to directory where DAE checkpoints are saved')
    
     # Probably not used arguments
     parser.add_argument('--seed', type=int, help='Seed for random number generators. Default: 0')   
@@ -92,7 +100,7 @@ def preprocess_cmd_args() -> argparse.Namespace:
     
     # Evaluation parameters
     # ----------------------:
-    parser.add_argument('--calculate_dice_every', type=int, help='Calculate dice score every n steps. Default: 10')
+    parser.add_argument('--calculate_dice_every', type=int, help='Calculate dice score every n steps.')
     args = parser.parse_args()
         
     return args
@@ -129,7 +137,8 @@ if __name__ == '__main__':
 
     seg_dir                 = tta_config['seg_dir']
     ddpm_dir                = tta_config[tta_mode]['ddpm_dir']
-    
+    dae_dir                 = tta_config[tta_mode]['dae_dir']
+
     params_seg              = load_config(os.path.join(seg_dir, 'params.yaml'))
     model_params_norm       = params_seg['model']['normalization_2D']
     model_params_seg        = params_seg['model']['segmentation_2D']
@@ -139,12 +148,16 @@ if __name__ == '__main__':
     model_params_ddpm       = params_ddpm['model']['ddpm_unet']
     train_params_ddpm       = params_ddpm['training']['ddpm']
     
+    params_dae              = load_config(os.path.join(dae_dir, 'params.yaml'))
+    model_params_dae        = params_dae['model']['dae']
+    train_params_dae        = params_dae['training']
+    
     params                  = { 
                                'datset': dataset_config,
                                'model': {'norm': model_params_norm, 'seg': model_params_seg, 
-                                         'ddpm': model_params_ddpm},
-                               'training': {'seg': train_params_seg, 
-                                            'ddpm': train_params_ddpm},
+                                         'dae': model_params_dae, 'ddpm': model_params_ddpm},
+                               'training': {'seg': train_params_seg, 'ddpm': train_params_ddpm,
+                                            'dae': train_params_dae},
                                'tta': tta_config
                                }
         
@@ -209,6 +222,14 @@ if __name__ == '__main__':
     )
     
     print('Segmentation model loaded')
+    
+    # DAE
+    dae, atlas = load_dae_and_atlas_from_configs_and_cpt(
+        n_classes = n_classes,
+        model_params_dae = model_params_dae,
+        cpt_fp = os.path.join(dae_dir, train_params_dae[cpt_type]),
+        device = device,
+    )
 
     # DDPM
     unconditional_rate          = tta_config[tta_mode]['unconditional_rate']
@@ -233,8 +254,15 @@ if __name__ == '__main__':
     
     # How the segmentation is evaluated
     classes_of_interest         = tta_config[tta_mode]['classes_of_interest']
-        
-    # DDPM-TTA params    
+    
+    # TTA-DAE params
+    alpha                       = tta_config[tta_mode]['alpha']
+    beta                        = tta_config[tta_mode]['beta']
+    rescale_factor              = train_params_dae['dae']['rescale_factor']
+    bg_suppression_opts         = tta_config['bg_suppression_opts']
+    bg_suppression_opts_tta     = tta_config[tta_mode]['bg_suppression_opts']
+
+    # diffusionTTA params    
     ddpm_loss                   = tta_config[tta_mode]['ddpm_loss']
     w_cfg                       = tta_config[tta_mode]['w_cfg']
     pair_sampling_type          = tta_config[tta_mode]['pair_sampling_type']
@@ -242,16 +270,23 @@ if __name__ == '__main__':
     t_sampling_strategy         = tta_config[tta_mode]['t_sampling_strategy']
     minibatch_size_ddpm         = tta_config[tta_mode]['minibatch_size_ddpm']
 
-    tta = DiffusionTTA(
+    tta = DiffusionTTA_and_TTADAE(
         norm                    = norm,
         seg                     = seg,
-        ddpm                    = ddpm,          
+        ddpm                    = ddpm,
+        dae                     = dae,    
+        atlas                   = atlas,      
         n_classes               = n_classes,
         learning_rate           = learning_rate,
         learning_rate_norm      = learning_rate_norm,
         learning_rate_seg       = learning_rate_seg,
         learning_rate_ddpm      = learning_rate_ddpm,
         classes_of_interest     = classes_of_interest,
+        alpha                   = alpha,
+        beta                    = beta,
+        rescale_factor          = rescale_factor,
+        bg_suppression_opts     = bg_suppression_opts,
+        bg_suppression_opts_tta = bg_suppression_opts_tta,
         ddpm_loss               = ddpm_loss,
         pair_sampling_type      = pair_sampling_type,
         t_ddpm_range            = t_ddpm_range,
@@ -263,12 +298,14 @@ if __name__ == '__main__':
     
     # Do TTA with a DAE
     # :=========================================================================:
+    accumulate_over_volume      = tta_config[tta_mode]['accumulate_over_volume']
     num_steps                   = tta_config[tta_mode]['num_steps']
     batch_size                  = tta_config[tta_mode]['batch_size']
     num_workers                 = tta_config['num_workers']
     save_checkpoints            = tta_config[tta_mode]['save_checkpoints']
     dataset_repetition          = tta_config[tta_mode]['dataset_repetition']
     const_aug_per_volume        = tta_config[tta_mode]['const_aug_per_volume']
+    update_dae_output_every     = tta_config[tta_mode]['update_dae_output_every']
     calculate_dice_every        = tta_config[tta_mode]['calculate_dice_every']
     num_t_noise_pairs_per_img   = tta_config[tta_mode]['num_t_noise_pairs_per_img']
     
@@ -294,7 +331,7 @@ if __name__ == '__main__':
     print(f'pair_sampling_type: {pair_sampling_type}')
     print(f't_ddpm_range: {t_ddpm_range}')
     print(f't_sampling_strategy: {t_sampling_strategy}')
-    print(f'bath_size: {batch_size}')
+    print(f'batch_size: {batch_size}')
     print(f'minibatch_size_ddpm: {minibatch_size_ddpm}')
     
     dice_scores = torch.zeros((len(indices_per_volume), n_classes))
@@ -310,21 +347,23 @@ if __name__ == '__main__':
         volume_dataset = Subset(test_dataset, indices)
 
         tta.reset_initial_state()
-
+        
         dice_scores_wrt_gt = tta.tta(
-            volume_dataset = volume_dataset,
-            dataset_name = dataset,
-            index = i,
-            num_steps = num_steps,
+            volume_dataset      = volume_dataset,
+            dataset_name        = dataset,
+            index               = i,
+            accumulate_over_volume=accumulate_over_volume,
+            num_steps           = num_steps,
             num_t_noise_pairs_per_img=num_t_noise_pairs_per_img,
-            batch_size = batch_size,
-            num_workers=num_workers,
-            calculate_dice_every = calculate_dice_every,
-            dataset_repetition = dataset_repetition,
-            const_aug_per_volume = const_aug_per_volume,
-            save_checkpoints = save_checkpoints,
-            device=device,
-            logdir = logdir
+            calculate_dice_every=calculate_dice_every,
+            batch_size          = batch_size,
+            num_workers         =num_workers,
+            update_dae_output_every=update_dae_output_every,
+            dataset_repetition  = dataset_repetition,
+            const_aug_per_volume= const_aug_per_volume,
+            save_checkpoints    = save_checkpoints,
+            device              = device,
+            logdir              = logdir
         )
         
         tta.norm.eval()
