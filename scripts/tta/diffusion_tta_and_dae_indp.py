@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 sys.path.append(os.path.normpath(os.path.join(
     os.path.dirname(__file__), '..', '..')))
 
-from tta_uia_segmentation.src.tta import DiffusionTTA_and_TTADAE
+from tta_uia_segmentation.src.tta.DiffusionTTA_and_DAE_indp import DiffusionTTA_and_TTADAE_indp
 from tta_uia_segmentation.src.dataset.dataset_in_memory import get_datasets
 from tta_uia_segmentation.src.models.io import (
     load_cddpm_from_configs_and_cpt,
@@ -27,7 +27,7 @@ from tta_uia_segmentation.src.utils.logging import setup_wandb
 
 torch.autograd.set_detect_anomaly(True)
 
-tta_mode = 'diffusionTTA_and_DAE'
+tta_mode = 'diffusionTTA_and_DAE_indp'
 
 def preprocess_cmd_args() -> argparse.Namespace:
     """_
@@ -58,10 +58,8 @@ def preprocess_cmd_args() -> argparse.Namespace:
     parser.add_argument('--dae_loss_alpha', type=float, help='Weight for DAE loss. Default: 1.0')
     parser.add_argument('--ddpm_loss_beta', type=float, help='Weight for DDPM loss. Default: 1.0')
     
-    parser.add_argument('--learning_rate', type=float, help='Learning rate for optimizer. Default: 8e-5')
-    parser.add_argument('--learning_rate_norm', type=float, help='Learning rate for optimizer. Default: None')
-    parser.add_argument('--learning_rate_seg', type=float, help='Learning rate for optimizer. Default: None')
-    parser.add_argument('--learning_rate_ddpm', type=float, help='Learning rate for optimizer. Default: None')  
+    parser.add_argument('--learning_rate_dae', type=float, help='Learning rate for optimizer. Default: 8e-5')
+    parser.add_argument('--learning_rate_ddpm', type=float, help='Learning rate for optimizer. Default: 8e-5')  
     
     parser.add_argument('--num_steps', type=int, help='Number of steps to take in TTA loop. Default: 100')
     parser.add_argument('--num_t_noise_pairs_per_img', type=int, help='Number of t, noise pairs per image. Default: 180')
@@ -74,7 +72,6 @@ def preprocess_cmd_args() -> argparse.Namespace:
     parser.add_argument('--ddpm_dir', type=str, help='Path to directory where DDPM checkpoints are saved')
     parser.add_argument('--cpt_fn', type=str, help='Name of checkpoint file to load for DDPM')
     parser.add_argument('--ddpm_loss', type=str, help='Type of DDPM loss. Default: None', choices=['jacobian', 'sds', 'dds', 'pds', None])
-    parser.add_argument('--w_cfg', type=float)
     parser.add_argument('--t_ddpm_range', type=float, nargs=2, help='Quantile range of t values for DDPM. Default: [0.2, 0.98]')       
     parser.add_argument('--t_sampling_strategy', type=str, help='Sampling strategy for t values. Default: uniform')
     parser.add_argument('--min_max_intenities_norm_imgs', type=float, nargs=2, help='Min and max intensities for normalization before evaluating DDPM')
@@ -248,9 +245,7 @@ if __name__ == '__main__':
    
     # Define the TTADAE object that does the test time adapatation
     # :=========================================================================:    
-    learning_rate               = tta_config[tta_mode]['learning_rate']
-    learning_rate_norm          = tta_config[tta_mode]['learning_rate_norm']
-    learning_rate_seg           = tta_config[tta_mode]['learning_rate_seg']
+    learning_rate_dae           = tta_config[tta_mode]['learning_rate_dae']
     learning_rate_ddpm          = tta_config[tta_mode]['learning_rate_ddpm']
     
     # How the segmentation is evaluated
@@ -271,16 +266,14 @@ if __name__ == '__main__':
     t_sampling_strategy         = tta_config[tta_mode]['t_sampling_strategy']
     minibatch_size_ddpm         = tta_config[tta_mode]['minibatch_size_ddpm']
 
-    tta = DiffusionTTA_and_TTADAE(
+    tta = DiffusionTTA_and_TTADAE_indp(
         norm                    = norm,
         seg                     = seg,
         ddpm                    = ddpm,
         dae                     = dae,    
         atlas                   = atlas,      
         n_classes               = n_classes,
-        learning_rate           = learning_rate,
-        learning_rate_norm      = learning_rate_norm,
-        learning_rate_seg       = learning_rate_seg,
+        learning_rate_dae       = learning_rate_dae,
         learning_rate_ddpm      = learning_rate_ddpm,
         classes_of_interest     = classes_of_interest,
         alpha                   = alpha,

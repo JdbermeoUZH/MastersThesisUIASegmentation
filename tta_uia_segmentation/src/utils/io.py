@@ -10,6 +10,7 @@ import torch
 import imageio
 import numpy as np
 from matplotlib import pyplot as plt
+import nibabel as nib
 
 from tta_uia_segmentation.src.utils.utils import assert_in
 
@@ -162,3 +163,10 @@ def save_plt_image(dir, filename, image, dpi=300, **kwargs):
 def save_image(dir, filename, image):
     os.makedirs(dir, exist_ok=True)
     imageio.imwrite(os.path.join(dir, filename), image)
+    
+    
+def save_nii_image(dir, filename, image, affine=None):
+    os.makedirs(dir, exist_ok=True)
+    image = nib.Nifti1Image(image, affine)
+    nib.save(image, os.path.join(dir, filename))
+    

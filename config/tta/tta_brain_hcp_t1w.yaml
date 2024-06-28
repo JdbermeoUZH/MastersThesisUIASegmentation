@@ -226,3 +226,74 @@ diffusionTTA:
     brightness_max: 0.1
     noise_mean: 0.0
     noise_std: 0.0
+
+
+diffusionTTA_and_DAE:
+  wandb_project: mt-tta-diffusionTTA-tests
+  logdir: /scratch_net/biwidl319/jbermeo/logs/brain/tta/hcp_t2/test/diffusionTTA_and_DAE/06_12
+  ddpm_dir: /scratch_net/biwidl319/jbermeo/logs/brain/ddpm/hcp_t1/original_sd_imgs/06_09/batch_size_130_dim_64_dim_mults_1_2_2_2_uncond_rate_0.2_imgsize_128x128_no_class_balancing_norm_q_0.001_0.999
+  cpt_fn: 'model-6.pt'
+  dae_dir: /scratch_net/biwidl319/jbermeo/data/models/brain/dae/hcp_t1
+
+  num_steps:  1000                        # 5 for original algo (it accumulates gradients over the entire volume for entire batch size)
+  batch_size: 32                          # Used for eval and during training
+  minibatch_size_ddpm: 8                  # 8 for small GPUs, 64 for A6000
+  dataset_repetition: 1
+  const_aug_per_volume: True
+
+  dae_loss_alpha: 1.0 
+  ddpm_loss_beta: 1.0
+
+  learning_rate: 0.00008                   # 8e-5
+  learning_rate_norm: null                 # If null, takes the same value as learning_rate
+  learning_rate_seg: null                  # If null, takes the same value as learning_rate
+  learning_rate_ddpm: null                 # If null, takes the same value as learning_rate
+  accumulate_over_volume: True
+
+  fit_norm_params: True
+  fit_seg_params: True
+  fit_ddpm_params: True
+
+  save_checkpoints: True
+  calculate_dice_every: 50                 # 25 for brain, 135 for wmh (nuhs, umc, vu)
+  classes_of_interest: null                  # 16 for wmh + synthseg, null for brain and wmh  
+
+  # DAE Params
+  update_dae_output_every: 100
+  alpha: 1.0
+  beta: 0.25
+  bg_suppression_opts:
+    type: fixed_value                       # none, fixed_value, random_value
+    bg_value: -0.5
+    bg_value_min: -0.5
+    bg_value_max: 1
+    mask_source: thresholding               # thresholding, ground_truth
+    thresholding: otsu                      # isodata, li, mean, minimum, otsu, triangle, yen
+    hole_filling: True
+  
+  # DDPM Params
+  num_t_noise_pairs_per_img: 1             # 180 used in original algo
+  ddpm_loss: jacobian                      # jacobian, ssd, dds, pds. Jacobian for original algo
+  w_cfg: 100                               # 0.0 for original algo 
+  min_max_intenities_norm_imgs: [0, 1]
+  pair_sampling_type: one_per_volume       # 'one_per_volume', 'one_per_image'
+  t_ddpm_range: [0.02, 0.98]               # [0.02, 0.98] 
+  t_sampling_strategy: uniform             # uniform, stratified
+  unconditional_rate: 0                    # It is the rate at which it does forward passes in unconditional mode
+
+  augmentation:
+    da_ratio: 0.25
+    sigma: 20
+    alpha: 0
+    trans_min: 0
+    trans_max: 0
+    rot_min: 0
+    rot_max: 0
+    scale_min: 1.0
+    scale_max: 1.0
+    gamma_min: 0.5
+    gamma_max: 2.0
+    brightness_min: 0.0
+    brightness_max: 0.1
+    noise_mean: 0.0
+    noise_std: 0.0
