@@ -2,7 +2,7 @@ logdir: /scratch_net/biwidl319/jbermeo/data/models/wmh/umc/no_bg_supp_norm_w_3x3
 cpt_format: "checkpoint_tta_nuhs_w_synthseg_labels_{index}_last_step.pth"
 
 output_dir: /scratch_net/biwidl319/jbermeo/results/wmh/nuhs_w_synthseg_labels/no_bg_supp_norm_w_3x3_conv
-classes_of_interest: 16 # Null, or a list of classes for which to focus to measure the dice score 
+classes_of_interest: [16] # Null, or a list of classes for which to focus to measure the dice score 
 evaluate_also_bg_supp: True
 save_nii: true
 

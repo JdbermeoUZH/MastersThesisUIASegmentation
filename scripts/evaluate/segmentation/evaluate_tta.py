@@ -4,14 +4,14 @@ import argparse
 from typing import Optional, Union
 
 import torch
+import numpy as np
 import pandas as pd
 from torch.utils.data import Subset
 from torch.nn import functional as F
 from torch.utils.data import  TensorDataset, DataLoader
 
-
 sys.path.append(os.path.normpath(os.path.join(
-    os.path.dirname(__file__), '..', '..')))
+    os.path.dirname(__file__), '..', '..', '..')))
 
 from tta_uia_segmentation.src.dataset.dataset_in_memory import get_datasets, DatasetInMemory
 from tta_uia_segmentation.src.models.io import load_norm_and_seg_from_configs_and_cpt
@@ -20,7 +20,7 @@ from tta_uia_segmentation.src.utils.io import (
     load_config, dump_config, print_config, save_nii_image,
     rewrite_config_arguments)
 from tta_uia_segmentation.src.utils.utils import seed_everything, define_device
-from tta_uia_segmentation.src.utils.loss import dice_score
+from tta_uia_segmentation.src.utils.loss import dice_score, onehot_to_class
 from tta_uia_segmentation.src.utils.visualization import export_images
 
 
@@ -38,29 +38,20 @@ def preprocess_cmd_args() -> argparse.Namespace:
     """
     parser = argparse.ArgumentParser(description="Measure Segmentation Performance")
     
-    parser.add_argument('dataset_config_file', type=str, help='Path to yaml config file with parameters that define the dataset.')
-    parser.add_argument('evaluation_config_file', type=str, help='Path to yaml config file with parameters that define the evaluation.')
-    
+    parser.add_argument('evaluation_config_file', type=str, help='Path to yaml config file with parameters that define the evaluation.')    
     
     # Evaluation parameters
     # ---------------------------------------------------:
     parser.add_argument('--output_dir', type=str, help='Path to directory where output is saved. Default: "logs"')
     parser.add_argument('--logdir', type=str, help='Path to directory where logs are saved. Default: "logs"')  
     parser.add_argument('--cpt_format', type=str, help='Path to checkpoint file of the segmentation model. Default: "logs"')
-    parser.add_argument('--device', type=str, help='Device to use for training. Default: "cuda"')
     
-    # Dataset to evaluate the model on
-    # ---------------------------------------------------:
-    parser.add_argument('--dataset', type=str, help='Name of dataset to use for tta. Default: USZ')
-    parser.add_argument('--split', type=str, help='Name of split to use for tta. Default: test')
-    parser.add_argument('--vol_idx', type=str, help='Index of volume to, can allso be set to "all"')
-    parser.add_argument('--n_classes', type=int, help='Number of classes in dataset. Default: 21')
     parser.add_argument('--classes_of_interest', type=int, nargs='+', help='Classes to consider for evaluation. Default: [0, 1]')
-    parser.add_argument('--image_size', type=int, nargs='+', help='Size of images in dataset. Default: [560, 640, 160]')
-    parser.add_argument('--resolution_proc', type=float, nargs='+', help='Resolution of images in dataset. Default: [0.3, 0.3, 0.6]')
-    parser.add_argument('--rescale_factor', type=float, help='Rescale factor for images in dataset. Default: None')
     parser.add_argument('--evaluate_also_bg_supp', type=lambda s: s.strip().lower() == 'true')
     parser.add_argument('--save_nii', type=lambda s: s.strip().lower() == 'true')
+    
+    parser.add_argument('--device', type=str, help='Device to use for training. Default: "cuda"')
+    
     args = parser.parse_args()
     
     return args
@@ -69,13 +60,10 @@ def preprocess_cmd_args() -> argparse.Namespace:
 def get_configuration_arguments() -> tuple[dict, dict]:
     args = preprocess_cmd_args()
     
-    dataset_config = load_config(args.dataset_config_file)
-    dataset_config = rewrite_config_arguments(dataset_config, args, 'dataset')
-    
     evaluation_config = load_config(args.evaluation_config_file)
     evaluation_config = rewrite_config_arguments(evaluation_config, args, 'evaluation')
     
-    return args, dataset_config, evaluation_config
+    return evaluation_config
 
 @torch.inference_mode()
 def test_volume(
@@ -96,6 +84,7 @@ def test_volume(
     export_seg_imgs: bool = False,
     evaluate_also_bg_supp: bool = True,
     save_nii: bool = False,
+    classes_of_interest: Optional[list] = None,
 ):
     # Get original images (they are still downscaled)
     # :=========================================================================:
@@ -195,13 +184,21 @@ def test_volume(
                 output_dir=os.path.join(logdir, 'example_segmentations_bg_supp_at_eval_time'),
                 image_name=f'{dataset_name}_{split}_{index:03}_{appendix}.png'
             )
-            
+    
     if save_nii:
         save_nii_image(
-            dir=os.path.join(logdir, 'volume_segmentations'),
+            dir=os.path.join(logdir, 'volume_segmentations_all_classes'),
             filename=f'{dataset_name}_{split}_{index:03}_{appendix}.nii.gz', 
-            image=y_pred
+            image=onehot_to_class(y_pred).squeeze().detach().cpu().numpy().astype(np.int8)
         )
+        
+        if classes_of_interest is not None:
+            for cls in classes_of_interest:
+                save_nii_image(
+                    dir=os.path.join(logdir, 'volume_segmentations_classes_of_interest'),
+                    filename=f'{dataset_name}_{split}_{index:03}_{appendix}_cls_{cls}.nii.gz', 
+                    image=onehot_to_class(y_pred[:, [0, cls]]).squeeze().detach().round().byte().cpu().numpy().astype(np.int8)
+                )
 
     metrics_index = {}
     for metric_name, metric_fn in metrics.items():
@@ -225,34 +222,40 @@ if __name__ == '__main__':
     
     # Loading general parameters
     # :=========================================================================:
-    args, dataset_config, evaluation_config = get_configuration_arguments()
+    evaluation_config = get_configuration_arguments()
     
     device                  = evaluation_config['device']
     output_dir              = evaluation_config['output_dir'] 
     tta_logdir              = evaluation_config['logdir']
 
     assert os.path.exists(tta_logdir), f"Path to TTA directory does not exist: {tta_logdir}"
-    os.makedirs(output_dir, exist_ok=True)
     
     params                  = load_config(os.path.join(tta_logdir, 'params.yaml'))
     params_tta              = params['tta']
     
-    model_params_norm       = params['model']['normalization_2D']
-    model_params_seg        = params['model']['segmentation_2D']
+    dataset_params_key      = 'dataset' if 'dataset' in params else 'datset'
+    params_dataset          = params[dataset_params_key]
+    
+    model_params_norm       = params['model']['norm']
+    model_params_seg        = params['model']['seg']
 
     # Define the dataset that is to be used to evaluate the model
     # :=========================================================================:
-    dataset                 = params_tta['dataset']   
+    dataset                 = params_tta['dataset'] 
     split                   = params_tta['split']
     image_size              = params_tta['image_size']
 
     device                  = define_device(device)
-    n_classes               = dataset_config[dataset]['n_classes']
-    paths                   = dataset_config[dataset]['paths_processed']
-    paths_original          = dataset_config[dataset]['paths_original']
-    resolution_proc         = dataset_config[dataset]['resolution_proc']
-    dim_proc                = dataset_config[dataset]['dim']
+    n_classes               = params_dataset[dataset]['n_classes']
+    paths                   = params_dataset[dataset]['paths_processed']
+    paths_original          = params_dataset[dataset]['paths_original']
+    resolution_proc         = params_dataset[dataset]['resolution_proc']
+    dim_proc                = params_dataset[dataset]['dim']
     bg_suppresion_opts      = params_tta['bg_suppression_opts']
+    
+    exp_name = os.path.basename(tta_logdir)
+    output_dir = os.path.join(output_dir, dataset, split, exp_name)
+    os.makedirs(output_dir, exist_ok=True)
     
     print(f'Loading dataset: {dataset} {split}')
     eval_dataset, = get_datasets(
@@ -278,7 +281,8 @@ if __name__ == '__main__':
     batch_size = evaluation_config['batch_size']
     num_workers = evaluation_config['num_workers']
     also_bg_supp = evaluation_config['evaluate_also_bg_supp']
-
+    classes_of_interest = evaluation_config['classes_of_interest']
+    
     indices_per_volume = eval_dataset.get_volume_indices() 
     indices_per_volume = {i: indices for i, indices in enumerate(indices_per_volume)}
     
@@ -287,9 +291,9 @@ if __name__ == '__main__':
         # Load the segmentation model
         # :=========================================================================:
         print('Loading segmentation model')
-        cpt_fn = args.cpt_format.format(index=f'{vol_i:02d}')
+        cpt_fn = cpt_format.format(index=f'{vol_i:02d}', dataset=dataset)
         cpt_fp = os.path.join(tta_logdir, 'checkpoints', cpt_fn) 
-            
+        
         norm, seg = load_norm_and_seg_from_configs_and_cpt(
             n_classes = n_classes,
             model_params_norm = model_params_norm,
@@ -301,6 +305,7 @@ if __name__ == '__main__':
         
         print(f'Processing volume {vol_i}/{len(indices_per_volume) - 1}')
         volume_dataset = Subset(eval_dataset, idxs)
+        norm.eval()
         metrics_dict[vol_i] = test_volume(
             norm=norm,
             seg=seg,
@@ -318,13 +323,12 @@ if __name__ == '__main__':
             logdir=output_dir,
             export_seg_imgs=True,
             evaluate_also_bg_supp=also_bg_supp,
-            save_nii=save_nii
+            save_nii=save_nii,
+            classes_of_interest=classes_of_interest,
         )
         
     # Save the mean of each metric over the entire volume
-    # :=========================================================================:
-    classes_of_interest = evaluation_config['classes_of_interest']
-    
+    # :=========================================================================:    
     out_summary_file = open(os.path.join(output_dir, f'metrics_{dataset}_{split}.txt'), 'w')
     
     print('Saving metrics')
