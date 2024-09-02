@@ -5,6 +5,7 @@ output_dir: /scratch_net/biwidl319/jbermeo/results/wmh/nuhs_w_synthseg_labels/no
 classes_of_interest: [16] # Null, or a list of classes for which to focus to measure the dice score 
 evaluate_also_bg_supp: True
 save_nii: true
+tta_mode: null
 
 num_workers: 0
 batch_size: 32

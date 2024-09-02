@@ -168,6 +168,10 @@ def load_norm_and_seg_from_configs_and_cpt(
     checkpoint = torch.load(cpt_fp, map_location=device)
     norm_state_dict = checkpoint['norm_state_dict']
     seg_state_dict = checkpoint['seg_state_dict']
+    
+    if 'norm_state_dict' in norm_state_dict:
+        norm_state_dict = norm_state_dict['norm_state_dict']
+
     norm.load_state_dict(norm_state_dict)
     seg.load_state_dict(seg_state_dict)
     

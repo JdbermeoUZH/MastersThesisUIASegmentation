@@ -10,9 +10,8 @@ from torch.utils.data import Subset
 from torch.nn import functional as F
 from torch.utils.data import  TensorDataset, DataLoader
 
-
 sys.path.append(os.path.normpath(os.path.join(
-    os.path.dirname(__file__), '..', '..')))
+    os.path.dirname(__file__), '..', '..', '..')))
 
 from tta_uia_segmentation.src.dataset.dataset_in_memory import get_datasets, DatasetInMemory
 from tta_uia_segmentation.src.models.io import load_norm_and_seg_from_configs_and_cpt
@@ -39,30 +38,21 @@ def preprocess_cmd_args() -> argparse.Namespace:
     """
     parser = argparse.ArgumentParser(description="Measure Segmentation Performance")
     
-    parser.add_argument('dataset_config_file', type=str, help='Path to yaml config file with parameters that define the dataset.')
-    parser.add_argument('evaluation_config_file', type=str, help='Path to yaml config file with parameters that define the evaluation.')
-    
+    parser.add_argument('evaluation_config_file', type=str, help='Path to yaml config file with parameters that define the evaluation.')    
     
     # Evaluation parameters
     # ---------------------------------------------------:
+    parser.add_argument('--output_dir', type=str, help='Path to directory where output is saved. Default: "logs"')
     parser.add_argument('--logdir', type=str, help='Path to directory where logs are saved. Default: "logs"')  
-    parser.add_argument('--seg_dir', type=str, help='Path to directory where segmentation model is saved. Default: "logs"')
-    parser.add_argument('--cpt_fp', type=str, help='Path to checkpoint file of the segmentation model. Default: "logs"')
-    parser.add_argument('--seed', type=int, help='Seed for reproducibility. Default: 0')
-    parser.add_argument('--device', type=str, help='Device to use for training. Default: "cuda"')
+    parser.add_argument('--cpt_format', type=str, help='Path to checkpoint file of the segmentation model. Default: "logs"')
+    parser.add_argument('--tta_mode', type=str, help='Type of test-time augmentation to use. Default: "none"')
     
-    # Dataset to evaluate the model on
-    # ---------------------------------------------------:
-    parser.add_argument('--dataset', type=str, help='Name of dataset to use for tta. Default: USZ')
-    parser.add_argument('--split', type=str, help='Name of split to use for tta. Default: test')
-    parser.add_argument('--vol_idx', type=str, help='Index of volume to, can allso be set to "all"')
-    parser.add_argument('--n_classes', type=int, help='Number of classes in dataset. Default: 21')
     parser.add_argument('--classes_of_interest', type=int, nargs='+', help='Classes to consider for evaluation. Default: [0, 1]')
-    parser.add_argument('--image_size', type=int, nargs='+', help='Size of images in dataset. Default: [560, 640, 160]')
-    parser.add_argument('--resolution_proc', type=float, nargs='+', help='Resolution of images in dataset. Default: [0.3, 0.3, 0.6]')
-    parser.add_argument('--rescale_factor', type=float, help='Rescale factor for images in dataset. Default: None')
     parser.add_argument('--evaluate_also_bg_supp', type=lambda s: s.strip().lower() == 'true')
     parser.add_argument('--save_nii', type=lambda s: s.strip().lower() == 'true')
+    
+    parser.add_argument('--device', type=str, help='Device to use for training. Default: "cuda"')
+    
     args = parser.parse_args()
     
     return args
@@ -71,13 +61,10 @@ def preprocess_cmd_args() -> argparse.Namespace:
 def get_configuration_arguments() -> tuple[dict, dict]:
     args = preprocess_cmd_args()
     
-    dataset_config = load_config(args.dataset_config_file)
-    dataset_config = rewrite_config_arguments(dataset_config, args, 'dataset')
-    
     evaluation_config = load_config(args.evaluation_config_file)
     evaluation_config = rewrite_config_arguments(evaluation_config, args, 'evaluation')
     
-    return dataset_config, evaluation_config
+    return evaluation_config
 
 @torch.inference_mode()
 def test_volume(
@@ -97,8 +84,8 @@ def test_volume(
     logdir: Optional[str] = None,
     export_seg_imgs: bool = False,
     evaluate_also_bg_supp: bool = True,
-    classes_of_interest: Optional[list[int]] = None,
     save_nii: bool = False,
+    classes_of_interest: Optional[list] = None,
 ):
     # Get original images (they are still downscaled)
     # :=========================================================================:
@@ -198,7 +185,7 @@ def test_volume(
                 output_dir=os.path.join(logdir, 'example_segmentations_bg_supp_at_eval_time'),
                 image_name=f'{dataset_name}_{split}_{index:03}_{appendix}.png'
             )
-            
+    
     if save_nii:
         save_nii_image(
             dir=os.path.join(logdir, 'volume_segmentations_all_classes'),
@@ -212,12 +199,6 @@ def test_volume(
                     dir=os.path.join(logdir, 'volume_segmentations_classes_of_interest'),
                     filename=f'{dataset_name}_{split}_{index:03}_{appendix}_cls_{cls}.nii.gz', 
                     image=onehot_to_class(y_pred[:, [0, cls]]).squeeze().detach().round().byte().cpu().numpy().astype(np.int8)
-                )
-                
-                save_nii_image(
-                    dir=os.path.join(logdir, 'volume_segmentations_classes_of_interest_bg_supp'),
-                    filename=f'{dataset_name}_{split}_{index:03}_{appendix}_cls_{cls}.nii.gz', 
-                    image=onehot_to_class(y_pred_bg_supp[:, [0, cls]]).squeeze().detach().round().byte().cpu().numpy().astype(np.int8)
                 )
 
     metrics_index = {}
@@ -242,44 +223,46 @@ if __name__ == '__main__':
     
     # Loading general parameters
     # :=========================================================================:
-    dataset_config, evaluation_config = get_configuration_arguments()
+    evaluation_config = get_configuration_arguments()
     
-    dataset                 = evaluation_config['dataset']
-    seg_dir                 = evaluation_config['seg_dir']
-    seed                    = evaluation_config['seed']
     device                  = evaluation_config['device']
-    split                   = evaluation_config['split']
-    logdir                  = os.path.join(evaluation_config['logdir'], f'pred_on_{dataset}', split)
+    output_dir              = evaluation_config['output_dir'] 
+    tta_logdir              = evaluation_config['logdir']
+    tta_mode                = evaluation_config['tta_mode']
 
-    assert os.path.exists(seg_dir), f"Path to segmentation directory does not exist: {seg_dir}"
-    os.makedirs(logdir, exist_ok=True)
+    assert os.path.exists(tta_logdir), f"Path to TTA directory does not exist: {tta_logdir}"
     
-    params_seg              = load_config(os.path.join(seg_dir, 'params.yaml'))
-    model_params_norm       = params_seg['model']['normalization_2D']
-    model_params_seg        = params_seg['model']['segmentation_2D']
-    train_params_seg        = params_seg['training']
+    params                  = load_config(os.path.join(tta_logdir, 'params.yaml'))
+    params_tta              = params['testing']
+    params_tta_mode         = params['testing'][tta_mode]
+
     
-    params                  = { 
-                               'dataset': dataset_config,
-                               'model': {'norm': model_params_norm, 'seg': model_params_seg},
-                               'training': {'seg': train_params_seg},
-                               'evaluation': evaluation_config,
-                               }
+    dataset_params_key      = 'datasets' if 'datasets' in params else 'datset'
+    params_dataset          = params[dataset_params_key]
     
-    dump_config(os.path.join(logdir, 'params.yaml'), params)
-    print_config(params, keys=['dataset', 'model', 'training', 'evaluation'])
+    norm_key = 'normalization_2D' if 'normalization_2D' in params['model'] else 'normalization'
+    seg_key = 'segmentation_2D' if 'segmentation_2D' in params['model'] else 'segmentation'
+    
+    model_params_norm       = params['model'][norm_key]
+    model_params_seg        = params['model'][seg_key]
 
     # Define the dataset that is to be used to evaluate the model
     # :=========================================================================:
-    seed_everything(seed)
+    dataset                 = params_tta['dataset'] 
+    split                   = params_tta['split']
+    image_size              = params_tta['image_size']
+
     device                  = define_device(device)
-    n_classes               = dataset_config[dataset]['n_classes']
-    paths                   = dataset_config[dataset]['paths_processed']
-    paths_original          = dataset_config[dataset]['paths_original']
-    image_size              = evaluation_config['image_size']
-    resolution_proc         = dataset_config[dataset]['resolution_proc']
-    dim_proc                = dataset_config[dataset]['dim']
-    bg_suppresion_opts      = train_params_seg['segmentation']['bg_suppression_opts']
+    n_classes               = params_dataset[dataset]['n_classes']
+    paths                   = params_dataset[dataset]['paths_processed']
+    paths_original          = params_dataset[dataset]['paths_original']
+    resolution_proc         = params_dataset[dataset]['resolution_proc']
+    dim_proc                = params_dataset[dataset]['dim']
+    bg_suppresion_opts      = params_tta['bg_suppression_opts']
+    
+    exp_name = os.path.basename(tta_logdir)
+    output_dir = os.path.join(output_dir, dataset, split, exp_name)
+    os.makedirs(output_dir, exist_ok=True)
     
     print(f'Loading dataset: {dataset} {split}')
     eval_dataset, = get_datasets(
@@ -297,42 +280,44 @@ if __name__ == '__main__':
     )    
     print('Dataset loaded')
 
-    # Load the segmentation model
-    # :=========================================================================:
-    print('Loading segmentation model')
-    checkpoint_name = train_params_seg['checkpoint_best' if evaluation_config['load_best_cpt']
-                                       else 'checkpoint_last']
-    cpt_fp = os.path.join(seg_dir, checkpoint_name) 
-    
-    norm, seg = load_norm_and_seg_from_configs_and_cpt(
-        n_classes = n_classes,
-        model_params_norm = model_params_norm,
-        model_params_seg = model_params_seg,
-        cpt_fp = cpt_fp,
-        device = device,
-    )
-    print('Segmentation model loaded')
-    
     # Evaluate the model
     # :=========================================================================:
     print(f'Evaluating model')
-    vol_idx = evaluation_config['vol_idx']
+    cpt_format = evaluation_config['cpt_format']
     save_nii = evaluation_config['save_nii']
     batch_size = evaluation_config['batch_size']
     num_workers = evaluation_config['num_workers']
     also_bg_supp = evaluation_config['evaluate_also_bg_supp']
-    classes_of_interest  = evaluation_config['classes_of_interest']
-
+    classes_of_interest = evaluation_config['classes_of_interest']
+    
     indices_per_volume = eval_dataset.get_volume_indices() 
     indices_per_volume = {i: indices for i, indices in enumerate(indices_per_volume)}
     
-    if vol_idx != 'all':
-        indices_per_volume = {int(vol_idx): indices_per_volume[int(vol_idx)]}
-    
     metrics_dict = {}
     for vol_i, idxs in indices_per_volume.items():
+        # Load the segmentation model
+        # :=========================================================================:
+        print('Loading segmentation model')
+        cpt_fn = cpt_format.format(index=f'{vol_i:02d}', dataset=dataset)
+        cpt_fp = os.path.join(tta_logdir, 'checkpoints', cpt_fn) 
+        
+        if not os.path.exists(cpt_fp):
+            print(f'Skipping volume {vol_i}/{len(indices_per_volume) - 1} because checkpoint does not exist: {cpt_fp}')
+            continue
+        
+        norm, seg = load_norm_and_seg_from_configs_and_cpt(
+            n_classes = n_classes,
+            model_params_norm = model_params_norm,
+            model_params_seg = model_params_seg,
+            cpt_fp = cpt_fp,
+            device = device,
+        )
+        print('Segmentation model loaded')
+        
         print(f'Processing volume {vol_i}/{len(indices_per_volume) - 1}')
         volume_dataset = Subset(eval_dataset, idxs)
+        norm.eval()
+        seg.eval()
         metrics_dict[vol_i] = test_volume(
             norm=norm,
             seg=seg,
@@ -347,17 +332,16 @@ if __name__ == '__main__':
             bg_suppression_opts=None,
             seg_with_bg_supp=False,
             device=device,
-            logdir=logdir,
+            logdir=output_dir,
             export_seg_imgs=True,
             evaluate_also_bg_supp=also_bg_supp,
             save_nii=save_nii,
-            classes_of_interest=classes_of_interest
+            classes_of_interest=classes_of_interest,
         )
         
     # Save the mean of each metric over the entire volume
-    # :=========================================================================:
-    
-    out_summary_file = open(os.path.join(logdir, f'metrics_{dataset}_{split}.txt'), 'w')
+    # :=========================================================================:    
+    out_summary_file = open(os.path.join(output_dir, f'metrics_{dataset}_{split}.txt'), 'w')
     
     print('Saving metrics')
     print(f'Classes of interest: {classes_of_interest}')
@@ -373,7 +357,7 @@ if __name__ == '__main__':
             df = pd.DataFrame(df['dice'].to_list(), index=df.index)
                        
             # Save the dataframe to csv
-            df.to_csv(os.path.join(logdir, f'{metric_name}_{dataset}_{split}.csv'))
+            df.to_csv(os.path.join(output_dir, f'{metric_name}_{dataset}_{split}.csv'))
             
             # Dice of the foreground classes
             fg_cols = [col for col in df.columns if col != 0]
