@@ -12,6 +12,7 @@ from torch.utils import data
 
 from tta_uia_segmentation.src.dataset.augmentation import apply_data_augmentation
 from tta_uia_segmentation.src.dataset.deformation import make_noise_masks_3d
+from tta_uia_segmentation.src.dataset.utils import transform_orientation
 from tta_uia_segmentation.src.models.normalization import RBF
 from tta_uia_segmentation.src.utils.io import deep_get
 from tta_uia_segmentation.src.utils.loss import class_to_onehot
@@ -263,6 +264,44 @@ class DatasetInMemory(data.Dataset):
 
         return images, labels, bg_mask
 
+
+    def get_original_pixel_size(self, orientation: str = 'DHW'):
+        """
+        Get the original pixel size in the specified orientation.
+
+        Parameters
+        ----------
+        orientation : str, optional
+            The desired orientation of the pixel size. Default is 'DHW'.
+
+        Returns
+        -------
+        tuple
+            The pixel size in the specified orientation.
+        """
+        x, y, z = self.pix_size_original
+
+        return transform_orientation(x, y, z, orientation)
+
+
+    def get_processed_pixel_size(self, orientation: str = 'DHW'):
+        """
+        Get the processed pixel size in the specified orientation.
+
+        Parameters
+        ----------
+        orientation : str, optional
+            The desired orientation of the pixel size. Default is 'DHW'.
+
+        Returns
+        -------
+        tuple
+            The pixel size in the specified orientation.
+        """
+        x, y, z = self.resolution_proc
+
+        return transform_orientation(x, y, z, orientation)
+       
 
     def image_transformation(self, images):
         if len(images.unique()) == 1:

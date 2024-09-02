@@ -28,7 +28,7 @@ def onehot_to_class(onehot, class_dim=1, keepdim=True):
 
 
 def dice_score(mask_pred, mask_gt, soft=True, reduction='mean', bg_channel=0, k=1, smooth=0, epsilon=1e-10,
-               classes_to_exclude: torch.Tensor = None):
+               classes_to_exclude: torch.Tensor = None, foreground_only: bool = False):
     """ 
     Assumes that mask_pred and mask_gt are one-hot encoded.
     
@@ -57,6 +57,11 @@ def dice_score(mask_pred, mask_gt, soft=True, reduction='mean', bg_channel=0, k=
     epsilon : float
         Small value to avoid division by zero. 
         
+    classes_to_exclude : torch.Tensor, optional
+        Classes to exclude from the dice score calculation.
+        
+    foreground_only : bool, optional
+        If True, returns dice score filtered on the foreground mask only.
     """
 
     if not soft:
@@ -83,12 +88,16 @@ def dice_score(mask_pred, mask_gt, soft=True, reduction='mean', bg_channel=0, k=
     assert_in(reduction, 'reduction', ['none', 'mean', 'sum'])
 
     fg_mask = (torch.arange(mask_pred.shape[1]) != bg_channel)
+
+    if foreground_only:
+        dices = dices[:, fg_mask, ...]
+
     if reduction == 'none':
         return dices, dices[:, fg_mask, ...]
     elif reduction == 'mean':
-        return dices.nanmean(), dices[:, fg_mask, ...].nanmean()
+        return dices.nanmean()
     elif reduction == 'sum':
-        return dices.nansum(), dices[:, fg_mask, ...].nansum()
+        return dices.nansum()
 
 
 class DiceLoss(nn.Module):
@@ -111,12 +120,14 @@ class DiceLoss(nn.Module):
 
     def forward(self, mask_pred, mask_gt, **kwargs):
             
-        dice, _ = dice_score(
+        dice = dice_score(
             mask_pred, mask_gt, 
             soft=True,
+            foreground_only=False,
             smooth=self.smooth, epsilon=self.epsilon, 
             **kwargs
             )
+
         loss = 1 - dice
 
         return loss
@@ -385,9 +396,3 @@ class DescriptorRegularizationLoss(nn.Module):
     def forward(self, x1, x2):
         return self.loss_fn(x1, x2)
         
-        
-if __name__ == '__main__':
-    test_pred = torch.randint(0, 5, (1, 1, 64, 64, 64))
-    test_gt = torch.randint(0, 5, (1, 1, 64, 64, 64))
-    
-    

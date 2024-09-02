@@ -1,6 +1,6 @@
 import os
 import random
-from typing import Union
+from typing import Union, Literal
 
 import torch
 import numpy as np
@@ -114,6 +114,70 @@ def random_select_from_tensor(tensor, dim):
     n_elements = tensor.shape[dim]
     index = np.random.randint(n_elements)
     return tensor.select(dim, index)
+
+
+def resize_volume(
+    x: torch.Tensor,
+    original_pix_size: tuple[float, float, float] | torch.Tensor,
+    target_pix_size: tuple[float, float, float] | torch.Tensor,
+    vol_format: Literal['1CDHW', 'DCHW', 'CDHW'],
+    output_format: Literal['1CDHW', 'DCHW'],
+    mode: Literal['trilinear', 'nearest'] = 'trilinear'
+) -> torch.Tensor:
+    """
+    Resize a volume tensor to a target pixel size.
+
+    Parameters
+    ----------
+    x : torch.Tensor
+        Input volume tensor.
+    original_pix_size : tuple[float, float, float] | torch.Tensor
+        Original pixel size in (D, H, W) format.
+    target_pix_size : tuple[float, float, float] | torch.Tensor
+        Target pixel size in (D, H, W) format.
+    vol_format : Literal['1CDHW', 'DCHW', 'CDHW']
+        Input volume format.
+    output_format : Literal['1CDHW', 'DCHW']
+        Desired output format.
+    mode : Literal['trilinear', 'nearest'], optional
+        Interpolation mode, by default 'trilinear'.
+
+    Returns
+    -------
+    torch.Tensor
+        Resized volume tensor in the specified output format.
+    """
+    scale_factor = torch.Tensor(original_pix_size) / torch.Tensor(target_pix_size)
+    output_size = (x.shape[-3:] * scale_factor).round().int().tolist()
+
+    assert len(vol_format) == len(x.shape), f"x has {len(x.shape)} dimensions ({x.shape}) " + \
+        f"while format has {len(vol_format)} ({vol_format})"
+    
+    if vol_format == 'DCHW':
+        # Convert to 1CDHW
+        x = x.permute(1, 0, 2, 3).unsqueeze(0)
+            
+    elif vol_format == 'CDHW':
+        # Convert to 1CDHW
+        x = x.unsqueeze(0)
+
+    elif vol_format == '1CDHW':
+        pass
+    
+    else:
+        raise ValueError(f"Unsupported volume format: {vol_format}")
+
+    # Resample volume 
+    x = F.interpolate(x, size=output_size, mode=mode)
+
+    if output_format == 'DCHW':
+        x = x.squeeze(0).permute(1, 0, 2, 3)
+    elif output_format == '1CDHW':
+        pass
+    else:
+        raise ValueError(f"Unsupported output format: {output_format}")
+    
+    return x
 
 
 def resize_and_resample_nibp(

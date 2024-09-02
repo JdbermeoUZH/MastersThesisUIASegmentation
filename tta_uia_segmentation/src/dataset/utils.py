@@ -77,6 +77,23 @@ def unnormalize_to_zero_to_one(t):
     return (t + 1) * 0.5
 
 
+def transform_orientation(x, y, z, orientation: str) -> tuple[float, float, float]:
+    if orientation == 'DHW':
+        return z, x, y
+    elif orientation == 'HWD':
+        return x, y, z
+    elif orientation == 'WHD':
+        return y, x, z
+    elif orientation == 'DWH':
+        return x, z, y
+    elif orientation == 'HDW':
+        return z, y, x
+    elif orientation == 'WDH':
+        return y, z, x
+    else:
+        raise ValueError(f"Invalid orientation: {orientation}. Must be one of 'DHW', 'HWD', 'WHD', 'DWH', 'HDW', 'WDH'.")
+
+
 def calculate_class_weights(
     labels: np.ndarray, n_classes: int, 
     normalize: bool = True, 
