@@ -1,5 +1,5 @@
 import os
-from typing import Optional
+from typing import Literal, Optional
 
 import h5py
 import numpy as np
@@ -16,7 +16,7 @@ from tta_uia_segmentation.src.dataset.utils import transform_orientation
 from tta_uia_segmentation.src.models.normalization import RBF
 from tta_uia_segmentation.src.utils.io import deep_get
 from tta_uia_segmentation.src.utils.loss import class_to_onehot
-from tta_uia_segmentation.src.utils.utils import crop_or_pad_slice_to_size, get_seed, assert_in
+from tta_uia_segmentation.src.utils.utils import crop_or_pad_to_size, get_seed, assert_in
 
 
 def split_dataset(dataset, ratio):
@@ -148,14 +148,15 @@ class DatasetInMemory(data.Dataset):
         self.image_transform = image_transform
         self.bg_suppression_opts = bg_suppression_opts
         self.seed = seed
+        self.mode = '2D' if image_size[0] == 1 else '3D'
 
         with h5py.File(self.path, 'r') as data:
 
             self.images = data['images'][:].astype(np.float32)
             self.labels = data['labels'][:].astype(np.uint8)
 
-            self.images = self.images.reshape(-1, *self.image_size)  # NDHW
-            self.labels = self.labels.reshape(-1, *self.image_size)  # NDHW
+            self.images = self.images.reshape(-1, *self.image_size)  # NDHW or (N*D)CHW
+            self.labels = self.labels.reshape(-1, *self.image_size)  # NDHW or (N*D)CHW
 
             # Pixel sizes of original images.
             self.pix_size_original = np.stack([data['px'], data['py'], data['pz']])
@@ -227,7 +228,7 @@ class DatasetInMemory(data.Dataset):
 
 
     def scale_to_original_size(self, image, index, interpolation_order=None):
-
+        # TODO: Most likely remove this function
         # image has shape ...HW
         shape = image.shape
 
@@ -239,13 +240,18 @@ class DatasetInMemory(data.Dataset):
         image_rescaled = F.interpolate(image, scale_factor = scale, mode=interpolation_order)
 
         image_rescaled = image_rescaled.reshape(-1, *image_rescaled.shape[-2:])
-        image_rescaled = crop_or_pad_slice_to_size(image_rescaled, nx, ny)
+        image_rescaled = crop_or_pad_to_size(image_rescaled, (nx, ny))
         image_rescaled = image_rescaled.reshape((*shape[:-3], -1, nx, ny))
 
         return image_rescaled
 
 
-    def get_original_images(self, index, as_onehot=True):
+    def get_original_images(self, index, as_onehot=True,
+                            format: Literal['DCHW', '1CDHW'] = '1CDHW'):
+        """
+        Get the original image and label volumes at the specified index.
+
+        """
         nx, ny, _ = self.n_pix_original[:, index]
         
         if self.images_original is None or self.labels_original is None:
@@ -253,19 +259,86 @@ class DatasetInMemory(data.Dataset):
 
         images = self.images_original[index, :, 0:nx, 0:ny]
         labels = self.labels_original[index, :, 0:nx, 0:ny]
-
         bg_mask = self.background_mask_original[index, :, 0:nx, 0:ny]
 
-        images = torch.from_numpy(images).unsqueeze(0)
-        labels = torch.from_numpy(labels).unsqueeze(0)
+        images = torch.from_numpy(images).unsqueeze(0)   # CDHW
+        labels = torch.from_numpy(labels).unsqueeze(0)   # CDHW
+        bg_mask = torch.from_numpy(bg_mask).unsqueeze(0) # CDHW
 
         if as_onehot:
-            labels = class_to_onehot(labels, self.n_classes, class_dim=1)
+            labels = class_to_onehot(labels, self.n_classes, class_dim=1) # 1CDHW
+
+        if format == '1CDHW':
+            images = images.unsqueeze(0)
+            bg_mask = bg_mask.unsqueeze(0)
+
+            len(images.shape) == 5, f'images.shape: {images.shape}'
+            len(labels.shape) == 5, f'labels.shape: {labels.shape}'
+            len(bg_mask.shape) == 5, f'bg_mask.shape: {bg_mask.shape}'
+
+        elif format == 'DCHW':
+            images = images.permute(1, 0, 2, 3)
+            labels = labels.squeeze(0).permute(1, 0, 2, 3)
+            bg_mask = bg_mask.permute(1, 0, 2, 3)
+
+            len(images.shape) == 4, f'images.shape: {images.shape}'
+            len(labels.shape) == 4, f'labels.shape: {labels.shape}'
+            len(bg_mask.shape) == 4, f'bg_mask.shape: {bg_mask.shape}'
+        
+        else:
+            raise ValueError(f'Unknown format: {format}')
+
+        return images, labels, bg_mask
+
+    
+    def get_preprocessed_images(self, index, as_onehot=True,
+                                format: Literal['DCHW', '1CDHW'] = '1CDHW'):
+        """
+        Get the preprocessed image and label volumes at the specified index.
+        
+        """
+        
+        if self.mode == '2D':
+            images = self.images.reshape(-1, *self.dim_proc)[index]
+            labels = self.labels.reshape(-1, *self.dim_proc)[index]
+            bg_mask = self.background_mask.reshape(-1, *self.dim_proc)[index]
+
+        else:
+            images = self.images[index, ...]
+            labels = self.labels[index, ...]
+            bg_mask = self.background_mask[index, ...]
+
+        images = torch.from_numpy(images).unsqueeze(0)   # CDHW
+        labels = torch.from_numpy(labels).unsqueeze(0)   # CDHW
+        bg_mask = torch.from_numpy(bg_mask).unsqueeze(0) # CDHW
+
+        if as_onehot:
+            labels = class_to_onehot(labels, self.n_classes, class_dim=1) # 1CDHW
+
+        if format == '1CDHW':
+            images = images.unsqueeze(0)
+            bg_mask = bg_mask.unsqueeze(0)
+
+            len(images.shape) == 5, f'images.shape: {images.shape}'
+            len(labels.shape) == 5, f'labels.shape: {labels.shape}'
+            len(bg_mask.shape) == 5, f'bg_mask.shape: {bg_mask.shape}'
+
+        elif format == 'DCHW':
+            images = images.permute(1, 0, 2, 3)
+            labels = labels.squeeze(0).permute(1, 0, 2, 3)
+            bg_mask = bg_mask.permute(1, 0, 2, 3)
+
+            len(images.shape) == 4, f'images.shape: {images.shape}'
+            len(labels.shape) == 4, f'labels.shape: {labels.shape}'
+            len(bg_mask.shape) == 4, f'bg_mask.shape: {bg_mask.shape}'
+
+        else:
+            raise ValueError(f'Unknown format: {format}')
 
         return images, labels, bg_mask
 
 
-    def get_original_pixel_size(self, orientation: str = 'DHW'):
+    def get_original_pixel_size(self, index, orientation: str = 'DHW'):
         """
         Get the original pixel size in the specified orientation.
 
@@ -279,7 +352,7 @@ class DatasetInMemory(data.Dataset):
         tuple
             The pixel size in the specified orientation.
         """
-        x, y, z = self.pix_size_original
+        x, y, z = self.pix_size_original[:, index]
 
         return transform_orientation(x, y, z, orientation)
 
@@ -340,7 +413,6 @@ class DatasetInMemory(data.Dataset):
     def idx_to_slice_idx(self, idx):
         idx = (idx / self.dim_proc[-1]) % 1
         return idx
-
 
     def get_background_mask(self, images, labels):
 
@@ -439,3 +511,112 @@ class DatasetInMemory(data.Dataset):
 
     def get_label_name(self, label):
         return self.label_names[label]
+    
+
+
+if __name__ == '__main__':
+    import sys
+
+    root_dir = os.path.normpath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
+
+    sys.path.append(root_dir)
+    
+    from tta_uia_segmentation.src.utils.io import load_config
+    from tta_uia_segmentation.src.utils.utils import resize_volume
+
+    dataset_config = load_config(os.path.join(root_dir, 'config', 'datasets.yaml'))
+
+    split = 'train'
+    dataset = 'nuhs_w_synthseg_labels'
+    image_size = [1, 256, 256]
+
+    dataset_info = dataset_config[dataset]
+
+    aug_params = {
+        'da_ratio': 0.25,
+        'sigma': 20,
+        'alpha': 0,
+        'trans_min': 0,
+        'trans_max': 0,
+        'rot_min': 0,
+        'rot_max': 0,
+        'scale_min': 1.0,
+        'scale_max': 1.0,
+        'gamma_min': 0.5,
+        'gamma_max': 2.0,
+        'brightness_min': 0.0,
+        'brightness_max': 0.1,
+        'noise_mean': 0.0,
+        'noise_std': 0.1
+    }
+
+    bg_suppression_opts = {
+        "type": "fixed_value",  # possible values: none, fixed_value, random_value
+        "bg_value": -0.5,
+        "bg_value_min": -0.5,
+        "bg_value_max": 1,
+        "mask_source": "thresholding",  # possible values: thresholding, ground_truth
+        "thresholding": "otsu",  # possible values: isodata, li, mean, minimum, otsu, triangle, yen
+        "hole_filling": True
+    }
+
+    ds, = get_datasets(
+        paths           = dataset_info['paths_processed'],
+        paths_original  = dataset_info['paths_original'],
+        splits          = [split],
+        image_size      = image_size,
+        resolution_proc = dataset_info['resolution_proc'],
+        dim_proc        = dataset_info['dim'],
+        n_classes       = dataset_info['n_classes'],
+        aug_params      = aug_params,
+        deformation     = None,
+        load_original   = True,
+        bg_suppression_opts=bg_suppression_opts,
+    )
+
+    vol_index = 0
+    x_orig, y_orig, bg_mask = ds.get_original_images(vol_index)
+    print(x_orig.shape, y_orig.shape, bg_mask.shape)
+
+    x_proc, y_proc, bg_mask = ds.get_preprocessed_images(vol_index)
+    print(x_proc.shape, y_proc.shape, bg_mask.shape)
+
+    print(f'Original pixel size: {ds.get_original_pixel_size(vol_index)}')
+    print(f'Processed pixel size: {ds.get_processed_pixel_size()}')
+
+    # Test resizing of preprocessed volume to original size
+    x_proc_resized = resize_volume(
+        x_proc,
+        current_pix_size= ds.get_processed_pixel_size(),
+        target_pix_size=ds.get_original_pixel_size(vol_index),
+        target_img_size=tuple(x_orig.shape[-3:]),
+    )
+    print(x_proc_resized.shape)
+
+    # Test resizing of label volume to preprocessed size
+    y_proc_resized = resize_volume(
+        y_proc.float(),
+        current_pix_size= ds.get_processed_pixel_size(), 
+        target_pix_size=ds.get_original_pixel_size(vol_index),
+        target_img_size=tuple(y_orig.shape[-3:])
+    )
+    print(y_proc_resized.shape)
+
+
+    # Test resizing of original volume to preprocessed size
+    x_orig_resized = resize_volume(
+        x_orig, current_pix_size=ds.get_original_pixel_size(vol_index), 
+        target_pix_size=ds.get_processed_pixel_size(),
+        target_img_size=ds.dim_proc 
+        )
+    print(x_orig_resized.shape)
+
+    # Test resizing of label volume to preprocessed size
+    y_orig_resized = resize_volume(
+        y_orig.float(), 
+        ds.get_original_pixel_size(vol_index), 
+        ds.get_processed_pixel_size(),
+        ds.dim_proc)
+    print(y_orig_resized.shape)
+
+    print('hallo')

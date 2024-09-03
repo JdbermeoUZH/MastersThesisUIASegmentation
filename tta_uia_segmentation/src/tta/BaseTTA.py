@@ -80,8 +80,7 @@ class BaseTTA(TTAInterface):
         y_pred = self.predict(x_preprocessed, **kwargs)
 
         # Resize original images to preprocessed resolution
-        scale_factor = original_pix_size / target_pix_size
-        scale_factor[-1] = 1
+        scale_factor = gt_pix_size / preprocessed_pix_size
 
         output_size = (y_.shape[2:] * scale_factor).round().astype(int).tolist()
 

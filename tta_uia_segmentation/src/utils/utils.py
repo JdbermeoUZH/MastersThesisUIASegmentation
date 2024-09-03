@@ -1,8 +1,9 @@
 import os
 import random
-from typing import Union, Literal
+from typing import Union, Literal, Tuple
 
 import torch
+import torch.nn.functional as F
 import numpy as np
 import nibabel as nib
 import nibabel.processing as nibp
@@ -118,10 +119,11 @@ def random_select_from_tensor(tensor, dim):
 
 def resize_volume(
     x: torch.Tensor,
-    original_pix_size: tuple[float, float, float] | torch.Tensor,
     target_pix_size: tuple[float, float, float] | torch.Tensor,
-    vol_format: Literal['1CDHW', 'DCHW', 'CDHW'],
-    output_format: Literal['1CDHW', 'DCHW'],
+    current_pix_size: tuple[float, float, float] | torch.Tensor,
+    target_img_size: tuple[int, int, int],
+    vol_format: Literal['1CDHW', 'DCHW', 'CDHW'] = '1CDHW',
+    output_format: Literal['1CDHW', 'DCHW'] = '1CDHW',
     mode: Literal['trilinear', 'nearest'] = 'trilinear'
 ) -> torch.Tensor:
     """
@@ -131,14 +133,16 @@ def resize_volume(
     ----------
     x : torch.Tensor
         Input volume tensor.
-    original_pix_size : tuple[float, float, float] | torch.Tensor
-        Original pixel size in (D, H, W) format.
     target_pix_size : tuple[float, float, float] | torch.Tensor
         Target pixel size in (D, H, W) format.
-    vol_format : Literal['1CDHW', 'DCHW', 'CDHW']
-        Input volume format.
-    output_format : Literal['1CDHW', 'DCHW']
-        Desired output format.
+    current_pix_size : tuple[float, float, float] | torch.Tensor
+        Current pixel size in (D, H, W) format.
+    target_img_size : tuple[int, int, int]
+        Target image size in (D, H, W) format.
+    vol_format : Literal['1CDHW', 'DCHW', 'CDHW'], optional
+        Input volume format, by default '1CDHW'.
+    output_format : Literal['1CDHW', 'DCHW'], optional
+        Desired output format, by default '1CDHW'.
     mode : Literal['trilinear', 'nearest'], optional
         Interpolation mode, by default 'trilinear'.
 
@@ -147,28 +151,37 @@ def resize_volume(
     torch.Tensor
         Resized volume tensor in the specified output format.
     """
-    scale_factor = torch.Tensor(original_pix_size) / torch.Tensor(target_pix_size)
-    output_size = (x.shape[-3:] * scale_factor).round().int().tolist()
-
+    
     assert len(vol_format) == len(x.shape), f"x has {len(x.shape)} dimensions ({x.shape}) " + \
         f"while format has {len(vol_format)} ({vol_format})"
     
     if vol_format == 'DCHW':
         # Convert to 1CDHW
+        assert len(x.shape) == 4, f"x does not have 4 dimensions (format specified is {vol_format})"
         x = x.permute(1, 0, 2, 3).unsqueeze(0)
             
     elif vol_format == 'CDHW':
         # Convert to 1CDHW
+        assert len(x.shape) == 4, f"x does not have 4 dimensions (format specified is {vol_format})"
         x = x.unsqueeze(0)
 
     elif vol_format == '1CDHW':
+        assert len(x.shape) == 5, f"x does not have 5 dimensions (format specified is {vol_format})"
         pass
     
     else:
         raise ValueError(f"Unsupported volume format: {vol_format}")
 
     # Resample volume 
-    x = F.interpolate(x, size=output_size, mode=mode)
+    scale_factor = torch.Tensor(current_pix_size) / torch.Tensor(target_pix_size)
+    reampled_size = (torch.tensor(x.shape[-3:]) * scale_factor).round().int().tolist()
+
+    if (scale_factor != 1).any():
+        x = F.interpolate(x, size=reampled_size, mode=mode)
+
+    # Crop or pad to target size
+    if tuple(x.shape[-3:]) != tuple(target_img_size):
+        x = crop_or_pad_to_size(x, target_img_size)
 
     if output_format == 'DCHW':
         x = x.squeeze(0).permute(1, 0, 2, 3)
@@ -213,35 +226,42 @@ def resize_and_resample_nibp(
     return np.stack(new_img_channels, axis=0)
 
 
-def crop_or_pad_slice_to_size(slice, nx, ny):
+def crop_or_pad_to_size(data: torch.Tensor, target_size: Union[Tuple[int, int], Tuple[int, int, int]]) -> torch.Tensor:
     """
-    Crops or pads a slice to a given size in x, y, and z.
+    Crops or pads batched data to a given size in 2D (NCHW) or 3D (NCDHW).
     
-    Adapted from https://github.com/neerakara/test-time-adaptable-neural-networks-for-domain-generalization/blob/master/utils.py#L91  
+    Parameters:
+    data (torch.Tensor): Input data to be cropped or padded.
+    target_size (tuple): Target size (H, W) for 2D or (D, H, W) for 3D.
+    
+    Returns:
+    torch.Tensor: Cropped or padded data.
     """
-    z, x, y = slice.shape
+    if not isinstance(data, torch.Tensor):
+        raise ValueError("Input data must be a torch.Tensor")
+    
+    input_shape = data.shape
+    ndim = len(input_shape)
+    
+    if ndim not in [4, 5]:
+        raise ValueError("Input data must be 4D (NCHW) or 5D (NCDHW)")
+    
+    if len(target_size) != ndim - 2:
+        raise ValueError("Target size must match the spatial dimensions of input data")
+    
+    spatial_shape = input_shape[2:]
+    
+    # Calculate padding or cropping for each dimension
+    diff = [t - s for t, s in zip(target_size, spatial_shape)]
+    pad_crop = [(d // 2, d - d // 2) if d > 0 else (d - d // 2, d // 2)  for d in diff]
+    
+    # Perform padding or cropping
+    pad_crop = [(0, 0), (0, 0)] + pad_crop  # Add N and C dimensions
+    padded_cropped = F.pad(data, [item for sublist in reversed(pad_crop) for item in sublist])
 
-    x_s = (x - nx) // 2
-    y_s = (y - ny) // 2
-    x_c = (nx - x) // 2
-    y_c = (ny - y) // 2
-
-    if x > nx and y > ny:
-        slice_cropped = slice[:, x_s: x_s + nx, y_s: y_s + ny]
-    else:
-        if isinstance(slice, torch.Tensor): 
-            slice_cropped = torch.zeros((z, nx, ny,))
-        else:
-            slice_cropped = np.zeros((z, nx, ny))
-        
-        if x <= nx and y > ny:
-            slice_cropped[:, x_c:x_c + x, :] = slice[:, :, y_s:y_s + ny]
-        elif x > nx and y <= ny:
-            slice_cropped[:, :, y_c:y_c + y] = slice[:, x_s:x_s + nx, :]
-        else:
-            slice_cropped[:, x_c:x_c + x, y_c:y_c + y] = slice[:, :, :]
-
-    return slice_cropped
+    assert tuple(padded_cropped.shape[-len(target_size):]) == tuple(target_size), f"Output shape {padded_cropped.shape} does not match target size {target_size}"
+    
+    return padded_cropped
 
 
 def distribute_n_in_m_slots(n, m):
