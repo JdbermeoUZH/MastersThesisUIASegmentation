@@ -11,7 +11,7 @@ class TTAInterface(ABC):
         pass
     
     @abstractmethod
-    def predict(self, x: torch.Tensor) -> torch.Tensor:
+    def predict(self, x: torch.Tensor) -> tuple[torch.Tensor,...]:
         pass
     
     @abstractmethod

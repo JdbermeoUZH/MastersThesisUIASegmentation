@@ -215,7 +215,16 @@ class DatasetInMemory(data.Dataset):
         self.background_mask_original = self.get_background_mask(self.images_original, self.labels_original)
 
 
-    def get_volume_indices(self):
+    def get_volume_indices(self) -> list[np.ndarray]:
+        """
+        Get the indices for each volume in the dataset.
+
+        Returns
+        -------
+        List[np.ndarray]
+            A list of numpy arrays, where each array contains the indices for a
+            single volume.
+        """
         n_slices = len(self)
         n_volumes = n_slices // self.dim_proc[0]
         n_slices_per_volume = np.array([self.dim_proc[0]] * n_volumes)
@@ -226,31 +235,109 @@ class DatasetInMemory(data.Dataset):
 
         return indices_per_volume
 
+    def resize_to_original_vol(
+        self,
+        volume: torch.Tensor,
+        index: int,
+        match_size: bool = False,
+        only_inplane_resample: bool = True
+    ) -> torch.Tensor:
+        """
+        Resize the processed volume to the original size.
 
-    def scale_to_original_size(self, image, index, interpolation_order=None):
-        # TODO: Most likely remove this function
-        # image has shape ...HW
-        shape = image.shape
+        Parameters
+        ----------
+        volume : torch.Tensor
+            The volume to resize.
+        index : int
+            The index of the volume in the dataset.
+        match_size : bool, optional
+            If True, match the size of the original volume exactly.
+            Default is False.
+        only_inplane_resample : bool, optional
+            If True, only resample in-plane. Default is True.
 
-        nx, ny, _ = self.n_pix_original[:, index]
-        px, py, pz = self.pix_size_original[:, index]
-        px_proc, py_proc, pz_proc = self.resolution_proc
+        Returns
+        -------
+        torch.Tensor
+            The resized volume.
+        """
+        target_size = self.get_original_image_size(index) if match_size else None
 
-        scale = [pz_proc / pz, px_proc / px, py_proc / py]
-        image_rescaled = F.interpolate(image, scale_factor = scale, mode=interpolation_order)
+        return resize_volume(
+            volume,
+            current_pix_size=self.get_processed_pixel_size(),
+            target_pix_size=self.get_original_pixel_size(index),
+            target_img_size=target_size,
+            mode='trilinear',
+            only_inplane_resample=only_inplane_resample     
+        )
+    
+    def resize_to_processed_vol(
+        self,
+        volume: torch.Tensor,
+        index: int,
+        match_size: bool = False,
+        only_inplane_resample: bool = True
+    ) -> torch.Tensor:
+        """
+        Resample the original images to the processed size.
 
-        image_rescaled = image_rescaled.reshape(-1, *image_rescaled.shape[-2:])
-        image_rescaled = crop_or_pad_to_size(image_rescaled, (nx, ny))
-        image_rescaled = image_rescaled.reshape((*shape[:-3], -1, nx, ny))
+        Parameters
+        ----------
+        volume : torch.Tensor
+            The volume to resize.
+        index : int
+            The index of the volume in the dataset.
+        match_size : bool, optional
+            If True, match the size of the processed volume exactly.
+            Default is False.
+        only_inplane_resample : bool, optional
+            If True, only resample in-plane. Default is True.
 
-        return image_rescaled
+        Returns
+        -------
+        torch.Tensor
+            The resized volume.
+        """
+        target_size = self.dim_proc if match_size else None
 
+        return resize_volume(
+            volume,
+            current_pix_size=self.get_original_pixel_size(index),
+            target_pix_size=self.get_processed_pixel_size(),
+            target_img_size=target_size,
+            mode='trilinear',
+            only_inplane_resample=only_inplane_resample     
+        )
 
-    def get_original_images(self, index, as_onehot=True,
-                            format: Literal['DCHW', '1CDHW'] = '1CDHW'):
+    def get_original_images(
+        self,
+        index: int,
+        as_onehot: bool = True,
+        format: Literal['DCHW', '1CDHW'] = '1CDHW'
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Get the original image and label volumes at the specified index.
 
+        Parameters
+        ----------
+        index : int
+            The index of the volume to retrieve.
+        as_onehot : bool, optional
+            If True, return labels in one-hot encoding. Default is True.
+        format : {'DCHW', '1CDHW'}, optional
+            The desired format of the returned tensors. Default is '1CDHW'.
+
+        Returns
+        -------
+        Tuple[torch.Tensor, torch.Tensor, torch.Tensor]
+            A tuple containing the image, labels, and background mask tensors.
+
+        Raises
+        ------
+        ValueError
+            If an unknown format is specified.
         """
         nx, ny, _ = self.n_pix_original[:, index]
         
@@ -272,69 +359,111 @@ class DatasetInMemory(data.Dataset):
             images = images.unsqueeze(0)
             bg_mask = bg_mask.unsqueeze(0)
 
-            len(images.shape) == 5, f'images.shape: {images.shape}'
-            len(labels.shape) == 5, f'labels.shape: {labels.shape}'
-            len(bg_mask.shape) == 5, f'bg_mask.shape: {bg_mask.shape}'
+            assert len(images.shape) == 5, f'images.shape: {images.shape}'
+            assert len(labels.shape) == 5, f'labels.shape: {labels.shape}'
+            assert len(bg_mask.shape) == 5, f'bg_mask.shape: {bg_mask.shape}'
 
         elif format == 'DCHW':
             images = images.permute(1, 0, 2, 3)
             labels = labels.squeeze(0).permute(1, 0, 2, 3)
             bg_mask = bg_mask.permute(1, 0, 2, 3)
 
-            len(images.shape) == 4, f'images.shape: {images.shape}'
-            len(labels.shape) == 4, f'labels.shape: {labels.shape}'
-            len(bg_mask.shape) == 4, f'bg_mask.shape: {bg_mask.shape}'
+            assert len(images.shape) == 4, f'images.shape: {images.shape}'
+            assert len(labels.shape) == 4, f'labels.shape: {labels.shape}'
+            assert len(bg_mask.shape) == 4, f'bg_mask.shape: {bg_mask.shape}'
         
         else:
             raise ValueError(f'Unknown format: {format}')
 
         return images, labels, bg_mask
 
-    
-    def get_preprocessed_images(self, index, as_onehot=True,
-                                format: Literal['DCHW', '1CDHW'] = '1CDHW'):
+    def get_preprocessed_images(
+        self,
+        index: int,
+        as_onehot: bool = True,
+        format: Literal['DCHW', '1CDHW'] = '1CDHW',
+        same_position_as_original: bool = False
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Get the preprocessed image and label volumes at the specified index.
         
+        Parameters
+        ----------
+        index : int
+            The index of the volume to retrieve.
+        as_onehot : bool, optional
+            If True, return labels in one-hot encoding. Default is True.
+        format : {'DCHW', '1CDHW'}, optional
+            The desired format of the returned tensors. Default is '1CDHW'.
+        same_position_as_original : bool, optional
+            If True, return the preprocessed images in the same position as the
+            original. Default is False.
+
+        Returns
+        -------
+        Tuple[torch.Tensor, torch.Tensor, torch.Tensor]
+            A tuple containing the preprocessed image, labels, and background
+            mask tensors.
+
+        Raises
+        ------
+        ValueError
+            If an unknown format is specified.
         """
+        if not same_position_as_original:
+            if self.mode == '2D':
+                images = self.images.reshape(-1, *self.dim_proc)[index]
+                labels = self.labels.reshape(-1, *self.dim_proc)[index]
+                bg_mask = self.background_mask.reshape(-1, *self.dim_proc)[index]
+            else:
+                images = self.images[index, ...]
+                labels = self.labels[index, ...]
+                bg_mask = self.background_mask[index, ...]
+
+            images = torch.from_numpy(images).unsqueeze(0)   # CDHW
+            labels = torch.from_numpy(labels).unsqueeze(0)   # CDHW
+            bg_mask = torch.from_numpy(bg_mask).unsqueeze(0) # CDHW
+
+            if as_onehot:
+                labels = class_to_onehot(labels, self.n_classes, class_dim=1) # 1CDHW
+
+            if format == '1CDHW':
+                images = images.unsqueeze(0)
+                bg_mask = bg_mask.unsqueeze(0)
+
+                assert len(images.shape) == 5, f'images.shape: {images.shape}'
+                assert len(labels.shape) == 5, f'labels.shape: {labels.shape}'
+                assert len(bg_mask.shape) == 5, f'bg_mask.shape: {bg_mask.shape}'
+
+            elif format == 'DCHW':
+                images = images.permute(1, 0, 2, 3)
+                labels = labels.squeeze(0).permute(1, 0, 2, 3)
+                bg_mask = bg_mask.permute(1, 0, 2, 3)
+
+                assert len(images.shape) == 4, f'images.shape: {images.shape}'
+                assert len(labels.shape) == 4, f'labels.shape: {labels.shape}'
+                assert len(bg_mask.shape) == 4, f'bg_mask.shape: {bg_mask.shape}'
+
+            else:
+                raise ValueError(f'Unknown format: {format}')
+
+        else:
+            # Get Original volume image, labels, and background mask
+            #  We do not have the info on the original position, so we have to replicate 
+            #  the downsampling process done in the original preprocessing (it is the only difference btw. the two anyways)
+
+            images, labels, bg_mask = self.get_original_images(
+                index, as_onehot=as_onehot, format=format)
+            
+            images = self.resize_to_processed_vol(images, index, match_size=False,
+                                                  only_inplane_resample=True)
+            labels = self.resize_to_processed_vol(labels.float(), index,
+                                                  match_size=False,
+                                                  only_inplane_resample=True)
+            bg_mask = self.resize_to_processed_vol(bg_mask.float(), index,
+                                                   match_size=False,
+                                                   only_inplane_resample=True)
         
-        if self.mode == '2D':
-            images = self.images.reshape(-1, *self.dim_proc)[index]
-            labels = self.labels.reshape(-1, *self.dim_proc)[index]
-            bg_mask = self.background_mask.reshape(-1, *self.dim_proc)[index]
-
-        else:
-            images = self.images[index, ...]
-            labels = self.labels[index, ...]
-            bg_mask = self.background_mask[index, ...]
-
-        images = torch.from_numpy(images).unsqueeze(0)   # CDHW
-        labels = torch.from_numpy(labels).unsqueeze(0)   # CDHW
-        bg_mask = torch.from_numpy(bg_mask).unsqueeze(0) # CDHW
-
-        if as_onehot:
-            labels = class_to_onehot(labels, self.n_classes, class_dim=1) # 1CDHW
-
-        if format == '1CDHW':
-            images = images.unsqueeze(0)
-            bg_mask = bg_mask.unsqueeze(0)
-
-            len(images.shape) == 5, f'images.shape: {images.shape}'
-            len(labels.shape) == 5, f'labels.shape: {labels.shape}'
-            len(bg_mask.shape) == 5, f'bg_mask.shape: {bg_mask.shape}'
-
-        elif format == 'DCHW':
-            images = images.permute(1, 0, 2, 3)
-            labels = labels.squeeze(0).permute(1, 0, 2, 3)
-            bg_mask = bg_mask.permute(1, 0, 2, 3)
-
-            len(images.shape) == 4, f'images.shape: {images.shape}'
-            len(labels.shape) == 4, f'labels.shape: {labels.shape}'
-            len(bg_mask.shape) == 4, f'bg_mask.shape: {bg_mask.shape}'
-
-        else:
-            raise ValueError(f'Unknown format: {format}')
-
         return images, labels, bg_mask
 
 
@@ -374,6 +503,25 @@ class DatasetInMemory(data.Dataset):
         x, y, z = self.resolution_proc
 
         return transform_orientation(x, y, z, orientation)
+    
+
+    def get_original_image_size(self, index, orientation: str = 'DHW'):
+        """
+        Get the original image size in the specified orientation.
+
+        Parameters
+        ----------
+        orientation : str, optional
+            The desired orientation of the image size. Default is 'DHW'.
+
+        Returns
+        -------
+        tuple
+            The image size in the specified orientation.
+        """
+        nx, ny, nz = self.n_pix_original[:, index]
+
+        return transform_orientation(nx, ny, nz, orientation)
        
 
     def image_transformation(self, images):
@@ -517,17 +665,38 @@ class DatasetInMemory(data.Dataset):
 if __name__ == '__main__':
     import sys
 
+    import matplotlib.pyplot as plt
+
     root_dir = os.path.normpath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
 
     sys.path.append(root_dir)
     
     from tta_uia_segmentation.src.utils.io import load_config
     from tta_uia_segmentation.src.utils.utils import resize_volume
+    from tta_uia_segmentation.src.utils.loss import dice_score
+
+    dice_score_fn_mean = lambda y_pred, y_gt: dice_score(y_pred, y_gt, soft=False, reduction='mean', smooth=1e-5, foreground_only=True)
+    dice_score_fn = lambda y_pred, y_gt: dice_score(y_pred, y_gt, soft=False, reduction='none', smooth=1e-5, foreground_only=True)
 
     dataset_config = load_config(os.path.join(root_dir, 'config', 'datasets.yaml'))
 
+    def current_evaluation_approach(y, orig_pix_size, preprocessed_pix_size):
+        scale_factor = torch.tensor(orig_pix_size) / torch.tensor(preprocessed_pix_size)
+        output_size = (torch.tensor(y.shape[2:]) * scale_factor).round().int().tolist()
+        
+        _, _, D, H, W = y.shape
+
+        # Downsize to preprocessed pixel size
+        y_resized = F.interpolate(y.float(), size=output_size, mode='trilinear')
+
+        # Upsample to original dimensions
+        y_resized = F.interpolate(y_resized, size=(D, H, W), mode='trilinear')
+
+        print('Dice score current evaluation approach: ', dice_score_fn_mean(y_resized, y))
+        print('Dice score current evaluation approach (each class): ', dice_score_fn(y_resized, y))
+        
     split = 'train'
-    dataset = 'nuhs_w_synthseg_labels'
+    dataset = 'vu_w_synthseg_labels'
     image_size = [1, 256, 256]
 
     dataset_info = dataset_config[dataset]
@@ -578,18 +747,21 @@ if __name__ == '__main__':
     x_orig, y_orig, bg_mask = ds.get_original_images(vol_index)
     print(x_orig.shape, y_orig.shape, bg_mask.shape)
 
-    x_proc, y_proc, bg_mask = ds.get_preprocessed_images(vol_index)
+    x_proc, y_proc, bg_mask = ds.get_preprocessed_images(vol_index, same_position_as_original=True)
     print(x_proc.shape, y_proc.shape, bg_mask.shape)
 
     print(f'Original pixel size: {ds.get_original_pixel_size(vol_index)}')
     print(f'Processed pixel size: {ds.get_processed_pixel_size()}')
 
+    print('Resizing preprocessed volume to original size')
     # Test resizing of preprocessed volume to original size
     x_proc_resized = resize_volume(
         x_proc,
         current_pix_size= ds.get_processed_pixel_size(),
         target_pix_size=ds.get_original_pixel_size(vol_index),
         target_img_size=tuple(x_orig.shape[-3:]),
+        mode='trilinear',
+        only_inplane_resample=True
     )
     print(x_proc_resized.shape)
 
@@ -602,21 +774,7 @@ if __name__ == '__main__':
     )
     print(y_proc_resized.shape)
 
-
-    # Test resizing of original volume to preprocessed size
-    x_orig_resized = resize_volume(
-        x_orig, current_pix_size=ds.get_original_pixel_size(vol_index), 
-        target_pix_size=ds.get_processed_pixel_size(),
-        target_img_size=ds.dim_proc 
-        )
-    print(x_orig_resized.shape)
-
-    # Test resizing of label volume to preprocessed size
-    y_orig_resized = resize_volume(
-        y_orig.float(), 
-        ds.get_original_pixel_size(vol_index), 
-        ds.get_processed_pixel_size(),
-        ds.dim_proc)
-    print(y_orig_resized.shape)
-
-    print('hallo')
+    print(f'Dice betweeen y_orig and y_proc_resized: {dice_score_fn_mean(y_proc_resized, y_orig)}')
+    print(f'Dice betweeen y_orig and y_proc_resized (each class): {dice_score_fn(y_proc_resized, y_orig)}\n')
+    
+    current_evaluation_approach(y_orig, ds.get_original_pixel_size(vol_index), ds.get_processed_pixel_size())

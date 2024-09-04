@@ -1,8 +1,12 @@
+from typing import Optional
 import torch
 from torch.utils.data import Dataset
 
 from tta_uia_segmentation.src.tta import TTAInterface
 from tta_uia_segmentation.src.utils.loss import dice_score
+from tta_uia_segmentation.src.utils.utils import resize_volume
+from tta_uia_segmentation.src.utils.io import save_nii_image
+from tta_uia_segmentation.src.utils.visualization import export_images
 
 
 dice_score_fn_dict = {
@@ -40,7 +44,7 @@ class BaseTTA(TTAInterface):
         """
         raise NotImplementedError("The method 'tta' is not implemented.")
     
-    def predict(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
+    def predict(self, x: torch.Tensor, **kwargs) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Make predictions on the input data.
 
@@ -54,38 +58,128 @@ class BaseTTA(TTAInterface):
     def evaluate(
         self,
         x_preprocessed: torch.Tensor, 
-        y_gt: torch.Tensor,
+        y_original_gt: torch.Tensor,
         preprocessed_pix_size: tuple[float, ...],
         gt_pix_size: tuple[float, ...], 
         metrics: dict[str, callable] = dice_score_fn_dict,
+        output_dir: Optional[str] = None,
+        file_name: Optional[str] = None,
+        store_visualization: bool = False,
+        x_original: Optional[torch.Tensor] = None,
+        other_volumes_to_visualize: Optional[dict[str, torch.Tensor]] = None,
+        save_predicted_vol_as_nifti: bool = False,
+        slice_vols_for_viz: Optional[tuple[tuple[int, int], tuple[int, int], tuple[int, int]]] = None,
         **kwargs
-        ) -> float:
+        ) -> dict[str, float]:
         """
         Evaluate the model on the input data and labels.
 
         Parameters
         ----------
-        x : torch.Tensor
-            Input image at the preprocessing resolution in DCHW format
-        y : torch.Tensor
-            Ground truth segmentation labels at the original resolution in CDHW format
+        x_preprocessed : torch.Tensor
+            Input image at the preprocessing resolution.
+        y_gt : torch.Tensor
+            Ground truth segmentation labels at the original resolution.
+        preprocessed_pix_size : tuple[float, ...]
+            Pixel size of the preprocessed input image.
+        gt_pix_size : tuple[float, ...]
+            Pixel size of the ground truth labels.
+        metrics : dict[str, callable], optional
+            Dictionary of metric functions to evaluate the model's performance.
+        output_dir : str, optional
+            Directory to save output visualizations.
+        file_name : str, optional
+            Base name for output files.
+        store_visualization : bool, optional
+            Whether to store visualizations of the results.
+        other_volumes_to_visualize : dict[str, torch.Tensor], optional
+            Additional volumes to include in the visualization.
+        save_predicted_vol_as_nifti : bool, optional
+            Whether to save the predicted volume as a NIfTI file.
+        slice_vols_for_viz : tuple[tuple[int, int], tuple[int, int], tuple[int, int]], optional
+            Slicing indices for visualization of volumes.
+        **kwargs
+            Additional keyword arguments.
 
         Returns
         -------
-        float
-            Accuracy of the model on the input data.
+        dict[str, float]
+            Dictionary of metric names and their corresponding values.
         """
 
         # Predict segmentation for x_preprocessed
-        y_pred = self.predict(x_preprocessed, **kwargs)
+        x_norm, y_pred, _ = self.predict(x_preprocessed, **kwargs)
 
-        # Resize original images to preprocessed resolution
-        scale_factor = gt_pix_size / preprocessed_pix_size
+        # Resize x_norm and y_pred to the original resolution
+        x_norm, y_pred = [
+            resize_volume(
+                vol,
+                current_pix_size=preprocessed_pix_size,
+                target_pix_size=gt_pix_size,
+                target_img_size=None,  # We assume no padding or cropping is needed to match image sizes
+                mode='trilinear',
+                only_inplane_resample=True     
+            ) for vol in (x_norm, y_pred)
+        ]
 
-        output_size = (y_.shape[2:] * scale_factor).round().astype(int).tolist()
+        # Measure the performance of the model
+        metrics_values = {}
+        for metric_name, metric_fn in metrics.items():
+            metric_value = metric_fn(y_pred, y_original_gt)
 
+            if isinstance(metric_value, torch.Tensor):
+                if metric_value.ndim <= 1:
+                    metric_value = metric_value.mean().item()
+                else:   
+                    metric_value = metric_value.tolist()
 
-        return 
+            metrics_values[metric_name] = metric_value
+
+        # Save visualizations
+        # TODO: Check if the volumes are in the correct format for visualization (e.g., shape, dtype)
+        if store_visualization:
+            assert output_dir is not None, "The output directory must be provided to store visualizations."
+            assert file_name is not None, "The file name must be provided to store visualizations."
+
+            # Slice volumes for visualization
+            if slice_vols_for_viz is not None:
+                slice_indices = tuple(slice(start, end) for start, end in slice_vols_for_viz)
+                x_original, x_norm, y_original_gt, y_pred = [ 
+                    vol[..., slice_indices[0], slice_indices[1], slice_indices[2]]
+                    for vol in [x_original, x_norm, y_original_gt, y_pred]
+                ]
+
+            # Resize other volumes to the original resolution
+            if other_volumes_to_visualize is not None:
+                for vol_name, vol in other_volumes_to_visualize.items():
+                    other_volumes_to_visualize[vol_name] = resize_volume(
+                        vol,
+                        current_pix_size=preprocessed_pix_size,
+                        target_pix_size=gt_pix_size,
+                        target_img_size=y_original_gt.shape[-3: ], # We assume no padding or cropping is needed to match image sizes
+                        mode='trilinear',
+                        only_inplane_resample=True     
+                    )
+            
+            export_images(
+                x_original,
+                x_norm,
+                y_original_gt,
+                y_pred,
+                output_dir=output_dir,
+                image_name=file_name,
+                **other_volumes_to_visualize
+            )
+
+        # Save the predicted volume as a NIfTI file
+        if save_predicted_vol_as_nifti:
+            assert output_dir is not None, "The output directory must be provided to save the predicted volume."
+            assert file_name is not None, "The file name must be provided to save the predicted volume."
+
+            # TODO: Check the format matches what the function expects
+            save_nii_image(dir=output_dir, file_name=file_name + '.nii.gz')
+
+        return metrics_values
     
     def evaluate_dataset(self, ds: Dataset) -> None:
         """

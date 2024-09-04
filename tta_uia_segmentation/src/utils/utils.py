@@ -1,6 +1,6 @@
 import os
 import random
-from typing import Union, Literal, Tuple
+from typing import Optional, Union, Literal, Tuple
 
 import torch
 import torch.nn.functional as F
@@ -121,10 +121,12 @@ def resize_volume(
     x: torch.Tensor,
     target_pix_size: tuple[float, float, float] | torch.Tensor,
     current_pix_size: tuple[float, float, float] | torch.Tensor,
-    target_img_size: tuple[int, int, int],
+    target_img_size: Optional[tuple[int, int, int]] = None,
     vol_format: Literal['1CDHW', 'DCHW', 'CDHW'] = '1CDHW',
     output_format: Literal['1CDHW', 'DCHW'] = '1CDHW',
-    mode: Literal['trilinear', 'nearest'] = 'trilinear'
+    mode: Literal['trilinear', 'nearest'] = 'trilinear',
+    only_inplane_resample: bool = True,
+    order_operations: Literal['crop_then_resize', 'resize_then_crop'] = 'resize_then_crop'
 ) -> torch.Tensor:
     """
     Resize a volume tensor to a target pixel size.
@@ -152,6 +154,8 @@ def resize_volume(
         Resized volume tensor in the specified output format.
     """
     
+    # Convert tensor 1CDHW format
+    # ---------------------------
     assert len(vol_format) == len(x.shape), f"x has {len(x.shape)} dimensions ({x.shape}) " + \
         f"while format has {len(vol_format)} ({vol_format})"
     
@@ -171,18 +175,51 @@ def resize_volume(
     
     else:
         raise ValueError(f"Unsupported volume format: {vol_format}")
+    
 
-    # Resample volume 
-    scale_factor = torch.Tensor(current_pix_size) / torch.Tensor(target_pix_size)
-    reampled_size = (torch.tensor(x.shape[-3:]) * scale_factor).round().int().tolist()
+    # Resample/resize volume
+    # ----------------------
+    scale_factor = torch.Tensor(current_pix_size) / torch.Tensor(target_pix_size)       # (D, H, W)
+    resampled_size = (torch.tensor(x.shape[-3:]) * scale_factor).round().int().tolist() # (D, H, W)
 
-    if (scale_factor != 1).any():
-        x = F.interpolate(x, size=reampled_size, mode=mode)
+    if only_inplane_resample:
+        scale_factor[0] = 1.0
+        resampled_size[0] = x.shape[-3]
+        if target_img_size is not None:
+            assert resampled_size[0] == target_img_size[0], \
+                "Target depth must match depth of 'x' for only_inplane_resize=True"
+        n_spatial_dims = 2
+    else:
+        n_spatial_dims = 3
+    
+    resample_necessary = (scale_factor != 1).any()
+    crop_or_pad_necessary = target_img_size is not None and \
+        tuple(x.shape[-n_spatial_dims:]) != tuple(target_img_size[-n_spatial_dims:])
 
-    # Crop or pad to target size
-    if tuple(x.shape[-3:]) != tuple(target_img_size):
-        x = crop_or_pad_to_size(x, target_img_size)
+    if order_operations == 'crop_then_resize':
+        # Crop or pad to target size
+        if crop_or_pad_necessary:
+            x = crop_or_pad_to_size(x, target_img_size)
+    
+        # Resample volume 
+        if resample_necessary:
+            x = F.interpolate(x, size=resampled_size, mode=mode)
 
+    elif order_operations == 'resize_then_crop':
+        # Resample volume 
+        if resample_necessary:
+            x = F.interpolate(x, size=resampled_size, mode=mode)
+
+        # Crop or pad to target size
+        if crop_or_pad_necessary:
+            x = crop_or_pad_to_size(x, target_img_size)
+
+    else:
+        raise ValueError(f"Unsupported order of operations: {order_operations}")
+
+
+    # Convert tensor to output format
+    # -------------------------------
     if output_format == 'DCHW':
         x = x.squeeze(0).permute(1, 0, 2, 3)
     elif output_format == '1CDHW':
@@ -228,7 +265,9 @@ def resize_and_resample_nibp(
 
 def crop_or_pad_to_size(data: torch.Tensor, target_size: Union[Tuple[int, int], Tuple[int, int, int]]) -> torch.Tensor:
     """
-    Crops or pads batched data to a given size in 2D (NCHW) or 3D (NCDHW).
+    Crops or pads batched data to a given size in 2D (NCHW) or 3D (NCDHW).\
+    
+    Residual from uneven cropping/padding is added to the right. 
     
     Parameters:
     data (torch.Tensor): Input data to be cropped or padded.

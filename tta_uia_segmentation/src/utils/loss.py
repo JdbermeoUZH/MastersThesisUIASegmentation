@@ -93,7 +93,7 @@ def dice_score(mask_pred, mask_gt, soft=True, reduction='mean', bg_channel=0, k=
         dices = dices[:, fg_mask, ...]
 
     if reduction == 'none':
-        return dices, dices[:, fg_mask, ...]
+        return dices
     elif reduction == 'mean':
         return dices.nanmean()
     elif reduction == 'sum':
