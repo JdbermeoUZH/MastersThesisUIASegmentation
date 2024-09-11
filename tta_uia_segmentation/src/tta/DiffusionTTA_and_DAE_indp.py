@@ -182,9 +182,9 @@ class DiffusionTTA_and_TTADAE_indp(TTADAE):
         
         pseudo_label_dataloader = None
         
-        if self.rescale_factor is not None:
-            assert (batch_size * self.rescale_factor[0]) % 1 == 0
-            pseudo_label_batch_size = int(batch_size * self.rescale_factor[0])
+        if self._rescale_factor is not None:
+            assert (batch_size * self._rescale_factor[0]) % 1 == 0
+            pseudo_label_batch_size = int(batch_size * self._rescale_factor[0])
         else:
             pseudo_label_batch_size = batch_size
             
@@ -204,7 +204,7 @@ class DiffusionTTA_and_TTADAE_indp(TTADAE):
                 self.norm.eval()
                 #self.seg.eval()
                 volume_dataset.dataset.set_augmentation(False)
-                y_dae_or_atlas = self._get_current_pseudo_label(pseudo_label_dataloader)
+                y_dae_or_atlas = self.get_current_pseudo_label(pseudo_label_dataloader)
                 _, dices_fg = self.test_volume(
                     volume_dataset=volume_dataset,
                     dataset_name=dataset_name,
@@ -227,7 +227,7 @@ class DiffusionTTA_and_TTADAE_indp(TTADAE):
             # DAE: Get pseudo label for current step 
             # :===========================================:
             if step % update_dae_output_every == 0 and self.dae_loss_alpha > 0:
-                if step == 0 or self.beta <= 1.0:
+                if step == 0 or self._beta <= 1.0:
                     dice_dae, _, pseudo_label_dataloader = self.generate_pseudo_labels(
                         dae_dataloader=volume_dataloader,
                         label_batch_size=pseudo_label_batch_size,
@@ -277,14 +277,14 @@ class DiffusionTTA_and_TTADAE_indp(TTADAE):
                     x_norm_grads_old = self._get_gradients_x_norm()
                     
                     _, mask, _ = self.forward_pass_seg(
-                        x, bg_mask, self.bg_supp_x_norm_dae, self.bg_suppression_opts_tta, device,
-                        manually_norm_img_before_seg=self.manually_norm_img_before_seg_tta
+                        x, bg_mask, self._bg_supp_x_norm_tta_dae, self._bg_suppression_opts_tta, device,
+                        manually_norm_img_before_seg=self._manually_norm_img_before_seg_tta
                     )
                     
-                    if self.rescale_factor is not None:
+                    if self._rescale_factor is not None:
                         mask = self.rescale_volume(mask)
                         
-                    dae_loss = self.dae_loss_alpha * self.loss_func(mask, y_pl)
+                    dae_loss = self.dae_loss_alpha * self._loss_func(mask, y_pl)
                     
                     if accumulate_over_volume:
                         dae_loss = dae_loss / len(volume_dataloader)
@@ -371,7 +371,7 @@ class DiffusionTTA_and_TTADAE_indp(TTADAE):
                 )
                     
                 if not accumulate_over_volume:
-                    self.optimizer.step()
+                    self._optimizer.step()
                     if self.wandb_log: self._log_x_norm_out_gradient_magnitudes(index, step, log_dae_grad_norm=False)
                                                     
                 with torch.no_grad():
@@ -772,7 +772,7 @@ class DiffusionTTA_and_TTADAE_indp(TTADAE):
         self.test_scores = []
         
         # DAE PL states
-        self.use_only_dae_pl = self.alpha == 0 and self.beta == 0
+        self.use_only_dae_pl = self._alpha == 0 and self._beta == 0
         self.using_dae_pl = False
         self.using_atlas_pl = False
 

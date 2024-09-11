@@ -29,8 +29,8 @@ bg_suppression_opts:
 
 dae:
   wandb_project: mt-tta-wmh
-  logdir: /scratch_net/biwidl319/jbermeo/logs/brain/tta/debugging/dae_only/3_01/lr_1em3_grad_acc_1x1_conv_norm
-  dae_dir: /scratch_net/biwidl319/jbermeo/data/models/brain/dae/hcp_t1
+  logdir: /scratch_net/biwidl319/jbermeo/logs/wmh/tta/debugging/dae_only/3_01/lr_1em3_grad_acc_1x1_conv_norm
+  dae_dir: /scratch_net/biwidl319/jbermeo/data/models/wmh/dae/umc
   
   seg_with_bg_supp: False
 
@@ -46,6 +46,17 @@ dae:
   save_checkpoints: True
   const_aug_per_volume: False
   
+  # Normalize intensities before segmentation
+  update_norm_td_statistics: True
+  manually_norm_img_before_seg_eval: True
+  manually_norm_img_before_seg_tta: False
+  normalization_strategy: standardize
+  min_max_quantile: [0.025, 0.975]
+  classes_of_interest: null
+
+  # Suppress background x_norm 
+  bg_supp_x_norm_eval: True
+  bg_supp_x_norm_tta_dae: True
   bg_suppression_opts:
     type: fixed_value  # possible values: none, fixed_value, random_value
     bg_value: -0.5

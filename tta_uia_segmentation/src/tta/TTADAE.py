@@ -1,25 +1,197 @@
 import os
 import copy
-from dataclasses import asdict
-from typing import Union, Optional, Any, Literal
+from dataclasses import asdict, dataclass, field, is_dataclass
+from typing import OrderedDict, Optional, Any, Literal
 
 import wandb
 import torch
 import numpy as np
+from pandas import DataFrame
 from torch.nn import functional as F
-from torch.utils.data import TensorDataset, ConcatDataset, DataLoader
+from torch.utils.data import DataLoader, Subset
 
 from tta_uia_segmentation.src.models.normalization import background_suppression
-from tta_uia_segmentation.src.utils.io import save_checkpoint, write_to_csv
-from tta_uia_segmentation.src.utils.loss import dice_score, DiceLoss
-from tta_uia_segmentation.src.utils.visualization import export_images
-from tta_uia_segmentation.src.utils.utils import get_seed
+from tta_uia_segmentation.src.utils.io import save_checkpoint
+from tta_uia_segmentation.src.utils.loss import dice_score, DiceLoss, onehot_to_class
+from tta_uia_segmentation.src.utils.utils import (
+    get_seed, state_dict_to_cpu, generate_2D_dl_for_vol, resize_volume)
 from tta_uia_segmentation.src.dataset import DatasetInMemory
 from tta_uia_segmentation.src.dataset.utils import normalize
 from tta_uia_segmentation.src.models import DomainStatistics
+from tta_uia_segmentation.src.tta import BaseTTA, BaseTTAState
 
 
-class TTADAE:
+EVAL_METRICS = {
+    'dice_score_all_classes': lambda y_pred, y_gt: dice_score(y_pred, y_gt, soft=False, reduction='none', smooth=1e-5),
+    'dice_score_fg_classes': lambda y_pred, y_gt: dice_score(y_pred, y_gt, soft=False, reduction='none', 
+        foreground_only=True, smooth=1e-5)
+}
+
+
+@dataclass
+class TTADAEState(BaseTTAState):
+    """
+    Dataclass to store the state of TTADAE.
+
+    Attributes
+    ----------
+    using_dae_pl : bool
+        Flag indicating whether DAE pseudo-labels are being used.
+    using_atlas_pl : bool
+        Flag indicating whether atlas pseudo-labels are being used.
+    use_only_dae_pl : bool
+        Flag indicating whether to use only DAE pseudo-labels.
+    use_only_atlas : bool
+        Flag indicating whether to use only atlas pseudo-labels.
+    use_atlas_only_for_init : bool
+        Flag indicating whether to use atlas only for initialization.
+    y_pl: torch.Tensor
+        Pseudo-labels/Prior, it may be the atlas or a denoised prior with the DAE.
+    norm_state_dict : dict[str, Any]
+        Dictionary storing the state of the normalization model.
+    norm_td_statistics : Optional[DomainStatistics]
+        Statistics of the normalized target domain.
+    """
+    using_dae_pl: bool = False
+    using_atlas_pl: bool = False
+    use_only_dae_pl: bool = False
+    use_only_atlas: bool = False
+    use_atlas_only_for_init: bool = False
+    y_pl: torch.Tensor = field(default=None)
+    
+    norm_state_dict: dict[str, Any] = field(default_factory=dict)
+    norm_td_statistics: Optional[DomainStatistics | dict] = None
+        
+    _create_initial_state: bool = field(default=True)
+    _initial_state: Optional['TTADAEState'] = field(default=None, init=False)
+    _best_state: Optional['TTADAEState'] = field(default=None, init=False)
+
+    def __post_init__(self):
+        """
+        Ensure consistency between flags and initialize the state.
+        """
+        self._ensure_flag_consistency()
+        self._initialize_atlas_flag()
+        super().__post_init__()
+
+        if isinstance(self.norm_td_statistics, dict):
+            self.norm_td_statistics = DomainStatistics(**self.norm_td_statistics)
+
+    def _ensure_flag_consistency(self):
+        """
+        Ensure consistency between flags for pseudo-label/prior.
+        """
+        assert not (self.use_only_dae_pl and self.use_only_atlas), \
+            "Cannot use only DAE and only Atlas simultaneously"
+        assert not (self.using_dae_pl and self.using_atlas_pl), \
+            "Cannot use DAE and Atlas simultaneously"
+        assert not self.use_atlas_only_for_init or (not self.use_only_atlas and not self.use_only_dae_pl), \
+            "Cannot use only Atlas or only DAE and use Atlas only for initialization"
+        
+        if self.use_only_dae_pl:
+            self.using_dae_pl = True
+            self.using_atlas_pl = False
+            
+        elif self.use_only_atlas or self.use_atlas_only_for_init:
+            self.using_atlas_pl = True
+            self.using_dae_pl = False
+
+    def _initialize_atlas_flag(self):
+        """
+        Initialize _atlas_init_done flag.
+        """
+        self.atlas_init_done = False if self.use_atlas_only_for_init else None
+
+    def use_dae_pl(self, y_dae: torch.Tensor):
+        """
+        Switch to using DAE pseudo-labels.
+
+        This method sets the flags to use DAE pseudo-labels and not use Atlas pseudo-labels.
+        """
+        
+        assert not self.use_only_atlas, ("Cannot use only DAE pseudo-labels when only" + 
+                                         " Atlas pseudo-labels are enabled")
+        
+        self.using_dae_pl = True
+        self.using_atlas_pl = False
+
+        if self.use_atlas_only_for_init and not self.atlas_init_done:
+            self.atlas_init_done = True
+
+        self.y_pl = y_dae
+        
+    def use_atlas_pl(self, y_atlas: torch.Tensor):
+        """
+        Switch to using Atlas pseudo-labels.
+
+        This method sets the flags to use Atlas pseudo-labels and not use DAE pseudo-labels.
+        """
+        assert not self.use_only_dae_pl, "Cannot use only Atlas pseudo-labels with only DAE pseudo-labels"
+        
+        self.using_atlas_pl = True
+        self.using_dae_pl = False
+
+        if self.use_atlas_only_for_init and self.atlas_init_done:
+            raise RuntimeError("Cannot switch to Atlas pseudo-labels after initialization" +
+                               " when use_atlas_only_for_intit is enabled")
+    
+        self.y_pl = y_atlas
+
+    @property
+    def current_state(self) -> 'TTADAEState':
+        """
+        Get a deep copy of the current state of the TTADAEState.
+
+        state_dict's that correspond to model states are moved to the CPU.
+
+        Returns:
+            TTADAEState: The current state.
+        """
+
+        # Copy the _initial_state and _best_state attributes
+        _initial_state = self._initial_state.current_state \
+            if self._initial_state is not None else None
+        _best_state = self._best_state.current_state \
+            if self._best_state is not None else None
+        current_state_dict = asdict(self)
+        
+        # Remove the initial and best states from the state_dict
+        current_state_dict = asdict(self)
+        del current_state_dict['_initial_state']
+        del current_state_dict['_best_state']
+        
+        # Move the state_dict of the model to CPU
+        model_state_dicts = ['norm_state_dict']
+        current_state_dict['norm_state_dict'] = state_dict_to_cpu(
+            current_state_dict['norm_state_dict'])  
+
+        # Create a deep copy of all other attributes
+        for key, value in current_state_dict.items():
+            if key not in model_state_dicts:
+                current_state_dict[key] = copy.deepcopy(value)
+
+        # Create the new TTADAEState instance
+        current_state_dict['_create_initial_state'] = False
+        current_state_dict = TTADAEState(**current_state_dict)
+
+        # Add the initial and best states back to the state_dict
+        current_state_dict._initial_state = _initial_state
+        current_state_dict._best_state = _best_state
+
+        return current_state_dict
+
+    @property
+    def y_pl_categorical(self) -> torch.Tensor:
+        """
+        Get the pseudo-labels in categorical format.
+
+        Returns:
+            torch.Tensor: Pseudo-labels in categorical format. N1DHW format.
+        """
+        return onehot_to_class(self.y_pl) if self.y_pl is not None else None
+
+
+class TTADAE(BaseTTA):
     """
     Class to perform Test-Time Adaptation (TTA) using a DAE model to generate pseudo labels.
     
@@ -56,221 +228,241 @@ class TTADAE:
         seg: torch.nn.Module,
         dae: torch.nn.Module, 
         atlas: Any,
-        norm_sd_statistics: DomainStatistics,
         n_classes: int, 
         rescale_factor: tuple[int],
-        bg_suppression_opts: dict,
-        bg_suppression_opts_tta: dict,
         loss_func: torch.nn.Module = DiceLoss(),
         learning_rate: float = 1e-3,
         alpha: float = 1.0,
         beta: float = 0.25,
+        eval_metrics: OrderedDict[str, callable] = EVAL_METRICS,
         classes_of_interest: Optional[list[int]] = None,
-        use_atlas_only_for_init: bool = False,
+        use_only_dae_pl: bool = False,
+        use_only_atlas: bool = False,
+        use_atlas_only_for_intit: bool = False,
+        norm_sd_statistics: Optional[DomainStatistics] = None,
         update_norm_td_statistics: bool = False,
         manually_norm_img_before_seg_tta: bool = False,
-        manually_norm_img_before_seg_val: bool = False,
+        manually_norm_img_before_seg_eval: bool = False,
         normalization_strategy: Literal['standardize', 'min_max', 'histogram_eq'] = 'standardize',
-        bg_supp_x_norm_dae: bool = False,
         bg_supp_x_norm_eval: bool = False,
+        bg_suppression_opts_eval: Optional[dict] = None,
+        bg_supp_x_norm_tta_dae: bool = False,
+        bg_suppression_opts_tta_dae: Optional[dict] = None,
         wandb_log: bool = False,
+        debug_mode: bool = False,
         device: str = 'cuda',
         optimizer: Optional[torch.optim.Optimizer] = None,
         ) -> None:
-    
-        self.norm = norm
-        self.seg = seg
-        self.dae = dae
-        self.atlas = atlas
-        self.norm_sd_statistics = norm_sd_statistics
         
-        self.n_classes = n_classes
-        self.classes_of_interest = classes_of_interest
+        super(BaseTTA, self).__init__()
+
+        # Models and objects used in TTA
+        self._norm = norm
+        self._seg = seg
+        self._dae = dae
+        self._atlas = atlas
         
-        # Strategy for normalizing the image intensities to match those of the source domain
-        self.normalization_strategy = normalization_strategy
-        
-        # Handling of target domain statistics
-        self.update_norm_td_statistics = update_norm_td_statistics
-        self.manually_norm_img_before_seg_tta = manually_norm_img_before_seg_tta
-        self.manually_norm_img_before_seg_val = manually_norm_img_before_seg_val
-        
-        if norm_sd_statistics is not None:
-            self.norm_td_statistics = DomainStatistics(**asdict(norm_sd_statistics))
-            self.norm_td_statistics.frozen = not update_norm_td_statistics
-            self.norm_td_statistics.quantile_cal = None
-            self.norm_td_statistics.precalculated_quantiles = None
-        else:
-            self.norm_td_statistics = None
-                
-        # Whether the segmentation model uses background suppression of input images
-        self.bg_supp_x_norm_dae = bg_supp_x_norm_dae
-        self.bg_supp_x_norm_eval = bg_supp_x_norm_eval
-        self.bg_suppression_opts = bg_suppression_opts
-        self.bg_suppression_opts_tta = bg_suppression_opts_tta
+        self._device = device
+
+        # Information about the problem 
+        self._n_classes = n_classes
+        self._classes_of_interest = classes_of_interest
         
         # Rescale factor for pseudo labels
-        self.rescale_factor = rescale_factor
+        self._rescale_factor = rescale_factor
         
         # Thresholds for pseudo label selection
-        self.alpha = alpha
-        self.beta = beta
-        self.use_atlas_only_for_intit = use_atlas_only_for_init
-        
-        self.use_only_dae_pl = self.alpha == 0 and self.beta == 0
-        
+        self._alpha = alpha
+        self._beta = beta      
+          
         # Loss function and optimizer
-        self.loss_func = loss_func
-        self.learning_rate = learning_rate
+        self._loss_func = loss_func
+        self._learning_rate = learning_rate
         
         if optimizer is None:
-            self.optimizer = torch.optim.Adam(
-                self.norm.parameters(),
+            self._optimizer = torch.optim.Adam(
+                self._norm.parameters(),
                 lr=learning_rate
             )
         
-        # Setting up metrics for model selection.
-        self.tta_losses = []
-        self.test_scores = []
+        # Whether the segmentation model uses background suppression of input images
+        self._bg_supp_x_norm_tta_dae = bg_supp_x_norm_tta_dae
+        self._bg_suppression_opts_tta = bg_suppression_opts_tta_dae
 
-        self.norm_seg_dict = {
-            'best_score': {
-                'norm_state_dict': copy.deepcopy(self.norm.state_dict()),
-                'seg_state_dict': copy.deepcopy(self.seg.state_dict()),
-                'norm_td_statistics': asdict(self.norm_td_statistics) if self.norm_td_statistics is not None else None
-                }
-        }
-        self.metrics_best = {'best_score': 0}
-        
+        self._bg_supp_x_norm_eval = bg_supp_x_norm_eval
+        self._bg_suppression_opts_eval = bg_suppression_opts_eval
+
         # Set segmentation and DAE models in eval mode
-        self.seg.eval()
-        self.seg.requires_grad_(False)
-        
-        self.dae.eval()
-        self.dae.requires_grad_(False)
-        
-        # DAE PL states
-        self.using_dae_pl = False
-        self.using_atlas_pl = False
-        
-        self.device = device
-        
+        self._tta_fit_mode()
+
+        # Metrics to be used during evaluation
+        self._eval_metrics = eval_metrics
+                
         # wandb logging
-        self.wandb_log = wandb_log
+        self._wandb_log = wandb_log
         
-        if self.wandb_log:
+        if self._wandb_log:
             TTADAE._define_custom_wandb_metrics(self)
+
+        # Debug mode
+        self._debug_mode = debug_mode
         
+        # Handling of target domain statistics
+        self._update_norm_td_statistics = update_norm_td_statistics        
+        self._norm_sd_statistics = norm_sd_statistics
+    
+        self._manually_norm_img_before_seg_tta = manually_norm_img_before_seg_tta
+        self._manually_norm_img_before_seg_eval = manually_norm_img_before_seg_eval
+        self._normalization_strategy = normalization_strategy
+
+        if norm_sd_statistics is not None:
+            norm_td_statistics = DomainStatistics(**asdict(norm_sd_statistics))
+            norm_td_statistics.frozen = not update_norm_td_statistics
+            norm_td_statistics.quantile_cal = None
+            norm_td_statistics.precalculated_quantiles = None
+        else:
+            norm_td_statistics = None
+            self._update_norm_td_statistics = False
+
+        # Initialize the state of the class
+        self._tta_dae_state = TTADAEState(
+            using_dae_pl=False,
+            using_atlas_pl=False,
+            use_only_dae_pl=(self._alpha == 0 and self._beta == 0) or use_only_dae_pl,
+            use_only_atlas=use_only_atlas,
+            use_atlas_only_for_init=use_atlas_only_for_intit,
+            norm_state_dict=norm.state_dict(),
+            norm_td_statistics=norm_td_statistics
+        )
+    
+    def _evaluation_mode(self) -> None:
+        """
+        Set the model to evaluation mode.
+
+        """
+        self._norm.eval()
+        self._seg.eval()
+
+    def _tta_fit_mode(self) -> None:
+        """
+        Set the objects used for TTA into training or frozen and evaluation mode.
+        """
+        self._norm.train()
+
+        self._seg.eval()
+        self._seg.requires_grad_(False)
+
+        self._dae.eval()
+        self._dae.requires_grad_(False)
+
     def tta(
         self,
-        volume_dataset: DatasetInMemory,
-        dataset_name: str,
-        index: int,
+        dataset: DatasetInMemory,
+        vol_idx: int,
         num_steps: int,
         batch_size: int,
         num_workers: int,
         calculate_dice_every: int,
         update_dae_output_every: int,
         accumulate_over_volume: bool,
-        dataset_repetition: int,
         const_aug_per_volume: bool,
         save_checkpoints: bool,
-        device: str,
-        logdir: Optional[str] = None,        
-    ):
-        # Set loss and dice scores to empty lists for each new TTA
-        self.tta_losses = []
-        self.test_scores = []
-            
-        self.seg.requires_grad_(False)
+        logdir: Optional[str] = None,
+        slice_vols_for_viz: Optional[tuple[tuple[int, int], tuple[int, int], tuple[int, int]]] = None
+    ) -> None:
+        self._tta_fit_mode()
 
-        if self.rescale_factor is not None:
-            assert (batch_size * self.rescale_factor[0]) % 1 == 0
-            label_batch_size = int(batch_size * self.rescale_factor[0])
+        # Change batch size for the pseudo label (in case it has a smaller size)
+        if self._rescale_factor is not None:
+            assert (batch_size * self._rescale_factor[0]) % 1 == 0
+            label_batch_size = int(batch_size * self._rescale_factor[0])
         else:
             label_batch_size = batch_size
 
-        dae_dataloader = DataLoader(
-            volume_dataset,
+        # Create dataloader for the volume on which we wish to adapt
+        volume_dataloader = DataLoader(
+            Subset(dataset, dataset.get_idxs_for_volume(vol_idx)),
             batch_size=batch_size,
             shuffle=False,
             num_workers=num_workers,
             drop_last=False,
-        )
-
-        volume_dataloader = DataLoader(
-            ConcatDataset([volume_dataset] * dataset_repetition),
-            batch_size=batch_size,
-            shuffle=False,
-            num_workers=num_workers,
-            drop_last=True,
-        )
+        ) 
         
+        # Start TTA iterations 
         for step in range(num_steps):
-            self.norm.eval()
-            volume_dataset.dataset.set_augmentation(False)
-            
-            # Test performance during adaptation.
-            if step % calculate_dice_every == 0 and calculate_dice_every != -1:
-
-                _, dices_fg = self.test_volume(
-                    volume_dataset=volume_dataset,
-                    dataset_name=dataset_name,
-                    logdir=logdir,
-                    device=device,
-                    batch_size=batch_size,
-                    num_workers=num_workers,
-                    index=index,
-                    iteration=step,
-                    bg_suppression_opts=self.bg_suppression_opts
-                )
-                self.test_scores.append(dices_fg.mean().item())
+            self._tta_dae_state.iteration = step
 
             # Update Pseudo label, with DAE or Atlas, depending on which has a better agreement
             if step % update_dae_output_every == 0:
                 
-                _, _, label_dataloader = self.generate_pseudo_labels(
-                    dae_dataloader=dae_dataloader,
-                    label_batch_size=label_batch_size,
-                    device=device,
-                    num_workers=num_workers,
-                    dataset_repetition=dataset_repetition,
+                y_pl = self.generate_pseudo_labels(
+                    dae_dataloader=volume_dataloader
                 )
 
+                pl_dataloader = generate_2D_dl_for_vol(
+                    y_pl,
+                    batch_size=label_batch_size,
+                    shuffle=False,
+                    num_workers=num_workers,
+                    drop_last=False, 
+                )
+
+            # Test performance during adaptation.
+            if (step % calculate_dice_every == 0 or step == num_steps - 1) and calculate_dice_every != -1:
+
+                _ = self.evaluate(
+                    dataset=dataset,
+                    vol_idx=vol_idx,
+                    iteration=step,
+                    output_dir=logdir,
+                    store_visualization=True,
+                    save_predicted_vol_as_nifti=False,
+                    batch_size=batch_size,
+                    num_workers=num_workers,
+                    slice_vols_for_viz=slice_vols_for_viz
+                )
+
+            # Take optimization TTA step
+            self._tta_fit_mode()
+            dataset.set_augmentation(True)  
+            
             tta_loss = 0
             n_samples = 0
-
-            self.norm.train()
-            volume_dataset.dataset.set_augmentation(True)  
             
             if accumulate_over_volume:
-                self.optimizer.zero_grad()
+                self._optimizer.zero_grad()
 
             if const_aug_per_volume:
-                volume_dataset.dataset.set_seed(get_seed())
+                dataset.set_seed(get_seed())
                                                             
-            # Adapting to the target distribution.
-            for (x,_,_,_, bg_mask), (y_pl,) in zip(volume_dataloader, label_dataloader):
+            for (x,_,_,_, bg_mask), (y_pl,) in zip(volume_dataloader, pl_dataloader):
 
                 if not accumulate_over_volume:
-                    self.optimizer.zero_grad()
+                    self._optimizer.zero_grad()
 
-                x = x.to(device).float()
-                y_pl = y_pl.to(device)
+                x = x.to(self._device).float()
+                y_pl = y_pl.to(self._device)
                 
                 # Update the statistics of the normalized target domain in the current step
-                if self.update_norm_td_statistics:
+                if self._update_norm_td_statistics:
                     with torch.no_grad():
-                        self.norm_td_statistics.update_step_statistics(self.norm(x))
+                        self._tta_dae_state.norm_td_statistics.update_step_statistics(self._norm(x))
                 
                 _, mask, _ = self.forward_pass_seg(
-                    x, bg_mask, self.bg_supp_x_norm_dae, self.bg_suppression_opts_tta, device,
-                    manually_norm_img_before_seg=self.manually_norm_img_before_seg_tta)
+                    x, bg_mask, self._bg_supp_x_norm_tta_dae, self._bg_suppression_opts_tta,
+                    manually_norm_img_before_seg=self._manually_norm_img_before_seg_tta)
 
-                if self.rescale_factor is not None:
-                    mask = self.rescale_volume(mask)
+                if self._rescale_factor is not None:
+                    # Downsample the mask to the size of the pseudo label
+                    mask = resize_volume(
+                        mask,
+                        target_pix_size=[1., 1., 1.],
+                        current_pix_size=self._rescale_factor,
+                        only_inplane_resample=False,
+                        vol_format='DCHW',
+                        output_format='DCHW')
                     
-                loss = self.loss_func(mask, y_pl)
+                loss = self._loss_func(mask, y_pl)
 
                 if accumulate_over_volume:
                     loss /= len(volume_dataloader)
@@ -278,43 +470,113 @@ class TTADAE:
                 loss.backward()
 
                 if not accumulate_over_volume:
-                    self.optimizer.step()
+                    self._optimizer.step()
 
                 with torch.no_grad():
                     tta_loss += loss.detach() * x.shape[0]
                     n_samples += x.shape[0]
 
             if accumulate_over_volume:
-                self.optimizer.step()
+                self._optimizer.step()
             
-            self.norm_td_statistics.update_statistics()
+            if self._update_norm_td_statistics:
+                self._tta_dae_state.norm_td_statistics.update_statistics()
 
-            self.tta_losses.append((tta_loss / n_samples).item())
+            tta_loss = (tta_loss / n_samples).item()
+
+            self._tta_dae_state.add_test_loss(
+                iteration=step, loss_name='tta_loss', loss_value=tta_loss)
             
-            if self.wandb_log:
-                wandb.log({
-                    f'tta_loss/img_{index}': self.tta_losses[-1],
-                    'tta_step': step
-                    })
+            if self._wandb_log:
+                wandb.log({f'tta_loss/img_{vol_idx}': tta_loss, 'tta_step': step})
 
         if save_checkpoints:
-            self._save_checkpoint(logdir, dataset_name, index)
+            self._save_checkpoint(logdir, dataset.dataset_name, vol_idx)
 
-        os.makedirs(os.path.join(logdir, 'metrics'), exist_ok=True)
+        self._tta_dae_state.is_adapted = True
 
-        os.makedirs(os.path.join(logdir, 'tta_score'), exist_ok=True)
+        test_scores_dir = os.path.join(logdir, 'tta_score')
         
-        write_to_csv(
-            os.path.join(logdir, 'tta_score', f'{dataset_name}_{index:03d}.csv'),
-            np.array([self.test_scores]).T,
-            header=['tta_score'],
-            mode='w',
+        self._tta_dae_state.store_test_scores_in_dir(
+            output_dir=test_scores_dir,
+            file_name_prefix=f'{dataset.dataset_name}_{vol_idx:03d}',
+            reduce='mean_accross_iterations'
         )
-        
-        dice_scores = {i * calculate_dice_every: score for i, score in enumerate(self.test_scores)}
 
-        return self.norm_seg_dict, self.metrics_best, dice_scores
-    
+    def evaluate(
+        self,
+        dataset: DatasetInMemory,
+        vol_idx: int,
+        iteration: int,
+        output_dir: str,
+        store_visualization: bool = True,
+        save_predicted_vol_as_nifti: bool = False,
+        **kwargs,
+    ):
+        self._evaluation_mode()
+        dataset.set_augmentation(False)
+
+        # Get the preprocessed vol for that has the same position as
+        # the original vol (preprocessed vol may have a translation in xy)
+        vol_preproc, _, bg_preproc = dataset.get_preprocessed_images(
+            vol_idx, same_position_as_original=True)
+
+        vol_orig, y_gt, _ = dataset.get_original_images(vol_idx) 
+
+        other_volumes_to_visualize = {
+            'y_dae_or_atlas': {
+                'vol': self._tta_dae_state.y_pl.cpu(),
+                'current_pix_size': [1, 1, 1],
+                'target_pix_size': self._rescale_factor,
+                'target_img_size': vol_orig.shape[-3:], # xyz
+                'slice_z_axis': False
+                } 
+        } if self._tta_dae_state.y_pl is not None else None
+
+        normalization_modes = {
+            'no_manual_normalization': False
+        }
+
+        if self._manually_norm_img_before_seg_eval:
+            norm_type = f'with_manual_normalization_{self._normalization_strategy}'
+            normalization_modes[norm_type] = True
+
+        results = {}
+        for norm_mode, norm_value in normalization_modes.items():
+            output_dir_norm_mode = os.path.join(output_dir, norm_mode)
+            file_name = f'{dataset.dataset_name}_vol_{vol_idx:03d}_step_{iteration:03d}'
+
+            eval_metrics = super().evaluate(
+                x_preprocessed=vol_preproc,
+                x_original=vol_orig,
+                y_original_gt=y_gt,
+                n_classes=self._n_classes,
+                preprocessed_pix_size=dataset.resolution_proc,
+                gt_pix_size=dataset.get_original_pixel_size(vol_idx),
+                metrics=self._eval_metrics,
+                output_dir=output_dir_norm_mode,
+                file_name=file_name,
+                store_visualization=store_visualization,
+                save_predicted_vol_as_nifti=save_predicted_vol_as_nifti,
+                other_volumes_to_visualize=other_volumes_to_visualize,
+                bg_mask=bg_preproc,
+                manually_norm_img_before_seg=norm_value,
+                **kwargs
+            )
+
+            results[norm_mode] = eval_metrics   
+
+            for eval_metric, eval_metric_values in eval_metrics.items():
+                metric_name = f'{norm_mode}/{eval_metric}'
+                self._tta_dae_state.add_test_score(
+                    iteration=iteration, metric_name=metric_name, score=eval_metric_values)
+
+            # Print mean dice score of the foreground classes
+            dices_fg_mean = np.mean(eval_metrics['dice_score_fg_classes']).mean().item()
+            print(f'Iteration {iteration} - dice score_fg_classes ({norm_mode}): {dices_fg_mean}') 
+
+        return results
+
     
     def _normalize_image_intensities_to_sd(self, x_norm: torch.Tensor) -> torch.Tensor:
         """Normalize image intensities to match the source domain statistics.
@@ -326,29 +588,118 @@ class TTADAE:
             torch.Tensor: Preprocess normalized image intensities to match statistics of the source domain.
         """
         
-        if self.normalization_strategy == 'standardize':
+        if self._normalization_strategy == 'standardize':
             x_norm_standardized = normalize(
                 type='standardize', data=x_norm,
-                mean=self.norm_td_statistics.mean, std=self.norm_td_statistics.std
+                mean=self._norm_td_statistics.mean, std=self._norm_td_statistics.std
                 )
-            x_norm_norm_to_sd = self.norm_sd_statistics.std * x_norm_standardized + self.norm_sd_statistics.mean
+            x_norm_norm_to_sd = self._norm_sd_statistics.std * x_norm_standardized + self._norm_sd_statistics.mean
         
-        elif self.normalization_strategy == 'min_max':
+        elif self._normalization_strategy == 'min_max':
             x_norm_btw_0_1 = normalize(
                 type='min_max', data=x_norm,
-                min=self.norm_td_statistics.min, max=self.norm_td_statistics.max
+                min=self._norm_td_statistics.min, max=self._norm_td_statistics.max
                 )
-            x_norm_norm_to_sd = (self.norm_sd_statistics.max - self.norm_sd_statistics.min) * x_norm_btw_0_1  +\
-                self.norm_sd_statistics.min
+            x_norm_norm_to_sd = (self._norm_sd_statistics.max - self._norm_sd_statistics.min) * x_norm_btw_0_1  +\
+                self._norm_sd_statistics.min
                 
-        elif self.normalization_strategy == 'histogram_eq':
+        elif self._normalization_strategy == 'histogram_eq':
             raise NotImplementedError('Histogram equalization is not implemented yet')
 
         else:
-            raise ValueError(f'Normalization strategy {self.normalization_strategy} is not valid')
+            raise ValueError(f'Normalization strategy {self._normalization_strategy} is not valid')
         
         return x_norm_norm_to_sd
     
+
+    @torch.inference_mode()
+    def predict(
+        self, x: torch.Tensor | DataLoader,
+        bg_mask: Optional[torch.Tensor] = None,
+        bg_supp_x_norm: Optional[bool] = None,
+        bg_suppression_opts: Optional[dict] = None,
+        manually_norm_img_before_seg: Optional[bool] = None, 
+        output_vol_format: Literal['DCHW', '1CDHW'] = '1CDHW',
+        **kwargs
+        ) -> torch.Tensor:
+        """Predict the segmentation mask for a given volume.
+
+        Parameters
+        ----------
+        x : torch.Tensor or DataLoader
+            Volume to be segmented (in 1CDHW format) or a DataLoader providing batches.
+            If a DataLoader is passed, it is assumed to provide the bg_mask as well.
+        bg_mask : torch.Tensor, optional
+            Background mask of the volume. Required if x is a Tensor.
+        bg_supp_x_norm : bool, optional
+            Whether to apply background suppression on normalized input.
+        bg_suppression_opts : dict, optional
+            Options for background suppression.
+        manually_norm_img_before_seg : bool, optional
+            Whether to manually normalize the image before segmentation.
+        device : str, optional
+            Device to be used for computation.
+        **kwargs : dict
+            Additional arguments to be passed to generate_2D_dl_for_vol if x is a Tensor.
+
+        Returns
+        -------
+        torch.Tensor
+            Predicted segmentation mask.
+
+        Notes
+        -----
+        If x is a Tensor, it will be converted to a DataLoader of 2D slices internally.
+        """
+        self._evaluation_mode()
+        
+        bg_supp_x_norm = bg_supp_x_norm if bg_supp_x_norm is not None \
+            else self._bg_supp_x_norm_eval
+        bg_suppression_opts = bg_suppression_opts if bg_suppression_opts is not None \
+            else self._bg_suppression_opts_eval
+        manually_norm_img_before_seg = manually_norm_img_before_seg if manually_norm_img_before_seg is not None \
+             else self._manually_norm_img_before_seg_eval
+
+        x_norms, masks, logits_list = [], [], []
+        
+        if isinstance(x, DataLoader):
+            for x_b, _, _, _, bg_mask_b in x:
+                x_b = x_b.to(self._device).float()
+                x_norm, mask, logits = self.forward_pass_seg(
+                    x_b, bg_mask_b, bg_supp_x_norm, bg_suppression_opts,
+                    manually_norm_img_before_seg)
+                x_norms.append(x_norm)
+                masks.append(mask)
+                logits_list.append(logits)
+
+        elif isinstance(x, torch.Tensor):
+            n_dims = 3 if x.dim() == 5 else 2
+            if bg_mask is not None:
+                assert x.shape[-n_dims:] == bg_mask.shape[-n_dims:], 'x and bg_mask must have the same spatial dims'
+
+            vols = (x, bg_mask) if bg_mask is not None else (x,)
+
+            dl = generate_2D_dl_for_vol(*vols, **kwargs)
+            
+            for x_b, bg_mask_b in dl:
+                x_b = x_b.to(self._device).float()
+                x_norm, mask, logits = self.forward_pass_seg(
+                    x_b, bg_mask_b, bg_supp_x_norm, 
+                    bg_suppression_opts, manually_norm_img_before_seg)
+                x_norms.append(x_norm)
+                masks.append(mask)
+                logits_list.append(logits)
+
+        # Concatenate and permute dimensions for all tensors
+        x_norms, masks, logits = [torch.cat(t) for t in [x_norms, masks, logits_list]]
+        
+        if output_vol_format == 'DCHW':
+            return x_norms, masks, logits
+        elif output_vol_format == '1CDHW':
+            return [t.permute(1, 0, 2, 3).unsqueeze(0) for t in [x_norms, masks, logits]]
+        else:
+            raise ValueError(f"Unsupported return format: {output_vol_format}")
+
 
     def forward_pass_seg(
         self, 
@@ -356,274 +707,64 @@ class TTADAE:
         bg_mask: Optional[torch.Tensor] = None,
         bg_supp_x_norm: bool = False,
         bg_suppression_opts: Optional[dict] = None,
-        device: Optional[Union[str, torch.device]] = None,
-        x_norm: Optional[torch.Tensor] = None,
         manually_norm_img_before_seg: bool = False,
+        x_norm: Optional[torch.Tensor] = None,
         ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         
-        x_norm = x_norm if x_norm is not None else self.norm(x)
+        x_norm = x_norm if x_norm is not None else self._norm(x)
         
         # Normalize image intensities to match the source domain statistics
         if manually_norm_img_before_seg:
             x_norm = self._normalize_image_intensities_to_sd(x_norm)
         
         if bg_supp_x_norm:
-            bg_mask = bg_mask.to(device)
+            bg_mask = bg_mask.to(self._device)
             x_norm_bg_supp = background_suppression(x_norm, bg_mask, bg_suppression_opts)
-            mask, logits = self.seg(x_norm_bg_supp)
+            mask, logits = self._seg(x_norm_bg_supp)
         else:
-            mask, logits = self.seg(x_norm)
+            mask, logits = self._seg(x_norm)
         
         return x_norm, mask, logits
     
-    def rescale_volume(
-        self,
-        x: torch.Tensor,
-        how: Literal['up', 'down'] = 'down',
-        return_dchw: bool = True
-    ) -> torch.Tensor:
-        # By define the recale factor as the proportion between
-        #  the Atlas or DAE volumes and the processed volumes 
-        rescale_factor = list((1 / np.array(self.rescale_factor))) \
-            if how == 'up' else self.rescale_factor
-            
-        x = x.permute(1, 0, 2, 3).unsqueeze(0)
-        x = F.interpolate(x, scale_factor=rescale_factor, mode='trilinear')
-        
-        if return_dchw:
-            x = x.squeeze(0).permute(1, 0, 2, 3)
-        
-        return x
-    
-    @torch.inference_mode()
-    def test_volume(
-        self,
-        volume_dataset: DatasetInMemory,
-        dataset_name: str,
-        index: int,
-        batch_size: int,
-        num_workers: int,
-        appendix='',
-        y_dae_or_atlas: Optional[torch.Tensor] = None,
-        x_guidance: Optional[torch.Tensor] = None,
-        bg_suppression_opts: Optional[dict] = None,
-        iteration=-1,
-        device: Optional[Union[str, torch.device]] = None,
-        logdir: Optional[str] = None,
-        manually_norm_img_before_seg: Optional[bool] = None,
-        classes_of_interest=None,
-    ):
-        bg_suppression_opts = bg_suppression_opts or self.bg_suppression_opts
-        manually_norm_img_before_seg = manually_norm_img_before_seg or self.manually_norm_img_before_seg_val
-        classes_of_interest = classes_of_interest or self.classes_of_interest
-        
-        # Get original images
-        x_original, y_original, bg = volume_dataset.dataset.get_original_images(index)
-        _, C, D, H, W = y_original.shape  # xyz = HWD
-
-        x_ = x_original.permute(0, 2, 3, 1).unsqueeze(0)  # NCHWD (= NCxyz)
-        y_ = y_original.permute(0, 1, 3, 4, 2)  # NCHWD
-        bg_ = torch.from_numpy(bg).permute(1, 2, 0).unsqueeze(0).unsqueeze(0)  # NCHWD
-
-        # Rescale x and y to the target resolution of the dataset
-        original_pix_size = volume_dataset.dataset.pix_size_original[:, index]
-        target_pix_size = volume_dataset.dataset.resolution_proc  # xyz
-        scale_factor = original_pix_size / target_pix_size
-        scale_factor[-1] = 1
-
-        y_ = y_.float()
-        bg_ = bg_.float()
-
-        output_size = (y_.shape[2:] * scale_factor).round().astype(int).tolist()
-        x_ = F.interpolate(x_, size=output_size, mode='trilinear')
-        y_ = F.interpolate(y_, size=output_size, mode='trilinear')
-        bg_ = F.interpolate(bg_, size=output_size, mode='trilinear')
-
-        y_ = y_.round().byte()
-        bg_ = bg_.round().bool()
-
-        x_ = x_.squeeze(0).permute(3, 0, 1, 2)  # DCHW
-        y_ = y_.squeeze(0).permute(3, 0, 1, 2)  # DCHW
-        bg_ = bg_.squeeze(0).permute(3, 0, 1, 2)  # DCHW
-
-        # Get segmentation
-        volume_dataloader = DataLoader(
-            TensorDataset(x_, y_, bg_),
-            batch_size=batch_size,
-            shuffle=False,
-            num_workers=num_workers,
-            drop_last=False,
-        )
-
-        manual_normalization = {
-            'without_manual_normlization': False}
-        
-        if manually_norm_img_before_seg:
-            manual_normalization['with_manual_normlization'] = True
-        
-        dices_out, dices_fg_out = None, None
-        
-        for manual_norm_mode, manual_norm_value in manual_normalization.items():
-            
-            log_suffix = '' if not manually_norm_img_before_seg else f'_{manual_norm_mode}'
-
-            x_norm = []
-            y_pred = []
-            
-            for x, _, bg_mask in volume_dataloader:
-                x_norm_part, y_pred_part, _ = self.forward_pass_seg(
-                    x.to(device), bg_mask.to(device), 
-                    self.bg_supp_x_norm_eval,
-                    self.bg_suppression_opts, device,
-                    manually_norm_img_before_seg=manual_norm_value
-                    )
-                
-                x_norm.append(x_norm_part.cpu())
-                y_pred.append(y_pred_part.cpu())
-
-            x_norm = torch.vstack(x_norm)
-            y_pred = torch.vstack(y_pred)
-
-            # Rescale x and y to the original resolution
-            x_norm = x_norm.permute(1, 0, 2, 3).unsqueeze(0)  # convert to NCDHW (with N=1)
-            y_pred = y_pred.permute(1, 0, 2, 3).unsqueeze(0)  # convert to NCDHW (with N=1)
-
-            x_norm = F.interpolate(x_norm, size=(D, H, W), mode='trilinear')
-            y_pred = F.interpolate(y_pred, size=(D, H, W), mode='trilinear')
-
-            if y_dae_or_atlas is not None:
-                y_dae_or_atlas = F.interpolate(y_dae_or_atlas, size=(D, H, W), mode='trilinear')
-                
-            if x_guidance is not None:
-                x_guidance = F.interpolate(x_guidance, size=(D, H, W), mode='trilinear')
-                
-            export_images(
-                x_original,
-                x_norm,
-                y_original,
-                y_pred,
-                x_guidance=x_guidance,
-                y_dae=y_dae_or_atlas,
-                n_classes=self.n_classes,
-                output_dir=os.path.join(logdir, 'segmentations' + log_suffix),
-                image_name=f'{dataset_name}_test_{index:03}_{iteration:03}{appendix}{log_suffix}.png'
-            )
-
-            dices, dices_fg = dice_score(y_pred, y_original, soft=False, reduction='none', smooth=1e-5)
-            print(f'Iteration {iteration} - dice score' + log_suffix + f': {dices_fg.mean().item()}')
-            
-            if classes_of_interest is not None:
-                dices_classes_of_interest = dices[:, classes_of_interest, ...].nanmean().item()    
-                print(f'Iteration {iteration} - dice score classes of interest {classes_of_interest}' + 
-                      f' dices_classes_of_interest: {dices_classes_of_interest}')
-
-                if self.wandb_log:
-                    wandb.log(
-                        {
-                            f'dice_score_classes_of_interest/img_{index:03d}{log_suffix}': dices_classes_of_interest,
-                            'tta_step': iteration
-                        }
-                    )
-
-                export_images(
-                    x_original,
-                    x_norm,
-                    y_original[:, [0, classes_of_interest], ...],
-                    y_pred[:, [0, classes_of_interest], ...],
-                    x_guidance=x_guidance,
-                    y_dae=y_dae_or_atlas[:, [0, classes_of_interest], ...] if y_dae_or_atlas is not None else None,
-                    n_classes=self.n_classes,
-                    output_dir=os.path.join(logdir, 'segmentations_classes_of_interest' + log_suffix),
-                    image_name=f'{dataset_name}_test_{index:03}_{iteration:03}{appendix}{log_suffix}.png'
-                )
-                        
-            if self.wandb_log:
-                wandb.log(
-                    {
-                        f'dice_score_fg/img_{index:03d}{log_suffix}': dices_fg.mean().item(),
-                        'tta_step': iteration
-                    }
-                )
-            
-            # Overall without manual norm is performing better, so return that one
-            if manual_norm_mode != 'with_manual_normlization':
-                dices_out = dices.cpu()
-                dices_fg_out = dices_fg.cpu()
-                    
-        assert dices_out is not None and dices_fg_out is not None, 'Dice scores will not be returned.'
-        
-        return dices_out.cpu(), dices_fg_out.cpu()
     
     @torch.inference_mode()
     def generate_pseudo_labels(
         self,
         dae_dataloader: DataLoader,
-        label_batch_size: int,
-        device: Union[str, torch.device],
-        num_workers: int,
-        dataset_repetition: int
-    ) -> tuple[float, float, DataLoader]:  
+    ) -> torch.Tensor:  
         
-        masks = []
-        for x, _, _, _, bg_mask in dae_dataloader:
-            x = x.to(device).float()
-            _, mask, _ = self.forward_pass_seg(
-                x, bg_mask, self.bg_suppression_opts_tta, device,
-                manually_norm_img_before_seg=self.manually_norm_img_before_seg_tta)
-            masks.append(mask)
+        _, masks, _ = self.predict(
+            dae_dataloader, output_vol_format='1CDHW',
+            manually_norm_img_before_seg=self._manually_norm_img_before_seg_tta)
 
-        masks = torch.cat(masks)
-        masks = masks.permute(1,0,2,3).unsqueeze(0) # CDHW -> DCHW
+        if self._rescale_factor is not None:
+            masks = F.interpolate(masks, scale_factor=self._rescale_factor, mode='trilinear')
 
-        if self.rescale_factor is not None:
-            masks = F.interpolate(masks, scale_factor=self.rescale_factor, mode='trilinear')
+        dae_output, _ = self._dae(masks)
 
-        dae_output, _ = self.dae(masks)
-
-        dice_denoised, _ = dice_score(masks, dae_output, soft=True, reduction='mean', smooth=1e-5)
-        dice_atlas, _ = dice_score(masks, self.atlas, soft=True, reduction='mean', smooth=1e-5)
-
-        print(f'DEBUG: dice_denoised: {dice_denoised}, dice_atlas: {dice_atlas}')  # TODO: Delete me
+        dice_denoised = dice_score(masks, dae_output, soft=True, reduction='mean', 
+                                   smooth=1e-5, foreground_only=False)
+        dice_atlas = dice_score(masks, self._atlas, soft=True, reduction='mean',
+                                 smooth=1e-5, foreground_only=False)
         
-        if (dice_denoised / dice_atlas >= self.alpha and dice_atlas >= self.beta) \
-            or self.use_only_dae_pl:
+        if self._debug_mode:
+            print(f'DEBUG: dice_denoised: {dice_denoised}, dice_atlas: {dice_atlas}')
+        
+        if (dice_denoised / dice_atlas >= self._alpha and dice_atlas >= self._beta) \
+            or self._tta_dae_state.use_only_dae_pl \
+            or (self._tta_dae_state.use_atlas_only_for_init and self._tta_dae_state.atlas_init_done):
             print('Using DAE output as pseudo label')
-            target_labels = dae_output
             dice = dice_denoised.item()
-            self.using_dae_pl = True
-            self.using_atlas_pl = False
-            
-            if self.use_atlas_only_for_intit and not self.use_only_dae_pl:    
-                # Set alpha and beta to 0 to always use DAE output as pseudo label from now on
-                print('----------------Only DAE PL from now on----------------')
-                self.set_use_only_dae_pl(True)
+            self._tta_dae_state.use_dae_pl(dae_output)
 
         else:
             print('Using Atlas as pseudo label')
-            target_labels = self.atlas
             dice = dice_atlas.item()
-            self.using_atlas_pl = True
-            self.using_dae_pl = False
+            self._tta_dae_state.use_atlas_pl(self._atlas)
             
-        target_labels = target_labels.squeeze(0)
-        target_labels = target_labels.permute(1,0,2,3)
-
-        if self.metrics_best['best_score'] < dice:
-            # Store the weights of the model with the highest agreement with the pseudo label
-            self.norm_seg_dict['best_score']['norm_state_dict'] = copy.deepcopy(self.norm.state_dict())
-            self.norm_seg_dict['best_score']['seg_state_dict'] = copy.deepcopy(self.seg.state_dict())
-            self.norm_seg_dict['best_score']['norm_td_statistics'] = asdict(self.norm_td_statistics) if self.norm_td_statistics is not None else None
-            self.metrics_best['best_score'] = dice
-            
-        pl_dataloader =  DataLoader(
-            ConcatDataset([TensorDataset(target_labels.cpu())] * dataset_repetition), 
-            batch_size=label_batch_size,
-            shuffle=False,
-            num_workers=num_workers,
-            drop_last=True, 
-            )
+        self._tta_dae_state.check_new_best_score(dice)
         
-        return dice_denoised.item(), dice_atlas.item(), pl_dataloader
+        return self._tta_dae_state.y_pl
         
     def _normalize_image_intensities_to_sd(self, x_norm: torch.Tensor) -> torch.Tensor:
         """Normalize image intensities to match the source domain statistics.
@@ -634,26 +775,28 @@ class TTADAE:
         Returns:
             torch.Tensor: Preprocess normalized image intensities to match statistics of the source domain.
         """
-        if self.normalization_strategy == 'standardize':
+        if self._normalization_strategy == 'standardize':
             x_norm_standardized = normalize(
                 type='standardize', data=x_norm,
-                mean=self.norm_td_statistics.mean, std=self.norm_td_statistics.std
+                mean=self._tta_dae_state.norm_td_statistics.mean,
+                std=self._tta_dae_state.norm_td_statistics.std
                 )
-            x_norm_norm_to_sd = self.norm_sd_statistics.std * x_norm_standardized + self.norm_sd_statistics.mean
+            x_norm_norm_to_sd = self._norm_sd_statistics.std * x_norm_standardized + self._norm_sd_statistics.mean
         
-        elif self.normalization_strategy == 'min_max':
+        elif self._normalization_strategy == 'min_max':
             x_norm_btw_0_1 = normalize(
                 type='min_max', data=x_norm,
-                min=self.norm_td_statistics.min, max=self.norm_td_statistics.max
+                min=self._tta_dae_state.norm_td_statistics.min,
+                max=self._tta_dae_state.norm_td_statistics.max
                 )
-            x_norm_norm_to_sd = (self.norm_sd_statistics.max - self.norm_sd_statistics.min) * x_norm_btw_0_1  +\
-                self.norm_sd_statistics.min
+            x_norm_norm_to_sd = (self._norm_sd_statistics.max - self._norm_sd_statistics.min) * x_norm_btw_0_1  +\
+                self._norm_sd_statistics.min
                 
-        elif self.normalization_strategy == 'histogram_eq':
+        elif self._normalization_strategy == 'histogram_eq':
             raise NotImplementedError('Histogram equalization is not implemented yet')
 
         else:
-            raise ValueError(f'Normalization strategy {self.normalization_strategy} is not valid')
+            raise ValueError(f'Normalization strategy {self._normalization_strategy} is not valid')
         
         return x_norm_norm_to_sd
     
@@ -663,89 +806,73 @@ class TTADAE:
         wandb.define_metric('dice_score_classes_of_interest/*', step_metric='tta_step')
         wandb.define_metric('tta_loss/*', step_metric='tta_step')
         
-        if self.classes_of_interest is not None:
+        if self._classes_of_interest is not None:
             wandb.define_metric('dice_score_classes_of_interest/*', step_metric='tta_step')
 
     def _save_checkpoint(self, logdir: str, dataset_name: str, index: int) -> None:
-        os.makedirs(os.path.join(logdir, 'checkpoints'), exist_ok=True)
+        cpt_dir = os.path.join(logdir, 'checkpoints')
+        os.makedirs(cpt_dir, exist_ok=True)
         
         # Save normalizer weights with the highest agreement with the pseudo label
         save_checkpoint(
-            path=os.path.join(logdir, 'checkpoints',
-                            f'checkpoint_tta_{dataset_name}_{index:02d}_best_score.pth'),
-            norm_state_dict=self.norm_seg_dict['best_score']['norm_state_dict'],
-            seg_state_dict=self.norm_seg_dict['best_score']['seg_state_dict'],
-            norm_sd_statistics=asdict(self.norm_sd_statistics),
-            norm_td_statistics=self.norm_seg_dict['best_score']['norm_td_statistics'],
-        )
+            os.path.join(cpt_dir, f'checkpoint_tta_{dataset_name}_{index:02d}_best_score.pth'), 
+            **self.get_best_state(as_dict=True)
+            )
         
-        # Save the normalizer weights in the last step
         save_checkpoint(
-            path=os.path.join(logdir, 'checkpoints',
-                            f'checkpoint_tta_{dataset_name}_{index:02d}_last_step.pth'),
-            norm_state_dict=self.norm.state_dict(),
-            seg_state_dict=self.seg.state_dict(),
-            norm_sd_statistics=asdict(self.norm_sd_statistics),
-            norm_td_statistics=asdict(self.norm_td_statistics),
+            os.path.join(cpt_dir, f'checkpoint_tta_{dataset_name}_{index:02d}_last_step.pth'),
+            **self.get_current_state(as_dict=True)
         )
+
+    def load_best_state_norm(self) -> None:
+        self._tta_dae_state.reset_to_state(self._tta_dae_state.best_state)
+        self.load_current_norm_state_dict()
+
+    def reset_state(self) -> None:
+        self._tta_fit_mode()
+
+        # Reset optimizer state
+        self._optimizer = torch.optim.Adam(
+            self._norm.parameters(),
+            lr=self._learning_rate
+        )
+        
+        # Reset TTADAEState
+        self._tta_dae_state.reset()
+
+        # Reset normalization model
+        self.load_current_norm_state_dict()
     
-    def set_use_only_dae_pl(self, use_only_dae_pl: bool) -> None:
-        self.use_only_dae_pl = use_only_dae_pl
-        
-    def reset_initial_state(self, state_dict: dict) -> None:
-        self.load_state_norm_seg_dict(state_dict)
-        self.norm_seg_dict = {
-            'best_score': {
-                'norm_state_dict': copy.deepcopy(self.norm.state_dict()),
-                'seg_state_dict': copy.deepcopy(self.seg.state_dict()),
-                'norm_td_statistics': asdict(self.norm_td_statistics)
-                }
-        }
-        self.metrics_best['best_score'] = 0
-        self.tta_losses = []
-        self.test_scores = []
-                
-        self.seg.eval()
-        self.seg.requires_grad_(False)
-        
-        self.dae.eval()
-        self.dae.requires_grad_(False)
-        
-        self.optimizer = torch.optim.Adam(
-            self.norm.parameters(),
-            lr=self.learning_rate
-        )
-        
-        # DAE PL states
-        self.use_only_dae_pl = self.alpha == 0 and self.beta == 0
-        self.using_dae_pl = False
-        self.using_atlas_pl = False
-        
-        # Reset target domain statistics
-        self.norm_td_statistics = DomainStatistics(**asdict(self.norm_sd_statistics))
-        self.norm_td_statistics.frozen = not self.update_norm_td_statistics 
-        self.norm_td_statistics.quantile_cal = None
-        self.norm_td_statistics.precalculated_quantiles = None
-        
-    def load_state_norm_seg_dict(self, state_dict: dict) -> None:
-        self.norm.load_state_dict(state_dict['norm_state_dict'])
-        self.seg.load_state_dict(state_dict['seg_state_dict'])
-        self.norm_td_statistics = DomainStatistics(**state_dict['norm_td_statistics'])
-        
-    def _get_current_pseudo_label(self, label_dataloader: DataLoader = None) -> Optional[torch.Tensor]:
-        if self.using_atlas_pl:
-            y_dae_or_atlas = self.atlas.detach().cpu()
-        
-        elif self.using_dae_pl and label_dataloader is not None:
-            y_dae_or_atlas = []
-            for (y_dae_mb,) in label_dataloader:
-                y_dae_or_atlas.append(y_dae_mb)
-            y_dae_or_atlas = torch.vstack(y_dae_or_atlas)
-            y_dae_or_atlas = y_dae_or_atlas.permute(1, 0, 2, 3).unsqueeze(0) # make NCDHW
-            y_dae_or_atlas = y_dae_or_atlas[:, :, 0:self.atlas.shape[2]] # To handle dataset repetitions of the atlas
-            y_dae_or_atlas = y_dae_or_atlas.detach().cpu()
-        
+    def load_current_norm_state_dict(self) -> None:
+        self._norm.load_state_dict(self._tta_dae_state.norm_state_dict)
+        self._tta_dae_state.norm_state_dict = self._norm.state_dict()
+    
+    def get_current_pseudo_label(self) -> Optional[torch.Tensor]:
+        return self._tta_dae_state.y_pl
+    
+    def get_loss(self, loss_name: str) -> OrderedDict[int, float]:
+        return self._tta_dae_state.get_loss(loss_name)
+    
+    def get_score(self, metric_name: str) -> OrderedDict[int, float]:
+        return self._tta_dae_state.get_score(metric_name)
+    
+    def get_best_state(self, as_dict: bool = False) -> TTADAEState | dict:
+        if as_dict:
+            return asdict(self._tta_dae_state.best_state)
         else:
-            y_dae_or_atlas = None
+            return self._tta_dae_state.best_state
         
-        return y_dae_or_atlas
+    def get_current_state(self, as_dict: bool = False) -> TTADAEState | dict:
+        if as_dict:
+            return asdict(self._tta_dae_state)
+        else:
+            return self._tta_dae_state
+
+    def get_model_selection_score(self) -> float:
+        return self._tta_dae_state.model_selection_score
+
+    def get_current_iteration(self) -> int:
+        return self._tta_dae_state.iteration
+    
+    def get_all_test_scores_as_df(self, name_contains: Optional[str] = None) -> dict[DataFrame]:
+        return self._tta_dae_state.get_all_test_scores_as_df(name_contains=name_contains)

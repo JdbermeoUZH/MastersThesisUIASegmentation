@@ -63,11 +63,6 @@ def export_images(x_original, x_norm, y_original, y_pred, n_classes=-1, n_slices
     if n_classes == -1:
         n_classes = max(y_original.max(), y_pred.max()).item()
 
-    x_original = x_original.squeeze()
-    x_norm = x_norm.squeeze()
-    y_original = onehot_to_class(y_original).squeeze()
-    y_pred = onehot_to_class(y_pred).squeeze()
-
     vols_to_visualize = [
         ('Original Image', x_original, 'image'),
         ('Normalized Image', x_norm, 'image'),
@@ -76,11 +71,12 @@ def export_images(x_original, x_norm, y_original, y_pred, n_classes=-1, n_slices
         ('Prediction Errors', y_pred == y_original, 'error_map')
     ]
 
+    # Add additional volumes to visualize
     vols_to_visualize += [
         (vol_name, vol, 'image' if vol_name[0].lower() == 'x' else 'segmentation')
           for vol_name, vol in kwargs.items()
     ]
-    
+
     D, H, W = x_original.shape
 
     margin = round(D / (2 * n_slices))
@@ -96,7 +92,7 @@ def export_images(x_original, x_norm, y_original, y_pred, n_classes=-1, n_slices
                 plt.imshow(vol[idx, :, :], cmap='gray', interpolation='none', vmin=vol.min(), vmax=vol.max())
             
             elif vol_type == 'segmentation':
-                plt.imshow(vol[idx, :, :], vmin=0, vmax=n_classes, cmap='tab20', interpolation='none')
+                plt.imshow(vol[idx, :, :], vmin=0, vmax=n_classes - 1, cmap='tab20', interpolation='none')
 
             elif vol_type == 'error_map':
                 plt.imshow(vol[idx, :, :], interpolation='none', cmap=ListedColormap(['black', 'white']), vmin=0, vmax=1)

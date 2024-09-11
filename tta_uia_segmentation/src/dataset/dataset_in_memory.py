@@ -16,7 +16,7 @@ from tta_uia_segmentation.src.dataset.utils import transform_orientation
 from tta_uia_segmentation.src.models.normalization import RBF
 from tta_uia_segmentation.src.utils.io import deep_get
 from tta_uia_segmentation.src.utils.loss import class_to_onehot
-from tta_uia_segmentation.src.utils.utils import crop_or_pad_to_size, get_seed, assert_in
+from tta_uia_segmentation.src.utils.utils import crop_or_pad_to_size, get_seed, assert_in, resize_volume
 
 
 def split_dataset(dataset, ratio):
@@ -36,46 +36,15 @@ def split_dataset(dataset, ratio):
 
 
 def get_datasets(
-    paths,
-    paths_original,
     splits,
-    image_size,
-    resolution_proc,
-    dim_proc,
-    n_classes,
-    rescale_factor=None,
-    aug_params=None,
-    deformation=None,
-    load_original=False,
-    image_transform='none',
-    image_transform_args=None,
-    bg_suppression_opts=None,
-    seed=None,
+    *args,
+    **kwargs
 ):
 
-    datasets = []
-
-    for split in splits:
-        datasets.append(DatasetInMemory(
-            paths,
-            paths_original,
-            split,
-            image_size,
-            resolution_proc,
-            dim_proc,
-            n_classes,
-            rescale_factor,
-            aug_params,
-            deformation,
-            load_original,
-            image_transform,
-            image_transform_args,
-            bg_suppression_opts=bg_suppression_opts,
-            seed=seed,
-        ))
-
-    return datasets
-
+    return [
+        DatasetInMemory(split=split, *args, **kwargs)
+        for split in splits
+    ]
 
 def get_sectors_from_index(relative_index, sector_size=None, n_sectors=None):
     assert any([
@@ -114,6 +83,7 @@ class AugmentationNetwork(torch.nn.Module):
 class DatasetInMemory(data.Dataset):
     def __init__(
         self,
+        dataset_name,
         paths,
         paths_original,
         split,
@@ -134,6 +104,7 @@ class DatasetInMemory(data.Dataset):
 
         assert_in(split, 'split', ['train', 'val', 'test'])
         assert_in(image_transform, 'image_transform', ['none', 'random_net'])
+        self.dataset_name = dataset_name
         self.path = os.path.expanduser(paths[split])
         self.path_original = os.path.expanduser(paths_original[split])
         self.split = split
@@ -234,6 +205,25 @@ class DatasetInMemory(data.Dataset):
         indices_per_volume = np.split(indices, n_slices_per_volume.cumsum()[:-1])
 
         return indices_per_volume
+
+    def get_idxs_for_volume(self, vol_idx: int) -> np.ndarray:
+        """
+        Get the indices for the specified volume.
+
+        Parameters
+        ----------
+        volume_idx : int
+            The index of the volume to retrieve.
+
+        Returns
+        -------
+        np.ndarray
+            The indices for the specified volume.
+        """
+        if self.mode == '2D':
+            return self.get_volume_indices()[vol_idx]
+        else:
+            return np.array([vol_idx])
 
     def resize_to_original_vol(
         self,
@@ -730,6 +720,7 @@ if __name__ == '__main__':
     }
 
     ds, = get_datasets(
+        dataset_name    = dataset,
         paths           = dataset_info['paths_processed'],
         paths_original  = dataset_info['paths_original'],
         splits          = [split],

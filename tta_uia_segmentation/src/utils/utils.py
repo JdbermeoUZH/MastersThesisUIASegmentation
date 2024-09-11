@@ -355,3 +355,76 @@ def stratified_sampling(a, b, m, n, return_torch: bool = True) -> Union[np.ndarr
         return torch.from_numpy(sample)
     else:
         return sample
+
+
+def state_dict_to_cpu(state_dict: dict) -> dict:
+    """
+    Convert state_dict to CPU.
+    """
+    new_state_dict = {}
+    for key, value in state_dict.items():
+        new_state_dict[key] = value.cpu()
+    return new_state_dict
+
+
+def generate_2D_dl_for_vol(*vols: torch.Tensor, batch_size: int, num_workers: int, **kwargs) -> torch.utils.data.DataLoader:
+    """
+    Generate a 2D dataloader for one or more 3D volume tensors.
+
+    This function takes one or more 5D tensors representing 3D volumes (BCDHW format) and
+    creates a DataLoader that yields 2D slices of the volumes.
+
+    Parameters
+    ----------
+    *vols : torch.Tensor
+        Input tensors, each of shape (1, C, D, H, W).
+    batch_size : int
+        Number of slices per batch.
+    num_workers : int
+        Number of worker processes for data loading.
+    **kwargs
+        Additional arguments to pass to the DataLoader constructor.
+
+    Returns
+    -------
+    torch.utils.data.DataLoader
+        A DataLoader that yields 2D slices of the input volumes.
+        Each item in the DataLoader will be a tuple of tensors, each with shape (1, C, H, W).
+
+    Examples
+    --------
+    >>> dl = generate_2D_dl_for_vol(x, bg, batch_size=4, num_workers=2)
+    >>> for x_b, bg_b in dl:
+    ...     # Process x_b and bg_b
+    ...     pass
+
+    """
+
+    processed_vols = []
+    for x in vols:
+        assert x.dim() == 5, f"Input tensor must be 5D but is {len(x.shape)}D"
+        x = x.squeeze(0)  # Remove batch dimension
+        x = x.permute(1, 0, 2, 3)  # Permute to DCHW format
+        processed_vols.append(x)
+
+    # Ensure all tensors have the same number of slices
+    assert all(t.size(0) == processed_vols[0].size(0) for t in processed_vols), \
+        "All input tensors must have the same number of slices"
+
+    # Create a custom dataset that iterates over multiple volumes along N dimension
+    class MultipleVolumeDataset(torch.utils.data.Dataset):
+        def __init__(self, *vols):
+            self.vols = vols
+
+        def __getitem__(self, index):
+            return tuple(vol[index] for vol in self.vols)
+
+        def __len__(self):
+            return self.vols[0].size(0)
+
+    dataset = MultipleVolumeDataset(*processed_vols)
+    
+    return torch.utils.data.DataLoader(
+        dataset, batch_size=batch_size, num_workers=num_workers,
+        **kwargs
+    )

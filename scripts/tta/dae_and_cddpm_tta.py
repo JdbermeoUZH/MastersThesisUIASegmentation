@@ -262,13 +262,12 @@ if __name__ == '__main__':
         else 'checkpoint_last'
     cpt_seg_fp = os.path.join(seg_dir, train_params_seg[cpt_type])
     
-    norm, seg, norm_seg_state_sd = load_norm_and_seg_from_configs_and_cpt(
+    norm, seg = load_norm_and_seg_from_configs_and_cpt(
         n_classes = n_classes,
         model_params_norm = model_params_norm,
         model_params_seg = model_params_seg,
         cpt_fp = cpt_seg_fp,
         device = device,
-        return_norm_seg_state_dict=True,
     )
     
     # Load statistics of the source domain
@@ -510,7 +509,7 @@ if __name__ == '__main__':
         )
         
         # Calculate dice scores for the last step
-        tta.norm.eval()
+        tta._norm.eval()
         dice_scores[i, :], _ = tta.test_volume(
             volume_dataset = volume_dataset,
             dataset_name = dataset,

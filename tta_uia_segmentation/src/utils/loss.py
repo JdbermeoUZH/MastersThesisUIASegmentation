@@ -35,10 +35,11 @@ def dice_score(mask_pred, mask_gt, soft=True, reduction='mean', bg_channel=0, k=
     Parameters
     ----------
     mask_pred : torch.Tensor
-        Predicted masks.
+        Predicted masks. Expected to be one-hot encoded and in NCDHW or NCHW format.
     
     mask_gt : torch.Tensor
-
+        Ground truth masks. Expected to be one-hot encoded and in NCDHW or NCHW format.
+        
     soft : bool
         If True, mask_pred is assumed to be soft and will be converted to one-hot.
     
