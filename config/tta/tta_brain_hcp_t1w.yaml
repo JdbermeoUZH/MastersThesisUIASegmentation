@@ -29,20 +29,24 @@ bg_suppression_opts:
 
 
 dae:
-  wandb_project: mt-tta-debug # mt-tta-brain-hcp_t2
+  wandb_project: tta-dae # mt-tta-brain-hcp_t2
   logdir: /scratch_net/biwidl319/jbermeo/logs/brain/tta/debugging/dae_only/9_06/reproduce_previous_results
   dae_dir: /scratch_net/biwidl319/jbermeo/data/models/brain/dae/hcp_t1
   
   accumulate_over_volume: True
-  batch_size: 16
-  num_steps: 3 #1000  # 500 for brain, 2700 for wmh
-  update_dae_output_every: 1
-  calculate_dice_every: 1  # 25 for brain, 135 for wmh (nuhs, umc, vu)
+  batch_size: 32
+  num_steps: 1000 #1000  # 500 for brain, 2700 for wmh
+  update_dae_output_every: 50
+  calculate_dice_every: 25  # 25 for brain, 135 for wmh (nuhs, umc, vu)
   alpha: 1.0
   beta: 0.25
   learning_rate: 0.001
   save_checkpoints: True
   const_aug_per_volume: False
+
+  # loss function parameters
+  smooth: 1e-5
+  epsilon: 1e-10
   
   # Normalize intensities before segmentation
   update_norm_td_statistics: True

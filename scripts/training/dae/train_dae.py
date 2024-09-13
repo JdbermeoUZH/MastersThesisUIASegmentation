@@ -3,6 +3,7 @@ import sys
 import argparse
 
 import wandb
+import torch
 import numpy as np
 from torch.utils.data import DataLoader, ConcatDataset
 
@@ -12,7 +13,7 @@ from tta_uia_segmentation.src.dataset.dataset_in_memory import get_datasets
 from tta_uia_segmentation.src.models import UNet
 from tta_uia_segmentation.src.train.DAETrainer import DAETrainer
 from tta_uia_segmentation.src.utils.loss import DiceLoss
-from tta_uia_segmentation.src.utils.io import load_config, rewrite_config_arguments, dump_config, print_config, save_checkpoint, write_to_csv, deep_get
+from tta_uia_segmentation.src.utils.io import load_config, rewrite_config_arguments, dump_config, print_config, save_checkpoint, write_to_csv
 from tta_uia_segmentation.src.utils.utils import seed_everything, define_device
 from tta_uia_segmentation.src.utils.logging import setup_wandb
 
@@ -136,6 +137,11 @@ def save_atlas(train_dataset, num_workers, logdir):
 
     atlas = atlas.float()
     atlas /= len(atlas_dataloader)
+
+    # Verify that pixel distributions are correct for each pixel
+    assert torch.isclose(atlas.sum([0,1]), torch.tensor(1.)).all(), \
+        'Atlas pixel distributions are incorrect. At least one does not add to 1.0 ' +\
+             'when marginalized over all classes.'
 
     save_checkpoint(
         path=os.path.join(logdir, 'atlas.h5py'),

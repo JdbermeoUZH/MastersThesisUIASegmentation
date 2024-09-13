@@ -428,3 +428,20 @@ def generate_2D_dl_for_vol(*vols: torch.Tensor, batch_size: int, num_workers: in
         dataset, batch_size=batch_size, num_workers=num_workers,
         **kwargs
     )
+
+def parse_bool(value: str) -> bool:
+    """
+    Parse a string value to a boolean.
+
+    Parameters
+    ----------
+    value : str
+        String value to parse.
+
+    Returns
+    -------
+    bool
+        Boolean value.
+    """
+    assert value.lower() in ['true', 'false'], "Value must be 'true' or 'false'"
+    return value.lower() == 'true'

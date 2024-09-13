@@ -229,7 +229,7 @@ class NormSegTrainer:
             
             loss = self.loss_func(y_pred, y)
             
-            _, dice_fg = dice_score(y_pred, y, soft=False, reduction='none', smooth=1e-5)
+            dice_fg = dice_score(y_pred, y, soft=False, reduction='none', smooth=1e-10, foreground_only=True)
             dice_fg = dice_fg.nanmean(0)
 
             validation_loss += loss * x.shape[0]

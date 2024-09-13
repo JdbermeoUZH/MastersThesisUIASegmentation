@@ -57,6 +57,12 @@ segmentation:
   
   with_bg_supression:           False
 
+  # Loss function parameters
+  epsilon:                      1e-10
+  smooth:                       1e-5
+  debug_mode:                   False
+  fg_only:                      False  
+
   bg_suppression_opts:
     type:               none  # possible values: none, fixed_value, random_value
     bg_value:           -0.5

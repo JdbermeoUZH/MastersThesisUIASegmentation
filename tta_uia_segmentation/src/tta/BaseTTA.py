@@ -505,6 +505,8 @@ class BaseTTA(TTAInterface):
 
         assert all(vol.ndim == 5 for vol in (x_norm, y_pred, y_original_gt)), "The volumes must have 5 dimensions (NCDHW)."
 
+        y_original_gt = y_original_gt.to(y_pred.device)
+
         # Resize x_norm and y_pred to the original resolution
         x_norm, y_pred = [
             resize_volume(
@@ -581,7 +583,7 @@ class BaseTTA(TTAInterface):
             save_nii_image(
                 dir=os.path.join(output_dir, 'segmentation_nifti'),
                 filename=file_name + '.nii.gz',
-                image=y_pred.numpy().astype('uint8'),
+                image=y_pred.detach().cpu().numpy().astype('uint8'),
             )
 
         return metrics_values

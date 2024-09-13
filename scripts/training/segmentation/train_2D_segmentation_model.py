@@ -16,7 +16,7 @@ from tta_uia_segmentation.src.utils.loss import DiceLoss
 from tta_uia_segmentation.src.utils.io import (
     load_config, dump_config, print_config, 
     write_to_csv, rewrite_config_arguments)
-from tta_uia_segmentation.src.utils.utils import seed_everything, define_device
+from tta_uia_segmentation.src.utils.utils import seed_everything, define_device, parse_bool
 from tta_uia_segmentation.src.utils.logging import setup_wandb
 
 
@@ -36,11 +36,11 @@ def preprocess_cmd_args() -> argparse.Namespace:
     
     # Training parameters. If provided, overrides default parameters from config file.
     # :================================================================================================:
-    parser.add_argument('--resume', type=lambda s: s.strip().lower() == 'true', 
+    parser.add_argument('--resume', type=parse_bool, 
                         help='Resume training from last checkpoint. Default: True.') 
     parser.add_argument('--logdir', type=str, 
                         help='Path to directory where logs and checkpoints are saved. Default: logs')  
-    parser.add_argument('--wandb_log', type=lambda s: s.strip().lower() == 'true', 
+    parser.add_argument('--wandb_log', type=parse_bool, 
                         help='Log training to wandb. Default: False.')
 
     # Model parameters
@@ -55,7 +55,7 @@ def preprocess_cmd_args() -> argparse.Namespace:
                         help='Whether to use skip connections on each block, specified as a space-separated list of booleans (True or False)'
                         'Default: True True True')
     parser.add_argument('--n_dimensions', type=int, help='Number of dimensions of the model, i.e: 1D, 2D, or 3D. Default: 3')  
-    parser.add_argument('--with_bg_supression', type=lambda s: s.strip().lower() == 'true', 
+    parser.add_argument('--with_bg_supression', type=parse_bool, 
                         help='Whether to use background suppression. Default: True')
     
     # Training loop
@@ -70,6 +70,12 @@ def preprocess_cmd_args() -> argparse.Namespace:
     parser.add_argument('--checkpoint_last', type=str, help='Name of last checkpoint file. Default: checkpoint_last.pth')
     parser.add_argument('--checkpoint_best', type=str, help='Name of best checkpoint file. Default: checkpoint_best.pth')
     
+    # Loss function
+    parser.add_argument('--smooth', type=float, help='Smoothing factor for dice loss. Default: 1e-5')
+    parser.add_argument('--epsilon', type=float, help='Epsilon factor for dice loss. Default: 1e-10')
+    parser.add_argument('--fg_only', type=parse_bool, help='Whether to calculate dice loss only on foreground. Default: True')
+    parser.add_argument('--debug_mode', type=parse_bool, help='Whether to run in debug mode. Default: False')
+
     # Dataset and its transformations to use for training
     # ---------------------------------------------------:
     parser.add_argument('--dataset', type=str, help='Name of dataset to use for training. Default: USZ')
@@ -80,16 +86,16 @@ def preprocess_cmd_args() -> argparse.Namespace:
     
     # Augmentations
     parser.add_argument('--da_ratio', type=float, help='Ratio of images to apply DA to. Default: 0.25')
-    parser.add_argument('--sigma', type=float, help='augmentation. Default: 20') #TODO: specify what this is
-    parser.add_argument('--alpha', type=float, help='augmentation. Default: 1000') #TODO: specify what this is
+    parser.add_argument('--sigma', type=float, help='augmentation. Default: 20') 
+    parser.add_argument('--alpha', type=float, help='augmentation. Default: 1000') 
     parser.add_argument('--trans_min', type=float, help='Minimum value for translation augmentation. Default: -10')
     parser.add_argument('--trans_max', type=float, help='Maximum value for translation augmentation. Default: 10')
     parser.add_argument('--rot_min', type=float, help='Minimum value for rotation augmentation. Default: -10')
     parser.add_argument('--rot_max', type=float, help='Maximum value for rotation augmentation. Default: 10') 
     parser.add_argument('--scale_min', type=float, help='Minimum value for zooming augmentation. Default: 0.9') 
     parser.add_argument('--scale_max', type=float, help='Maximum value for zooming augmentation. Default: 1.1')
-    parser.add_argument('--gamma_min', type=float, help=' augmentation. Default: 1.0') #TODO: specify what this is
-    parser.add_argument('--gamma_max', type=float, help=' augmentation. Default: 1.0') #TODO: specify what this is
+    parser.add_argument('--gamma_min', type=float, help=' augmentation. Default: 1.0') 
+    parser.add_argument('--gamma_max', type=float, help=' augmentation. Default: 1.0') 
     parser.add_argument('--brightness_min', type=float, help='Minimum value for brightness augmentation. Default: 0.0') 
     parser.add_argument('--brightness_max', type=float, help='Maximum value for brightness augmentation. Default: 0.0')   
     parser.add_argument('--noise_mean', type=float, help='Mean value for noise augmentation. Default: 0.0')
@@ -102,7 +108,7 @@ def preprocess_cmd_args() -> argparse.Namespace:
     parser.add_argument('--bg_supression_max', type=float, help='Maximum value to use for random background suppression. Default: 1.0')
     parser.add_argument('--bg_supression_max_source', type=str, choices=['thresholding', 'ground_truth'], help='Maximum value to use for random background suppression. Default: "thresholding"')
     parser.add_argument('--bg_supression_thresholding', type=str, choices=['otsu', 'yen', 'li', 'minimum', 'mean', 'triangle', 'isodata'], help='Maximum value to use for random background suppression. Default: "otsu"') 
-    parser.add_argument('--bg_supression_hole_filling', type=lambda s: s.strip().lower() == 'true', help='Whether to use hole filling for background suppression. Default: True')
+    parser.add_argument('--bg_supression_hole_filling', type=parse_bool, help='Whether to use hole filling for background suppression. Default: True')
     args = parser.parse_args()
     
     return args
@@ -175,20 +181,21 @@ if __name__ == '__main__':
     print('Defining dataset')
     seed_everything(seed)
     device              = define_device(device)
-    dataset             = train_config['segmentation']['dataset']
-    n_classes           = dataset_config[dataset]['n_classes']
+    dataset_name        = train_config['segmentation']['dataset']
+    n_classes           = dataset_config[dataset_name]['n_classes']
     batch_size          = train_config['segmentation']['batch_size']
     num_workers         = train_config['segmentation']['num_workers']
     bg_suppression_opts = train_config['segmentation']['bg_suppression_opts']
 
     # Dataset definition
     train_dataset, val_dataset = get_datasets(
-        paths           = dataset_config[dataset]['paths_processed'],
-        paths_original  = dataset_config[dataset]['paths_original'],
+        dataset_name    = dataset_name,
+        paths           = dataset_config[dataset_name]['paths_processed'],
+        paths_original  = dataset_config[dataset_name]['paths_original'],
         splits          = ['train', 'val'],
         image_size      = train_config['segmentation']['image_size'],
-        resolution_proc = dataset_config[dataset]['resolution_proc'],
-        dim_proc        = dataset_config[dataset]['dim'],
+        resolution_proc = dataset_config[dataset_name]['resolution_proc'],
+        dim_proc        = dataset_config[dataset_name]['dim'],
         n_classes       = n_classes,
         aug_params      = train_config['segmentation']['augmentation'],
         deformation     = None,
@@ -232,11 +239,18 @@ if __name__ == '__main__':
     # :=========================================================================:
     print('Defining trainer: training loop, optimizer and loss')
 
+    dice_loss = DiceLoss(
+        smooth=train_config['segmentation']['smooth'],
+        epsilon=train_config['segmentation']['epsilon'],
+        debug_mode=train_config['segmentation']['debug_mode'],
+        fg_only=train_config['segmentation']['fg_only']
+    )
+
     trainer = NormSegTrainer(
         norm                = norm,
         seg                 = seg,
         learning_rate       = train_config['segmentation']['learning_rate'],
-        loss_func           = DiceLoss(),
+        loss_func           = dice_loss,
         is_resumed          = is_resumed,
         checkpoint_best     = train_config['checkpoint_best'],
         checkpoint_last     = train_config['checkpoint_last'],

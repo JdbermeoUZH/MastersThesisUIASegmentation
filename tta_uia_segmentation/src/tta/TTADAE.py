@@ -1,5 +1,6 @@
 import os
 import copy
+from tqdm import tqdm
 from dataclasses import asdict, dataclass, field, is_dataclass
 from typing import OrderedDict, Optional, Any, Literal
 
@@ -18,13 +19,15 @@ from tta_uia_segmentation.src.utils.utils import (
 from tta_uia_segmentation.src.dataset import DatasetInMemory
 from tta_uia_segmentation.src.dataset.utils import normalize
 from tta_uia_segmentation.src.models import DomainStatistics
-from tta_uia_segmentation.src.tta import BaseTTA, BaseTTAState
+from tta_uia_segmentation.src.tta import BaseTTAState, NoTTA
 
+
+DICE_SMOOTHING = 1e-10
 
 EVAL_METRICS = {
-    'dice_score_all_classes': lambda y_pred, y_gt: dice_score(y_pred, y_gt, soft=False, reduction='none', smooth=1e-5),
-    'dice_score_fg_classes': lambda y_pred, y_gt: dice_score(y_pred, y_gt, soft=False, reduction='none', 
-        foreground_only=True, smooth=1e-5)
+    'dice_score_all_classes': lambda y_pred, y_gt: dice_score(y_pred, y_gt, soft=False, reduction='none', smooth=DICE_SMOOTHING),
+    'dice_score_fg_classes': lambda y_pred, y_gt: dice_score(y_pred, y_gt, soft=False, reduction='none', foreground_only=True, 
+                                                             smooth=DICE_SMOOTHING)
 }
 
 
@@ -191,35 +194,71 @@ class TTADAEState(BaseTTAState):
         return onehot_to_class(self.y_pl) if self.y_pl is not None else None
 
 
-class TTADAE(BaseTTA):
+class TTADAE(NoTTA):
     """
     Class to perform Test-Time Adaptation (TTA) using a DAE model to generate pseudo labels.
-    
-    Arguments
-    ---------
-    norm: torch.nn.Module
+
+    Parameters
+    ----------
+    norm : torch.nn.Module
         Normalization model.
-    seg: torch.nn.Module
+    seg : torch.nn.Module
         Segmentation model.
-    dae: torch.nn.Module
+    dae : torch.nn.Module
         DAE model.
-    atlas: Any
-        Atlas of the source domain segmentation labels
-    loss_func: torch.nn.Module
-        Loss function to be used during adaptation. Default: DiceLoss()
-    learning_rate: float
-        Learning rate for the optimizer. Default: 1e-3
-    alpha: float
-        Threshold for the proportion between the dice score of the DAE output and the atlas. Default: 1.0
+    atlas : Any
+        Atlas of the source domain segmentation labels.
+    n_classes : int
+        Number of classes in the segmentation task.
+    rescale_factor : tuple[int]
+        Factor to rescale the pseudo labels.
+    loss_func : torch.nn.Module, optional
+        Loss function to be used during adaptation, by default DiceLoss().
+    learning_rate : float, optional
+        Learning rate for the optimizer, by default 1e-3.
+    alpha : float, optional
+        Threshold for the proportion between the dice score of the DAE output and the atlas, by default 1.0.
         Both alpha and beta need to be satisfied to use the DAE output as pseudo label.
-    beta: float
-        Threshold for the dice score of the atlas. Default: 0.25. 
+    beta : float, optional
+        Threshold for the dice score of the atlas, by default 0.25.
         Both alpha and beta need to be satisfied to use the DAE output as pseudo label.
-    use_atlas_only_for_intit: bool
-        Whether to use the atlas as pseudo label only until the first time the DAE output is used. Default: False
-        Meaning, it is used as a switch and will only change from Atlas to DAE PL once.
-    wandb_log: bool
-        Whether to log the results to wandb. Default: False
+    eval_metrics : OrderedDict[str, callable], optional
+        Dictionary of evaluation metrics, by default EVAL_METRICS.
+    classes_of_interest : Optional[list[int]], optional
+        List of classes to focus on during evaluation, by default None.
+    use_only_dae_pl : bool, optional
+        Whether to use only DAE pseudo labels, by default False.
+    use_only_atlas : bool, optional
+        Whether to use only atlas labels, by default False.
+    use_atlas_only_for_intit : bool, optional
+        Whether to use the atlas as pseudo label only until the first time the DAE output is used, by default False.
+        It acts as a switch and will only change from Atlas to DAE PL once.
+    norm_sd_statistics : Optional[DomainStatistics], optional
+        Statistics of the source domain for normalization, by default None.
+    update_norm_td_statistics : bool, optional
+        Whether to update target domain statistics during normalization, by default False.
+    manually_norm_img_before_seg_tta : bool, optional
+        Whether to manually normalize images before segmentation during TTA, by default False.
+    manually_norm_img_before_seg_eval : bool, optional
+        Whether to manually normalize images before segmentation during evaluation, by default False.
+    normalization_strategy : Literal['standardize', 'min_max', 'histogram_eq'], optional
+        Strategy for normalization, by default 'standardize'.
+    bg_supp_x_norm_eval : bool, optional
+        Whether to suppress background during normalization in evaluation, by default False.
+    bg_suppression_opts_eval : Optional[dict], optional
+        Options for background suppression during evaluation, by default None.
+    bg_supp_x_norm_tta_dae : bool, optional
+        Whether to suppress background during normalization in TTA DAE, by default False.
+    bg_suppression_opts_tta_dae : Optional[dict], optional
+        Options for background suppression during TTA DAE, by default None.
+    wandb_log : bool, optional
+        Whether to log the results to wandb, by default False.
+    debug_mode : bool, optional
+        Whether to run in debug mode, by default False.
+    device : str, optional
+        Device to run the models on, by default 'cuda'.
+    optimizer : Optional[torch.optim.Optimizer], optional
+        Optimizer for the adaptation process, by default None.
     """
     
     def __init__(
@@ -254,19 +293,22 @@ class TTADAE(BaseTTA):
         optimizer: Optional[torch.optim.Optimizer] = None,
         ) -> None:
         
-        super(BaseTTA, self).__init__()
+        super().__init__(
+            norm=norm,
+            seg=seg,
+            n_classes=n_classes,
+            classes_of_interest=classes_of_interest,
+            bg_supp_x_norm_eval=bg_supp_x_norm_eval,
+            bg_suppression_opts_eval=bg_suppression_opts_eval,
+            eval_metrics=eval_metrics,
+            wandb_log=wandb_log,
+            debug_mode=debug_mode,
+            device=device,
+        )
 
         # Models and objects used in TTA
-        self._norm = norm
-        self._seg = seg
         self._dae = dae
         self._atlas = atlas
-        
-        self._device = device
-
-        # Information about the problem 
-        self._n_classes = n_classes
-        self._classes_of_interest = classes_of_interest
         
         # Rescale factor for pseudo labels
         self._rescale_factor = rescale_factor
@@ -289,23 +331,13 @@ class TTADAE(BaseTTA):
         self._bg_supp_x_norm_tta_dae = bg_supp_x_norm_tta_dae
         self._bg_suppression_opts_tta = bg_suppression_opts_tta_dae
 
-        self._bg_supp_x_norm_eval = bg_supp_x_norm_eval
-        self._bg_suppression_opts_eval = bg_suppression_opts_eval
-
         # Set segmentation and DAE models in eval mode
         self._tta_fit_mode()
-
-        # Metrics to be used during evaluation
-        self._eval_metrics = eval_metrics
                 
-        # wandb logging
-        self._wandb_log = wandb_log
-        
+        # Wandb logging
         if self._wandb_log:
             TTADAE._define_custom_wandb_metrics(self)
 
-        # Debug mode
-        self._debug_mode = debug_mode
         
         # Handling of target domain statistics
         self._update_norm_td_statistics = update_norm_td_statistics        
@@ -325,7 +357,7 @@ class TTADAE(BaseTTA):
             self._update_norm_td_statistics = False
 
         # Initialize the state of the class
-        self._tta_dae_state = TTADAEState(
+        self._state = TTADAEState(
             using_dae_pl=False,
             using_atlas_pl=False,
             use_only_dae_pl=(self._alpha == 0 and self._beta == 0) or use_only_dae_pl,
@@ -389,8 +421,8 @@ class TTADAE(BaseTTA):
         ) 
         
         # Start TTA iterations 
-        for step in range(num_steps):
-            self._tta_dae_state.iteration = step
+        for step in tqdm(range(num_steps)):
+            self._state.iteration = step
 
             # Update Pseudo label, with DAE or Atlas, depending on which has a better agreement
             if step % update_dae_output_every == 0:
@@ -409,7 +441,6 @@ class TTADAE(BaseTTA):
 
             # Test performance during adaptation.
             if (step % calculate_dice_every == 0 or step == num_steps - 1) and calculate_dice_every != -1:
-
                 _ = self.evaluate(
                     dataset=dataset,
                     vol_idx=vol_idx,
@@ -446,7 +477,7 @@ class TTADAE(BaseTTA):
                 # Update the statistics of the normalized target domain in the current step
                 if self._update_norm_td_statistics:
                     with torch.no_grad():
-                        self._tta_dae_state.norm_td_statistics.update_step_statistics(self._norm(x))
+                        self._state.norm_td_statistics.update_step_statistics(self._norm(x))
                 
                 _, mask, _ = self.forward_pass_seg(
                     x, bg_mask, self._bg_supp_x_norm_tta_dae, self._bg_suppression_opts_tta,
@@ -480,11 +511,11 @@ class TTADAE(BaseTTA):
                 self._optimizer.step()
             
             if self._update_norm_td_statistics:
-                self._tta_dae_state.norm_td_statistics.update_statistics()
+                self._state.norm_td_statistics.update_statistics()
 
             tta_loss = (tta_loss / n_samples).item()
 
-            self._tta_dae_state.add_test_loss(
+            self._state.add_test_loss(
                 iteration=step, loss_name='tta_loss', loss_value=tta_loss)
             
             if self._wandb_log:
@@ -493,11 +524,11 @@ class TTADAE(BaseTTA):
         if save_checkpoints:
             self._save_checkpoint(logdir, dataset.dataset_name, vol_idx)
 
-        self._tta_dae_state.is_adapted = True
+        self._state.is_adapted = True
 
         test_scores_dir = os.path.join(logdir, 'tta_score')
         
-        self._tta_dae_state.store_test_scores_in_dir(
+        self._state.store_test_scores_in_dir(
             output_dir=test_scores_dir,
             file_name_prefix=f'{dataset.dataset_name}_{vol_idx:03d}',
             reduce='mean_accross_iterations'
@@ -511,27 +542,20 @@ class TTADAE(BaseTTA):
         output_dir: str,
         store_visualization: bool = True,
         save_predicted_vol_as_nifti: bool = False,
-        **kwargs,
     ):
         self._evaluation_mode()
         dataset.set_augmentation(False)
 
-        # Get the preprocessed vol for that has the same position as
-        # the original vol (preprocessed vol may have a translation in xy)
-        vol_preproc, _, bg_preproc = dataset.get_preprocessed_images(
-            vol_idx, same_position_as_original=True)
-
-        vol_orig, y_gt, _ = dataset.get_original_images(vol_idx) 
-
+        # Create dictionary with the volumes to visualize
         other_volumes_to_visualize = {
             'y_dae_or_atlas': {
-                'vol': self._tta_dae_state.y_pl.cpu(),
+                'vol': self._state.y_pl.cpu(),
                 'current_pix_size': [1, 1, 1],
                 'target_pix_size': self._rescale_factor,
-                'target_img_size': vol_orig.shape[-3:], # xyz
+                'target_img_size': dataset.get_original_image_size(vol_idx), # xyz
                 'slice_z_axis': False
                 } 
-        } if self._tta_dae_state.y_pl is not None else None
+        } if self._state.y_pl is not None else None
 
         normalization_modes = {
             'no_manual_normalization': False
@@ -544,31 +568,25 @@ class TTADAE(BaseTTA):
         results = {}
         for norm_mode, norm_value in normalization_modes.items():
             output_dir_norm_mode = os.path.join(output_dir, norm_mode)
-            file_name = f'{dataset.dataset_name}_vol_{vol_idx:03d}_step_{iteration:03d}'
+
+            prediction_kwargs = {'manually_norm_img_before_seg': norm_value}
 
             eval_metrics = super().evaluate(
-                x_preprocessed=vol_preproc,
-                x_original=vol_orig,
-                y_original_gt=y_gt,
-                n_classes=self._n_classes,
-                preprocessed_pix_size=dataset.resolution_proc,
-                gt_pix_size=dataset.get_original_pixel_size(vol_idx),
-                metrics=self._eval_metrics,
+                dataset=dataset,
+                vol_idx=vol_idx,
+                iteration=iteration,
                 output_dir=output_dir_norm_mode,
-                file_name=file_name,
                 store_visualization=store_visualization,
                 save_predicted_vol_as_nifti=save_predicted_vol_as_nifti,
                 other_volumes_to_visualize=other_volumes_to_visualize,
-                bg_mask=bg_preproc,
-                manually_norm_img_before_seg=norm_value,
-                **kwargs
-            )
+                **prediction_kwargs
+                )
 
             results[norm_mode] = eval_metrics   
 
             for eval_metric, eval_metric_values in eval_metrics.items():
                 metric_name = f'{norm_mode}/{eval_metric}'
-                self._tta_dae_state.add_test_score(
+                self._state.add_test_score(
                     iteration=iteration, metric_name=metric_name, score=eval_metric_values)
 
             # Print mean dice score of the foreground classes
@@ -591,14 +609,16 @@ class TTADAE(BaseTTA):
         if self._normalization_strategy == 'standardize':
             x_norm_standardized = normalize(
                 type='standardize', data=x_norm,
-                mean=self._norm_td_statistics.mean, std=self._norm_td_statistics.std
+                mean=self._state.norm_td_statistics.mean, 
+                std=self._state.norm_td_statistics.std
                 )
             x_norm_norm_to_sd = self._norm_sd_statistics.std * x_norm_standardized + self._norm_sd_statistics.mean
         
         elif self._normalization_strategy == 'min_max':
             x_norm_btw_0_1 = normalize(
                 type='min_max', data=x_norm,
-                min=self._norm_td_statistics.min, max=self._norm_td_statistics.max
+                min=self._state.norm_td_statistics.min,
+                max=self._state.norm_td_statistics.max
                 )
             x_norm_norm_to_sd = (self._norm_sd_statistics.max - self._norm_sd_statistics.min) * x_norm_btw_0_1  +\
                 self._norm_sd_statistics.min
@@ -610,95 +630,6 @@ class TTADAE(BaseTTA):
             raise ValueError(f'Normalization strategy {self._normalization_strategy} is not valid')
         
         return x_norm_norm_to_sd
-    
-
-    @torch.inference_mode()
-    def predict(
-        self, x: torch.Tensor | DataLoader,
-        bg_mask: Optional[torch.Tensor] = None,
-        bg_supp_x_norm: Optional[bool] = None,
-        bg_suppression_opts: Optional[dict] = None,
-        manually_norm_img_before_seg: Optional[bool] = None, 
-        output_vol_format: Literal['DCHW', '1CDHW'] = '1CDHW',
-        **kwargs
-        ) -> torch.Tensor:
-        """Predict the segmentation mask for a given volume.
-
-        Parameters
-        ----------
-        x : torch.Tensor or DataLoader
-            Volume to be segmented (in 1CDHW format) or a DataLoader providing batches.
-            If a DataLoader is passed, it is assumed to provide the bg_mask as well.
-        bg_mask : torch.Tensor, optional
-            Background mask of the volume. Required if x is a Tensor.
-        bg_supp_x_norm : bool, optional
-            Whether to apply background suppression on normalized input.
-        bg_suppression_opts : dict, optional
-            Options for background suppression.
-        manually_norm_img_before_seg : bool, optional
-            Whether to manually normalize the image before segmentation.
-        device : str, optional
-            Device to be used for computation.
-        **kwargs : dict
-            Additional arguments to be passed to generate_2D_dl_for_vol if x is a Tensor.
-
-        Returns
-        -------
-        torch.Tensor
-            Predicted segmentation mask.
-
-        Notes
-        -----
-        If x is a Tensor, it will be converted to a DataLoader of 2D slices internally.
-        """
-        self._evaluation_mode()
-        
-        bg_supp_x_norm = bg_supp_x_norm if bg_supp_x_norm is not None \
-            else self._bg_supp_x_norm_eval
-        bg_suppression_opts = bg_suppression_opts if bg_suppression_opts is not None \
-            else self._bg_suppression_opts_eval
-        manually_norm_img_before_seg = manually_norm_img_before_seg if manually_norm_img_before_seg is not None \
-             else self._manually_norm_img_before_seg_eval
-
-        x_norms, masks, logits_list = [], [], []
-        
-        if isinstance(x, DataLoader):
-            for x_b, _, _, _, bg_mask_b in x:
-                x_b = x_b.to(self._device).float()
-                x_norm, mask, logits = self.forward_pass_seg(
-                    x_b, bg_mask_b, bg_supp_x_norm, bg_suppression_opts,
-                    manually_norm_img_before_seg)
-                x_norms.append(x_norm)
-                masks.append(mask)
-                logits_list.append(logits)
-
-        elif isinstance(x, torch.Tensor):
-            n_dims = 3 if x.dim() == 5 else 2
-            if bg_mask is not None:
-                assert x.shape[-n_dims:] == bg_mask.shape[-n_dims:], 'x and bg_mask must have the same spatial dims'
-
-            vols = (x, bg_mask) if bg_mask is not None else (x,)
-
-            dl = generate_2D_dl_for_vol(*vols, **kwargs)
-            
-            for x_b, bg_mask_b in dl:
-                x_b = x_b.to(self._device).float()
-                x_norm, mask, logits = self.forward_pass_seg(
-                    x_b, bg_mask_b, bg_supp_x_norm, 
-                    bg_suppression_opts, manually_norm_img_before_seg)
-                x_norms.append(x_norm)
-                masks.append(mask)
-                logits_list.append(logits)
-
-        # Concatenate and permute dimensions for all tensors
-        x_norms, masks, logits = [torch.cat(t) for t in [x_norms, masks, logits_list]]
-        
-        if output_vol_format == 'DCHW':
-            return x_norms, masks, logits
-        elif output_vol_format == '1CDHW':
-            return [t.permute(1, 0, 2, 3).unsqueeze(0) for t in [x_norms, masks, logits]]
-        else:
-            raise ValueError(f"Unsupported return format: {output_vol_format}")
 
 
     def forward_pass_seg(
@@ -717,12 +648,10 @@ class TTADAE(BaseTTA):
         if manually_norm_img_before_seg:
             x_norm = self._normalize_image_intensities_to_sd(x_norm)
         
-        if bg_supp_x_norm:
-            bg_mask = bg_mask.to(self._device)
-            x_norm_bg_supp = background_suppression(x_norm, bg_mask, bg_suppression_opts)
-            mask, logits = self._seg(x_norm_bg_supp)
-        else:
-            mask, logits = self._seg(x_norm)
+        x_norm, mask, logits = super().forward_pass_seg(
+            x_norm=x_norm, bg_mask=bg_mask, bg_supp_x_norm=bg_supp_x_norm,
+            bg_suppression_opts=bg_suppression_opts
+        )
         
         return x_norm, mask, logits
     
@@ -735,36 +664,35 @@ class TTADAE(BaseTTA):
         
         _, masks, _ = self.predict(
             dae_dataloader, output_vol_format='1CDHW',
+            bg_supp_x_norm=self._bg_supp_x_norm_tta_dae,
+            bg_suppression_opts=self._bg_suppression_opts_tta,
             manually_norm_img_before_seg=self._manually_norm_img_before_seg_tta)
 
         if self._rescale_factor is not None:
             masks = F.interpolate(masks, scale_factor=self._rescale_factor, mode='trilinear')
 
         dae_output, _ = self._dae(masks)
-
-        dice_denoised = dice_score(masks, dae_output, soft=True, reduction='mean', 
-                                   smooth=1e-5, foreground_only=False)
-        dice_atlas = dice_score(masks, self._atlas, soft=True, reduction='mean',
-                                 smooth=1e-5, foreground_only=False)
+        dice_denoised = dice_score(masks, dae_output, soft=True, reduction='mean', foreground_only=False)
+        dice_atlas = dice_score(masks, self._atlas, soft=True, reduction='mean',  foreground_only=False)
         
         if self._debug_mode:
             print(f'DEBUG: dice_denoised: {dice_denoised}, dice_atlas: {dice_atlas}')
         
         if (dice_denoised / dice_atlas >= self._alpha and dice_atlas >= self._beta) \
-            or self._tta_dae_state.use_only_dae_pl \
-            or (self._tta_dae_state.use_atlas_only_for_init and self._tta_dae_state.atlas_init_done):
+            or self._state.use_only_dae_pl \
+            or (self._state.use_atlas_only_for_init and self._state.atlas_init_done):
             print('Using DAE output as pseudo label')
             dice = dice_denoised.item()
-            self._tta_dae_state.use_dae_pl(dae_output)
+            self._state.use_dae_pl(dae_output)
 
         else:
             print('Using Atlas as pseudo label')
             dice = dice_atlas.item()
-            self._tta_dae_state.use_atlas_pl(self._atlas)
+            self._state.use_atlas_pl(self._atlas)
             
-        self._tta_dae_state.check_new_best_score(dice)
+        self._state.check_new_best_score(dice)
         
-        return self._tta_dae_state.y_pl
+        return self._state.y_pl
         
     def _normalize_image_intensities_to_sd(self, x_norm: torch.Tensor) -> torch.Tensor:
         """Normalize image intensities to match the source domain statistics.
@@ -778,16 +706,16 @@ class TTADAE(BaseTTA):
         if self._normalization_strategy == 'standardize':
             x_norm_standardized = normalize(
                 type='standardize', data=x_norm,
-                mean=self._tta_dae_state.norm_td_statistics.mean,
-                std=self._tta_dae_state.norm_td_statistics.std
+                mean=self._state.norm_td_statistics.mean,
+                std=self._state.norm_td_statistics.std
                 )
             x_norm_norm_to_sd = self._norm_sd_statistics.std * x_norm_standardized + self._norm_sd_statistics.mean
         
         elif self._normalization_strategy == 'min_max':
             x_norm_btw_0_1 = normalize(
                 type='min_max', data=x_norm,
-                min=self._tta_dae_state.norm_td_statistics.min,
-                max=self._tta_dae_state.norm_td_statistics.max
+                min=self._state.norm_td_statistics.min,
+                max=self._state.norm_td_statistics.max
                 )
             x_norm_norm_to_sd = (self._norm_sd_statistics.max - self._norm_sd_statistics.min) * x_norm_btw_0_1  +\
                 self._norm_sd_statistics.min
@@ -825,7 +753,7 @@ class TTADAE(BaseTTA):
         )
 
     def load_best_state_norm(self) -> None:
-        self._tta_dae_state.reset_to_state(self._tta_dae_state.best_state)
+        self._state.reset_to_state(self._state.best_state)
         self.load_current_norm_state_dict()
 
     def reset_state(self) -> None:
@@ -838,41 +766,47 @@ class TTADAE(BaseTTA):
         )
         
         # Reset TTADAEState
-        self._tta_dae_state.reset()
+        self._state.reset()
 
         # Reset normalization model
         self.load_current_norm_state_dict()
     
     def load_current_norm_state_dict(self) -> None:
-        self._norm.load_state_dict(self._tta_dae_state.norm_state_dict)
-        self._tta_dae_state.norm_state_dict = self._norm.state_dict()
+        self._norm.load_state_dict(self._state.norm_state_dict)
+        self._state.norm_state_dict = self._norm.state_dict()
     
     def get_current_pseudo_label(self) -> Optional[torch.Tensor]:
-        return self._tta_dae_state.y_pl
+        return self._state.y_pl
     
     def get_loss(self, loss_name: str) -> OrderedDict[int, float]:
-        return self._tta_dae_state.get_loss(loss_name)
+        return self._state.get_loss(loss_name)
     
     def get_score(self, metric_name: str) -> OrderedDict[int, float]:
-        return self._tta_dae_state.get_score(metric_name)
+        return self._state.get_score(metric_name)
     
     def get_best_state(self, as_dict: bool = False) -> TTADAEState | dict:
         if as_dict:
-            return asdict(self._tta_dae_state.best_state)
+            return asdict(self._state.best_state)
         else:
-            return self._tta_dae_state.best_state
+            return self._state.best_state
         
     def get_current_state(self, as_dict: bool = False) -> TTADAEState | dict:
         if as_dict:
-            return asdict(self._tta_dae_state)
+            return asdict(self._state)
         else:
-            return self._tta_dae_state
+            return self._state
 
     def get_model_selection_score(self) -> float:
-        return self._tta_dae_state.model_selection_score
+        return self._state.model_selection_score
 
     def get_current_iteration(self) -> int:
-        return self._tta_dae_state.iteration
+        return self._state.iteration
     
     def get_all_test_scores_as_df(self, name_contains: Optional[str] = None) -> dict[DataFrame]:
-        return self._tta_dae_state.get_all_test_scores_as_df(name_contains=name_contains)
+        return self._state.get_all_test_scores_as_df(name_contains=name_contains)
+
+    def load_state(self, path: str) -> None:
+        raise NotImplementedError('Method not implemented for TTADAE')
+    
+    def save_state(self, path: str) -> None:
+        raise NotImplementedError('Method not implemented for TTADAE')

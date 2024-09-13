@@ -2,6 +2,7 @@ from typing import Literal
 
 import torch
 import torch.nn as nn
+from einops import einsum
 import torch.nn.functional as F
 from kornia.feature import SIFTDescriptor
 from kornia.core import  Tensor, concatenate, normalize
@@ -27,8 +28,20 @@ def onehot_to_class(onehot, class_dim=1, keepdim=True):
     return onehot.argmax(dim=class_dim, keepdim=keepdim)
 
 
-def dice_score(mask_pred, mask_gt, soft=True, reduction='mean', bg_channel=0, k=1, smooth=0, epsilon=1e-10,
-               classes_to_exclude: torch.Tensor = None, foreground_only: bool = False):
+def one_hot_score_to_onehot_pred(mask_pred, class_dim=1, dtype=None):
+    # Step 1: Get the class with the highest score
+    class_pred = mask_pred.argmax(dim=class_dim)
+    
+    # Step 2: Create one-hot encoding
+    dtype = mask_pred.dtype if dtype is None else dtype
+    one_hot = torch.zeros(mask_pred.shape, dtype=dtype, device=mask_pred.device)
+    one_hot.scatter_(class_dim, class_pred.unsqueeze(class_dim), 1)
+    
+    return one_hot
+
+
+def dice_score(mask_pred, mask_gt, soft=True, reduction='mean', bg_channel=0, smooth=0, epsilon=1e-10,
+               classes_to_exclude: torch.Tensor = None, foreground_only: bool = False, debug_mode=False):
     """ 
     Assumes that mask_pred and mask_gt are one-hot encoded.
     
@@ -49,9 +62,6 @@ def dice_score(mask_pred, mask_gt, soft=True, reduction='mean', bg_channel=0, k=
     bg_channel : int
         Background channel.
     
-    k : int
-        Exponent.
-    
     smooth : float
         Smoothing factor.
         
@@ -64,10 +74,9 @@ def dice_score(mask_pred, mask_gt, soft=True, reduction='mean', bg_channel=0, k=
     foreground_only : bool, optional
         If True, returns dice score filtered on the foreground mask only.
     """
-
+    
     if not soft:
-        n_classes = mask_pred.shape[1]
-        mask_pred = class_to_onehot(onehot_to_class(mask_pred), n_classes)
+        mask_pred = one_hot_score_to_onehot_pred(mask_pred)
     
     N, C = mask_pred.shape[0:2]
     mask_pred = mask_pred.reshape(N, C, -1)
@@ -81,16 +90,18 @@ def dice_score(mask_pred, mask_gt, soft=True, reduction='mean', bg_channel=0, k=
 
     assert mask_pred.shape == mask_gt.shape
 
-    tp = torch.sum(mask_gt * mask_pred, dim=-1)
-    tp_plus_fp = torch.sum(mask_pred ** k, dim=-1)
-    tp_plus_fn = torch.sum(mask_gt ** k, dim=-1)
+    tp = einsum(mask_gt, mask_pred, 'b c ..., b c ... -> b c') # torch.sum(mask_gt * mask_pred, dim=-1), but more memory efficient
+    tp_plus_fp = torch.sum(mask_pred, dim=-1)
+    tp_plus_fn = torch.sum(mask_gt, dim=-1)
     dices = (2 * tp + smooth) / (tp_plus_fp + tp_plus_fn + smooth + epsilon)
+
+    if debug_mode:
+        print_dice_debug_info(mask_pred, mask_gt, tp, tp_plus_fp, tp_plus_fn, dices)
 
     assert_in(reduction, 'reduction', ['none', 'mean', 'sum'])
 
-    fg_mask = (torch.arange(mask_pred.shape[1]) != bg_channel)
-
     if foreground_only:
+        fg_mask = (torch.arange(mask_pred.shape[1]) != bg_channel)
         dices = dices[:, fg_mask, ...]
 
     if reduction == 'none':
@@ -99,17 +110,38 @@ def dice_score(mask_pred, mask_gt, soft=True, reduction='mean', bg_channel=0, k=
         return dices.nanmean()
     elif reduction == 'sum':
         return dices.nansum()
+    
+def print_dice_debug_info(mask_pred, mask_gt, tp, tp_plus_fp, tp_plus_fn, dices):
+    print_elements_dice = False
+    if mask_pred.isnan().any():
+        print("Warning: NaN values found in mask_pred.")
+        print_elements_dice = True
+    if mask_gt.isnan().any():
+        print("Warning: NaN values found in mask_gt.")
+        print_elements_dice = True
+    if (tp_plus_fp == 0).any():
+        print("Warning: The predicted mask had 0 score for all pixels for a class")
+        print_elements_dice = True
+    if dices.isnan().any():
+        print("Warning: NaN values found in dice score calculation.")
+        print_elements_dice = True
+
+    if print_elements_dice:
+        print(f'tp: {tp}')
+        print(f'tp_plus_fp: {tp_plus_fp}')
+        print(f'tp_plus_fn: {tp_plus_fn}')
+        print(f'dices: {dices}')
 
 
 class DiceLoss(nn.Module):
-    def __init__(self, smooth = 0, epsilon=1e-10):
+    def __init__(self, smooth = 0, epsilon=1e-10, debug_mode=False, fg_only=False):
         """
         Dice loss.
         
         Attributes
         ----------
         smooth : float
-            Smoothing factor. We keep it at 0 so that the loss is maximum numerator and denominator are 0.
+            Smoothing factor. We keep it at 0 so that the loss is maximum numerator and denominator are 0 (binary classes).
             (Dice score is 1 when both numerator and denominator are 0, so loss is 1)
             
         epsilon : float
@@ -118,21 +150,23 @@ class DiceLoss(nn.Module):
         super().__init__()
         self.smooth = smooth
         self.epsilon = epsilon
+        self.debug_mode = debug_mode
+        self.fg_only = fg_only
 
     def forward(self, mask_pred, mask_gt, **kwargs):
             
         dice = dice_score(
             mask_pred, mask_gt, 
             soft=True,
-            foreground_only=False,
-            smooth=self.smooth, epsilon=self.epsilon, 
+            reduction='mean',
+            smooth=self.smooth, 
+            epsilon=self.epsilon, 
+            debug_mode=self.debug_mode,
+            foreground_only=self.fg_only,
             **kwargs
-            )
+        )
 
-        loss = 1 - dice
-
-        return loss
-
+        return 1 - dice
 
 class SIFTDescriptor(SIFTDescriptor):
     def __init__(

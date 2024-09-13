@@ -86,6 +86,9 @@ def export_images(x_original, x_norm, y_original, y_pred, n_classes=-1, n_slices
     plt.figure(figsize=(10 * n_slices / n_rows, 10))
     for i, idx in enumerate(slices):
         for vol_j, (vol_name, vol, vol_type) in enumerate(vols_to_visualize):
+            if isinstance(vol, torch.Tensor):
+                vol = vol.detach().cpu().numpy()
+                
             ax = plt.subplot(n_rows, n_slices, i + vol_j * n_slices + 1) 
 
             if vol_type == 'image':    

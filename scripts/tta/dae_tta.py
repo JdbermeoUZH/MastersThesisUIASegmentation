@@ -20,7 +20,7 @@ from tta_uia_segmentation.src.models.io import (
 from tta_uia_segmentation.src.utils.io import (
     load_config, dump_config, print_config, write_to_csv,
     rewrite_config_arguments)
-from tta_uia_segmentation.src.utils.utils import seed_everything, define_device
+from tta_uia_segmentation.src.utils.utils import seed_everything, define_device, parse_bool
 from tta_uia_segmentation.src.utils.logging import setup_wandb
 from tta_uia_segmentation.src.utils.loss import DiceLoss, dice_score
 
@@ -33,7 +33,6 @@ def preprocess_cmd_args() -> argparse.Namespace:
     
     """
     parser = argparse.ArgumentParser(description="Test Time Adaption with DAE")
-    parse_bool = lambda s: s.strip().lower() == 'true'
     
     parser.add_argument('dataset_config_file', type=str, help='Path to yaml config file with parameters that define the dataset.')
     parser.add_argument('tta_config_file', type=str, help='Path to yaml config file with parameters for test time adaptation')
@@ -58,15 +57,18 @@ def preprocess_cmd_args() -> argparse.Namespace:
     parser.add_argument('--accumulate_over_volume', type=parse_bool, help='Whether to accumulate over volume. Default: True')
     parser.add_argument('--batch_size', type=int, help='Batch size for tta. Default: 4')
     parser.add_argument('--num_workers', type=int, help='Number of workers for dataloader. Default: 0')
+
+    # Loss function parameters
+    parser.add_argument('--smooth', type=float, help='Smooth parameter for dice loss. Added to both numerator and denominator. Default: 0.')
+    parser.add_argument('--epsilon', type=float, help='Epsilon parameter for dice loss (avoid division by zero). Default: 1e-5')
+
     
     # DAE and Atlas parameters
     parser.add_argument('--alpha', type=float, help='Proportion of how much better the dice of the DAE pseudolabel and predicted segmentation'
                                                     'should be than the dice of the Atlas pseudolabel. Default: 1')
     parser.add_argument('--beta', type=float, help='Minimum dice of the Atlas pseudolabel and the predicted segmentation. Default: 0.25')
     parser.add_argument('--calculate_dice_every', type=int, help='Calculate dice every n steps. Default: 25')
-    
-    # Seg model params
-    parser.add_argument('--seg_with_bg_supp', type=parse_bool, help='Whether to use background suppression for segmentation. Default: True')
+    parser.add_argument('--update_dae_output_every', type=int, help='Update DAE output every n steps. Default: 25')
     
     # Dataset and its transformations to use for TTA
     # ---------------------------------------------------:
@@ -93,6 +95,8 @@ def preprocess_cmd_args() -> argparse.Namespace:
     parser.add_argument('--aug_noise_std', type=float, help='Standard deviation value for noise augmentation. Default: 0.0') 
     
     # Backround suppression for normalized images
+    parser.add_argument('--bg_supp_x_norm_eval', type=parse_bool, help='Whether to suppress background for normalized images during evaluation. Default: True')
+    parser.add_argument('--bg_supp_x_norm_tta_dae', type=parse_bool, help='Whether to suppress background for normalized images during TTA with DAE. Default: True')
     parser.add_argument('--bg_supression_type', choices=['fixed_value', 'random_value', 'none', None], help='Type of background suppression to use. Default: fixed_value')
     parser.add_argument('--bg_supression_value', type=float, help='Value to use for background suppression. Default: -0.5')
     parser.add_argument('--bg_supression_min', type=float, help='Minimum value to use for random background suppression. Default: -0.5')
@@ -275,6 +279,8 @@ if __name__ == '__main__':
     learning_rate               = tta_config[tta_mode]['learning_rate']
     alpha                       = tta_config[tta_mode]['alpha']
     beta                        = tta_config[tta_mode]['beta']
+    smooth                      = tta_config[tta_mode]['smooth']
+    epsilon                     = tta_config[tta_mode]['epsilon']
     update_norm_td_statistics   = tta_config[tta_mode]['update_norm_td_statistics']
     bg_supp_x_norm_eval         = tta_config[tta_mode]['bg_supp_x_norm_eval']
     bg_supp_x_norm_tta_dae      = tta_config[tta_mode]['bg_supp_x_norm_tta_dae']
@@ -290,6 +296,8 @@ if __name__ == '__main__':
             y_pred, y_gt, soft=False, reduction='none', foreground_only=True, smooth=1e-5)
         }
     
+    dice_loss = DiceLoss(smooth=smooth, epsilon=epsilon, debug_mode=debug_mode)
+    
     dae_tta = TTADAE(
         norm=norm,
         seg=seg,
@@ -298,7 +306,7 @@ if __name__ == '__main__':
         norm_sd_statistics=norm_sd_statistics,
         n_classes=n_classes,
         rescale_factor=rescale_factor,
-        loss_func=DiceLoss(),
+        loss_func=dice_loss,
         learning_rate=learning_rate,
         alpha=alpha,
         beta=beta,
