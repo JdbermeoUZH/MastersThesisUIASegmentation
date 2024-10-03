@@ -59,7 +59,7 @@ segmentation:
 
   # Loss function parameters
   epsilon:                      1e-10
-  smooth:                       1e-5
+  smooth:                       0
   debug_mode:                   False
   fg_only:                      False  
 

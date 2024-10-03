@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --output=../logs/%j_dae_tta.out
+#SBATCH --output=../logs/%j_no_tta.out
 #SBATCH --cpus-per-task=4
 #SBATCH --gres=gpu:1
 #SBATCH --constraint='geforce_gtx_titan_x'
@@ -9,5 +9,5 @@ conda activate /scratch_net/biwidl319/jbermeo/GNN-Domain-Generalization-main/net
 
 python no_tta.py \
  /scratch_net/biwidl319/jbermeo/MastersThesisUIASegmentation/config/datasets.yaml \
- /scratch_net/biwidl319/jbermeo/MastersThesisUIASegmentation/config/tta/tta_brain_hcp_t1w.yaml \
+ /scratch_net/biwidl319/jbermeo/MastersThesisUIASegmentation/config/tta/tta_wmh_umc.yaml \
  "$@"  

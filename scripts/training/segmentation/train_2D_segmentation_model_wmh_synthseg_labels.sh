@@ -10,5 +10,5 @@ conda activate /scratch_net/biwidl319/jbermeo/GNN-Domain-Generalization-main/net
 python train_2D_segmentation_model.py \
  /scratch_net/biwidl319/jbermeo/MastersThesisUIASegmentation/config/datasets.yaml \
  /scratch_net/biwidl319/jbermeo/MastersThesisUIASegmentation/config/models.yaml \
- /scratch_net/biwidl319/jbermeo/MastersThesisUIASegmentation/config/training/training_wmh_umc.yaml \
+ /scratch_net/biwidl319/jbermeo/MastersThesisUIASegmentation/config/training/training_wmh_w_synthseg_labels_umc.yaml \
  "$@"  

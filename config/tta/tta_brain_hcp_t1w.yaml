@@ -5,7 +5,7 @@ wandb_log: True
 debug_mode: True
 
 dataset: hcp_t2   # brain: hcp_t1, hcp_t2, abide_caltech, abide_stanford; wmh: nuhs, umc, vu
-split:   val       # val, test
+split:   test     # val, test
 image_size: [1, 256, 256]
 start: null       # Index of the test dataset to start at
 stop:  null       # Index of the test dataset to stop at
@@ -27,6 +27,22 @@ bg_suppression_opts:
   thresholding: otsu  # possible values: isodata, li, mean, minimum, otsu, triangle, yen
   hole_filling: True
 
+no_tta:
+  wandb_project: baseline_performance 
+  logdir: /scratch_net/biwidl319/jbermeo/logs/brain/tta/debugging/no_tta/9_06/reproduce_previous_results
+
+  batch_size: 64
+  
+  # Supress background x_norm 
+  bg_supp_x_norm_eval: False
+  bg_suppression_opts:
+    type: none  # possible values: fixed_value, random_value, (none if not used)
+    bg_value: -0.5
+    bg_value_min: -0.5
+    bg_value_max: 1
+    mask_source: thresholding  # possible values: thresholding, ground_truth
+    thresholding: otsu  # possible values: isodata, li, mean, minimum, otsu, triangle, yen
+    hole_filling: True
 
 dae:
   wandb_project: tta-dae # mt-tta-brain-hcp_t2

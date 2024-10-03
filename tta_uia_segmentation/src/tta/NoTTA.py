@@ -1,24 +1,14 @@
-import os
 from typing import Optional, Literal
 
 import numpy as np
 import torch
-from torch.utils.data import DataLoader, Subset
+from torch.utils.data import DataLoader
 
-from tta_uia_segmentation.src.models import DomainStatistics
 from tta_uia_segmentation.src.dataset import DatasetInMemory
 from tta_uia_segmentation.src.tta.BaseTTA import BaseTTA, BaseTTAState
-from tta_uia_segmentation.src.utils.loss import dice_score
 from tta_uia_segmentation.src.utils.utils import generate_2D_dl_for_vol
 from tta_uia_segmentation.src.models.normalization import background_suppression
 
-DICE_SMOOTHING = 1e-10
-
-EVAL_METRICS = {
-    'dice_score_all_classes': lambda y_pred, y_gt: dice_score(y_pred, y_gt, soft=False, reduction='none', smooth=DICE_SMOOTHING),
-    'dice_score_fg_classes': lambda y_pred, y_gt: dice_score(y_pred, y_gt, soft=False, reduction='none', foreground_only=True, 
-                                                             smooth=DICE_SMOOTHING)
-}
 
 class NoTTA(BaseTTA):
     """
@@ -37,7 +27,7 @@ class NoTTA(BaseTTA):
         classes_of_interest: Optional[list[int]] = None,
         bg_supp_x_norm_eval: bool = False,
         bg_suppression_opts_eval: Optional[dict] = None,
-        eval_metrics: Optional[dict[str, callable]] = EVAL_METRICS,
+        eval_metrics: Optional[dict[str, callable]] = BaseTTA.EVAL_METRICS,
         wandb_log: bool = False,
         debug_mode: bool = False,
         device: str = 'cuda'
@@ -50,7 +40,8 @@ class NoTTA(BaseTTA):
 
         # Information about the problem
         self._n_classes = n_classes
-        self._classes_of_interest = classes_of_interest
+        self._classes_of_interest = [classes_of_interest] if isinstance(classes_of_interest, int) \
+              else classes_of_interest 
 
         # Background suppression settings
         self._bg_supp_x_norm_eval = bg_supp_x_norm_eval
@@ -66,9 +57,6 @@ class NoTTA(BaseTTA):
         # Device
         self._device = device
 
-        # Initialize base state of the model to keep track of test-time metrics
-        self._state = BaseTTAState()
-
     def tta(
         self,
         dataset: DatasetInMemory,
@@ -83,7 +71,6 @@ class NoTTA(BaseTTA):
         eval_metrics = self.evaluate(
                 dataset=dataset,
                 vol_idx=vol_idx,
-                iteration=-1,
                 output_dir=logdir,
                 store_visualization=True,
                 save_predicted_vol_as_nifti=True,
@@ -94,22 +81,26 @@ class NoTTA(BaseTTA):
 
         for eval_metric_name, eval_metric_values in eval_metrics.items():
             self.state.add_test_score(
-                iteration=-1, metric_name=eval_metric_name, score=eval_metric_values)
+                iteration=0, metric_name=eval_metric_name, score=eval_metric_values)
 
         # Print mean dice score of the foreground classes
         dices_fg_mean = np.mean(eval_metrics['dice_score_fg_classes']).mean().item()
-        print(f'dice score_fg_classes: {dices_fg_mean}') 
+        print(f'dice score_fg_classes (vol{vol_idx}): {dices_fg_mean}') 
+
+        dices_fg_mean_sklearn = np.mean(eval_metrics['dice_score_fg_classes_sklearn']).mean().item()
+        print(f'dice score_fg_classes_sklearn (vol{vol_idx}): {dices_fg_mean_sklearn}')
 
     def evaluate(
         self,
         dataset: DatasetInMemory,
         vol_idx: int,
-        iteration: int,
         output_dir: str,
+        batch_size: int,
+        num_workers: int,
         store_visualization: bool = True,
         save_predicted_vol_as_nifti: bool = False,
         file_name: Optional[str] = None,
-        **kwargs,
+        slice_vols_for_viz: Optional[tuple[tuple[int, int], tuple[int, int], tuple[int, int]]] = None
     ) -> dict:
         self._evaluation_mode()
         dataset.set_augmentation(False)
@@ -121,29 +112,31 @@ class NoTTA(BaseTTA):
 
         vol_orig, y_gt, _ = dataset.get_original_images(vol_idx) 
 
-        file_name = f'{dataset.dataset_name}_vol_{vol_idx:03d}_step_{iteration:03d}' \
+        file_name = f'{dataset.dataset_name}_vol_{vol_idx:03d}' \
             if file_name is None else file_name
         
-        prediction_kwargs = {
+        predict_kwargs = {
             'bg_mask': bg_preproc,
             'bg_supp_x_norm': self._bg_supp_x_norm_eval,
             'bg_suppression_opts': self._bg_suppression_opts_eval,
+            'batch_size': batch_size,
+            'num_workers': num_workers
         }
         
         eval_metrics = super().evaluate(
             x_preprocessed=vol_preproc,
             x_original=vol_orig,
             y_original_gt=y_gt.float(),
-            n_classes=self._n_classes,
-            preprocessed_pix_size=dataset.resolution_proc,
+            preprocessed_pix_size=dataset.get_processed_pixel_size(),
             gt_pix_size=dataset.get_original_pixel_size(vol_idx),
             metrics=self._eval_metrics,
+            classes_of_interest=self._classes_of_interest,
             output_dir=output_dir,
             file_name=file_name,
             store_visualization=store_visualization,
             save_predicted_vol_as_nifti=save_predicted_vol_as_nifti,
-            **prediction_kwargs,
-            **kwargs
+            slice_vols_for_viz=slice_vols_for_viz,
+            predict_kwargs=predict_kwargs
         )
 
         return eval_metrics
@@ -157,7 +150,7 @@ class NoTTA(BaseTTA):
         output_vol_format: Literal['DCHW', '1CDHW'] = '1CDHW',
         batch_size: Optional[int] = None,
         num_workers: Optional[int] = None,
-        **kwargs
+        forward_pass_kwargs: dict = {}
         ) -> torch.Tensor:
         """Predict the segmentation mask for a given volume.
 
@@ -196,13 +189,12 @@ class NoTTA(BaseTTA):
             else self._bg_suppression_opts_eval
 
         x_norms, masks, logits_list = [], [], []
-        
         if isinstance(x, DataLoader):
             for x_b, _, _, _, bg_mask_b in x:
                 x_b = x_b.to(self._device).float()
                 x_norm, mask, logits = self.forward_pass_seg(
                     x_b, bg_mask_b, bg_supp_x_norm, bg_suppression_opts,
-                    **kwargs)
+                    **forward_pass_kwargs)
                 x_norms.append(x_norm)
                 masks.append(mask)
                 logits_list.append(logits)
@@ -220,7 +212,7 @@ class NoTTA(BaseTTA):
                 x_b = x_b.to(self._device).float()
                 x_norm, mask, logits = self.forward_pass_seg(
                     x_b, bg_mask_b, bg_supp_x_norm, 
-                    bg_suppression_opts, **kwargs)
+                    bg_suppression_opts, **forward_pass_kwargs)
                 x_norms.append(x_norm)
                 masks.append(mask)
                 logits_list.append(logits)
@@ -244,7 +236,7 @@ class NoTTA(BaseTTA):
         bg_suppression_opts: Optional[dict] = None,
         x_norm: Optional[torch.Tensor] = None,
         ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        
+
         x_norm = x_norm if x_norm is not None else self._norm(x)
         
         if bg_supp_x_norm:
@@ -280,10 +272,11 @@ class NoTTA(BaseTTA):
         """
         state_dict = {
             'norm': self._norm.state_dict(),
-            'seg': self._seg.state_dict()
+            'seg': self._seg.state_dict(),
+            'state': self._state
         }
         torch.save(state_dict, path)
-
+    
     def reset_state(self) -> None:
         raise NotImplementedError("NoTTA is stateless and does not require resetting state.")
 

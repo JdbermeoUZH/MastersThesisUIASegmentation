@@ -47,7 +47,7 @@ dae:
 segmentation:
   batch_size:                   16
   num_workers:                  3
-  dataset:                      umc  # brain: hcp_t1, hcp_t2, abide_caltech, abide_stanford; wmh: nuhs, umc, vu
+  dataset:                      umc_w_synthseg_labels  # brain: hcp_t1, hcp_t2, abide_caltech, abide_stanford; wmh: nuhs, umc, vu
   image_size:                   [1, 256, 256]
   epochs:                       1000  # 150 for brain, 1000 for WMH (nuhs, umc)
   validate_every:               3
@@ -59,7 +59,7 @@ segmentation:
 
   # Loss function parameters
   epsilon:                      1e-10
-  smooth:                       1e-5
+  smooth:                       0
   debug_mode:                   False
   fg_only:                      False  
 

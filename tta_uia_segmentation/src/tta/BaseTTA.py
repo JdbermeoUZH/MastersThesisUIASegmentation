@@ -5,21 +5,18 @@ from collections import OrderedDict
 from dataclasses import dataclass, field, asdict
 
 import torch
+import numpy as np
 from torch.utils.data import Dataset, DataLoader
 import pandas as pd
+from sklearn.metrics import f1_score 
 
 from tta_uia_segmentation.src.tta import TTAInterface, TTAStateInterface
-from tta_uia_segmentation.src.utils.loss import dice_score, onehot_to_class
-from tta_uia_segmentation.src.utils.utils import resize_volume
-from tta_uia_segmentation.src.utils.io import save_nii_image
+from tta_uia_segmentation.src.utils.loss import (
+    dice_score, onehot_to_class, onehot_to_class)
+from tta_uia_segmentation.src.utils.utils import resize_volume, torch_to_numpy
+from tta_uia_segmentation.src.utils.io import save_nii_image, write_to_csv
 from tta_uia_segmentation.src.utils.visualization import export_images
 
-
-dice_score_fn_dict = {
-    'dice_score_all_classes': lambda y_pred, y_gt: dice_score(y_pred, y_gt, soft=False, reduction='none', smooth=1e-5),
-    'dice_score_fg_classes': lambda y_pred, y_gt: dice_score(y_pred, y_gt, soft=False, reduction='none', 
-        foreground_only=True, smooth=1e-5)
-}
 
 def _preprocess_volumes_for_viz(
         *vols,
@@ -48,8 +45,8 @@ def _preprocess_volumes_for_viz(
     for vol in vols:
         # Slice vol
         if slice_idxs is not None:
-            slice_idxs = tuple(slice(start, end) for start, end in slice_idxs)
-            vol = vol[..., slice_idxs[0], slice_idxs[1], slice_idxs[2]]
+            slice_list = [slice(start, end) for start, end in slice_idxs]
+            vol = vol[..., slice_list[0], slice_list[1], slice_list[2]]
         
         # Convert to categorical
         if convert_to_categorical:
@@ -64,6 +61,103 @@ def _preprocess_volumes_for_viz(
         preprocessed_vols.append(vol)
 
     return preprocessed_vols
+
+def _visualize_predictions(
+        x_original: torch.Tensor, 
+        x_norm: torch.Tensor,
+        y_original_gt: torch.Tensor,
+        y_pred: torch.Tensor,
+        output_dir: str,
+        file_name: str,
+        output_dir_suffix: str = '',
+        other_volumes_to_visualize: Optional[dict[str, torch.Tensor]] = None,
+        save_predicted_vol_as_nifti: bool = False,
+        slice_idxs: Optional[tuple[tuple[int, int], tuple[int, int], tuple[int, int]]] = None,
+        ) -> None:
+        """
+        Visualize the predictions of the model.
+
+        Parameters
+        ----------
+        x_original : torch.Tensor
+            Original input image.
+        x_norm : torch.Tensor
+            Normalized input image.
+        y_original_gt : torch.Tensor
+            Ground truth segmentation.
+        y_pred : torch.Tensor
+            Predicted segmentation.
+        output_dir : str
+            Directory to store the visualizations.
+        file_name : str
+            Base name for the output files.
+        other_volumes_to_visualize : dict[str, torch.Tensor], optional
+            Additional volumes to visualize.
+        save_predicted_vol_as_nifti : bool, optional
+            Whether to save the predicted volume as a NIfTI file.
+        slice_idxs : tuple[tuple[int, int], tuple[int, int], tuple[int, int]], optional
+            Slicing indices for the volumes.
+        """
+        # Get the number of classes
+        n_classes = y_pred.shape[1]    
+
+        # Preprocess volumes for visualization
+        x_original, x_norm = _preprocess_volumes_for_viz(
+            x_original, x_norm, slice_idxs=slice_idxs, convert_to_categorical=False)        
+        
+        y_original_gt, y_pred = _preprocess_volumes_for_viz(
+            y_original_gt, y_pred, slice_idxs=slice_idxs, convert_to_categorical=True)
+
+        # Resize other volumes to the original resolution and preprocess them
+        other_vols_preprocessed = {}
+        if other_volumes_to_visualize is not None:
+            for vol_name, vol_dict in other_volumes_to_visualize.items():
+                other_vols_preprocessed[vol_name] = resize_volume(
+                    vol_dict['vol'],
+                    current_pix_size=vol_dict['current_pix_size'],
+                    target_pix_size=vol_dict['target_pix_size'],
+                    target_img_size=vol_dict['target_img_size'], 
+                    mode='trilinear',
+                    only_inplane_resample=False     
+                )
+
+                convert_to_categorical = vol_name[0].lower() == 'y'
+                slice_idxs = slice_idxs if 'slice_idxs' in vol_dict else None
+                other_vols_preprocessed[vol_name] = _preprocess_volumes_for_viz(
+                    other_vols_preprocessed[vol_name], 
+                    slice_idxs=slice_idxs, 
+                    convert_to_categorical=convert_to_categorical)[0]
+            
+        export_images(
+            x_original,
+            x_norm,
+            y_original_gt,
+            y_pred,
+            output_dir=os.path.join(output_dir, 'segmentation' + output_dir_suffix),
+            image_name=file_name + '.png',
+            n_classes=n_classes,
+            **other_vols_preprocessed
+        )
+
+        # Save the predicted volume as a NIfTI file
+        if save_predicted_vol_as_nifti:
+            assert output_dir is not None, "The output directory must be provided to save the predicted volume."
+            assert file_name is not None, "The file name must be provided to save the predicted volume."
+            
+            vols_to_save = {
+                'x_original': x_original,
+                'y_pred': y_pred,
+                'y_gt': y_original_gt
+            }
+
+            for vol_name, vol in vols_to_save.items():    
+                save_nii_image(
+                    dir=os.path.join(
+                        output_dir, 'segmentation_nifti' + output_dir_suffix,
+                        f'vol_{vol_name}'),
+                    filename=file_name + vol_name + '.nii.gz',
+                    image=vol.detach().cpu().numpy().astype('uint8'),
+                )
 
 
 @dataclass
@@ -123,7 +217,6 @@ class BaseTTAState(TTAStateInterface):
         # Store the initial state of the class
         if self._create_initial_state:
             self._initial_state = self.current_state
-            #self._initial_state._initial_state = self._initial_state.current_state
 
         # Convert the _initial_state and _best_state attributes to TTAState objects
         if isinstance(self._initial_state, dict):
@@ -142,6 +235,7 @@ class BaseTTAState(TTAStateInterface):
         BaseTTAState
             The current state.
         """
+        # TODO: Delete these comments
         # # Copy the _initial_state and _best_state attributes
         # _initial_state = self._initial_state.current_state \
         #     if self._initial_state is not None else None
@@ -417,6 +511,21 @@ class BaseTTA(TTAInterface):
     _adapted : bool
         Indicates whether the model has been adapted.
     """
+
+    # Default metric functions for evaluation
+    EVAL_METRICS = {
+        'dice_score_all_classes': lambda y_pred, y_gt: dice_score(y_pred, y_gt, soft=False, reduction='none',
+                                                                  bg_channel=0, smooth=0, epsilon=0),
+        'dice_score_fg_classes': lambda y_pred, y_gt: dice_score(y_pred, y_gt, soft=False, reduction='none', foreground_only=True,
+                                                                 bg_channel=0, smooth=0, epsilon=0),
+        'dice_score_fg_classes_sklearn': lambda y_pred, y_gt: f1_score(
+            torch_to_numpy(onehot_to_class(y_gt)).flatten(),
+            torch_to_numpy(onehot_to_class(y_pred)).flatten(),
+            average=None)[1:],
+    }
+
+    def __init__(self):
+        self._state = BaseTTAState()
     
     def tta(self, x: torch.Tensor) -> None:
         """
@@ -449,10 +558,10 @@ class BaseTTA(TTAInterface):
         self,
         x_preprocessed: torch.Tensor, 
         y_original_gt: torch.Tensor,
-        n_classes: int,
         preprocessed_pix_size: tuple[float, ...],
         gt_pix_size: tuple[float, ...], 
-        metrics: dict[str, callable] = dice_score_fn_dict,
+        metrics: dict[str, callable] = EVAL_METRICS,
+        classes_of_interest: Optional[list[int]] = None,
         output_dir: Optional[str] = None,
         file_name: Optional[str] = None,
         store_visualization: bool = False,
@@ -460,7 +569,7 @@ class BaseTTA(TTAInterface):
         x_original: Optional[torch.Tensor] = None,
         other_volumes_to_visualize: Optional[dict[str, torch.Tensor]] = None,
         slice_vols_for_viz: Optional[tuple[tuple[int, int], tuple[int, int], tuple[int, int]]] = None,
-        **kwargs
+        predict_kwargs: dict = dict(),
         ) -> dict[str, float]:
         """
         Evaluate the model on the input data and labels.
@@ -477,6 +586,8 @@ class BaseTTA(TTAInterface):
             Pixel size of the ground truth labels.
         metrics : dict[str, callable], optional
             Dictionary of metric functions to evaluate the model's performance.
+        classes_of_interest : list[int], optional
+            List of classes to visualize.
         output_dir : str, optional
             Directory to save output visualizations.
         file_name : str, optional
@@ -489,8 +600,8 @@ class BaseTTA(TTAInterface):
             Whether to save the predicted volume as a NIfTI file.
         slice_vols_for_viz : tuple[tuple[int, int], tuple[int, int], tuple[int, int]], optional
             Slicing indices for visualization of volumes.
-        **kwargs
-            Additional keyword arguments.
+        predict_kwargs: dict, optional
+            Additional keyword arguments to pass to the predict method.
 
         Returns
         -------
@@ -501,7 +612,7 @@ class BaseTTA(TTAInterface):
         self._evaluation_mode()
 
         # Predict segmentation for x_preprocessed
-        x_norm, y_pred, _ = self.predict(x_preprocessed, output_vol_format='1CDHW', **kwargs)
+        x_norm, y_pred, _ = self.predict(x_preprocessed, output_vol_format='1CDHW', **predict_kwargs)
 
         assert all(vol.ndim == 5 for vol in (x_norm, y_pred, y_original_gt)), "The volumes must have 5 dimensions (NCDHW)."
 
@@ -537,57 +648,98 @@ class BaseTTA(TTAInterface):
             assert output_dir is not None, "The output directory must be provided to store visualizations."
             assert file_name is not None, "The file name must be provided to store visualizations."
 
-            # Preprocess volumes for visualization
-            x_original, x_norm = _preprocess_volumes_for_viz(
-                x_original, x_norm, slice_idxs=slice_vols_for_viz, convert_to_categorical=False)        
-            
-            y_original_gt, y_pred = _preprocess_volumes_for_viz(
-                y_original_gt, y_pred, slice_idxs=slice_vols_for_viz, convert_to_categorical=True)
-
-            # Resize other volumes to the original resolution and preprocess them
-            other_vols_preprocessed = {}
-            if other_volumes_to_visualize is not None:
-                for vol_name, vol_dict in other_volumes_to_visualize.items():
-                    other_vols_preprocessed[vol_name] = resize_volume(
-                        vol_dict['vol'],
-                        current_pix_size=vol_dict['current_pix_size'],
-                        target_pix_size=vol_dict['target_pix_size'],
-                        target_img_size=vol_dict['target_img_size'], 
-                        mode='trilinear',
-                        only_inplane_resample=False     
-                    )
-
-                    convert_to_categorical = vol_name[0].lower() == 'y'
-                    slice_idxs = slice_vols_for_viz if 'slice_idxs' in vol_dict else None
-                    other_vols_preprocessed[vol_name] = _preprocess_volumes_for_viz(
-                        other_vols_preprocessed[vol_name], 
-                        slice_idxs=slice_idxs, 
-                        convert_to_categorical=convert_to_categorical)[0]
-                   
-            export_images(
-                x_original,
-                x_norm,
-                y_original_gt,
-                y_pred,
-                output_dir=os.path.join(output_dir, 'segmentation'),
-                image_name=file_name + '.png',
-                n_classes=n_classes,
-                **other_vols_preprocessed
+            _visualize_predictions(
+                x_original=x_original, x_norm=x_norm,
+                y_original_gt=y_original_gt, y_pred=y_pred, 
+                output_dir=output_dir, file_name=file_name,
+                other_volumes_to_visualize=other_volumes_to_visualize,
+                save_predicted_vol_as_nifti=save_predicted_vol_as_nifti,
+                slice_idxs=slice_vols_for_viz,
             )
 
-        # Save the predicted volume as a NIfTI file
-        if save_predicted_vol_as_nifti:
-            assert output_dir is not None, "The output directory must be provided to save the predicted volume."
-            assert file_name is not None, "The file name must be provided to save the predicted volume."
+            if classes_of_interest is not None:
+                # Visualize the classes of interest
+                classes_of_interest_str = [str(cls) for cls in classes_of_interest]
+                output_dir_suffix = '_classes_of_interest_' + '_'.join(classes_of_interest_str)
 
-            save_nii_image(
-                dir=os.path.join(output_dir, 'segmentation_nifti'),
-                filename=file_name + '.nii.gz',
-                image=y_pred.detach().cpu().numpy().astype('uint8'),
-            )
-
+                _visualize_predictions( 
+                    x_original=x_original, x_norm=x_norm,
+                    y_original_gt=y_original_gt[:, [0] + classes_of_interest],
+                    y_pred=y_pred[:, [0] + classes_of_interest],
+                    output_dir=output_dir, file_name=file_name,
+                    output_dir_suffix=output_dir_suffix,
+                    other_volumes_to_visualize=other_volumes_to_visualize,
+                    save_predicted_vol_as_nifti=save_predicted_vol_as_nifti,
+                    slice_idxs=slice_vols_for_viz,
+                )
+                
         return metrics_values
     
+    def write_current_dice_scores(self, vol_idx: int, logdir: str, dataset_name: str, iteration_type: str):
+        """
+        Write dice scores to CSV files.
+
+        Parameters
+        ----------
+        logdir : str
+            Directory to save the CSV files.
+        dataset_name : str
+            Name of the dataset.
+        iteration_type : str
+            Type of iteration (e.g., 'last_iteration', 'best_scoring_iteration').
+
+        """
+        test_scores_fg = self._state.get_all_test_scores_as_df(name_contains='dice_score')
+        
+        for score_name, score_df in test_scores_fg.items():
+            score_name = score_name.replace('/', '__')
+            file_name = f'{score_name}_{dataset_name}_{iteration_type}.csv'
+            last_scores = score_df.iloc[-1].values
+            write_to_csv(
+                os.path.join(logdir, file_name),
+                np.hstack([[[f'volume_{vol_idx:02d}']], [last_scores]]),
+                mode='a',
+            )
+
+    def get_current_average_test_score(self, score_name: str) -> dict[str, float]:
+        """
+        Get the average test scores for the current iteration.
+
+        Parameters
+        ----------
+        score_name_contains : str, optional
+            If provided, only return scores whose names contain this string.
+
+        Returns
+        -------
+        dict[str, float]
+            Dictionary of average test scores.
+        """
+        test_scores_df = self._state.get_score_as_df(score_name)
+
+        return np.mean(test_scores_df.iloc[-1].values)
+
+    
+    def get_current_test_score(self, score_name: str, class_idx: Optional[int] = None) -> dict[str, float]:
+        """
+        Get the test scores for the current iteration.
+
+        Parameters
+        ----------
+        score_name : str
+            Name of the score to retrieve.
+
+        Returns
+        -------
+        dict[str, float]
+            Dictionary of test scores.
+        """
+        if class_idx is None:
+            return self._state.get_score_as_df(score_name).iloc[-1].values
+        else:
+            return self._state.get_score_as_df(score_name).iloc[-1, class_idx]
+
+
     def evaluate_dataset(self, ds: Dataset) -> None:
         """
         Evaluate the model on a dataset.

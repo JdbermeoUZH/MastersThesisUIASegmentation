@@ -1,5 +1,6 @@
 import os
 import sys
+import copy
 import argparse
 
 import wandb
@@ -11,13 +12,54 @@ sys.path.append(os.path.normpath(os.path.join(
 from tta_uia_segmentation.src.tta import NoTTA
 from tta_uia_segmentation.src.dataset.dataset_in_memory import get_datasets
 from tta_uia_segmentation.src.models.io import (
-    load_norm_and_seg_from_configs_and_cpt,
-    load_domain_statistiscs
+    load_norm_and_seg_from_configs_and_cpt
 )
 from tta_uia_segmentation.src.utils.io import (
     load_config, dump_config, print_config, rewrite_config_arguments)
 from tta_uia_segmentation.src.utils.utils import seed_everything, define_device, parse_bool
 from tta_uia_segmentation.src.utils.logging import setup_wandb
+
+
+def write_summary(logdir, dice_scores_fg, dice_scores_classes_of_interest):
+    """
+    Write summary of dice scores to a file and print to console.
+
+    Parameters
+    ----------
+    logdir : str
+        Directory to save the summary file.
+    dice_scores_fg : dict
+        Dictionary of foreground dice scores.
+    dice_scores_classes_of_interest : dict
+        Dictionary of dice scores for classes of interest.
+
+    Returns
+    -------
+    None
+    """
+    summary_file = os.path.join(logdir, 'summary.txt')
+    with open(summary_file, 'w') as f:
+        def write_and_print(text):
+            print(text)
+            f.write(text + '\n')
+
+        def write_scores(scores, prefix=''):
+            for name, values in scores.items():
+                mean, std = np.mean(values), np.std(values)
+                write_and_print(f'{prefix}{name} : {mean:.3f} +- {std:.5f}')
+
+        write_and_print('Dataset level metrics\n')
+        write_scores(dice_scores_fg)
+
+        write_and_print('\nClass level metrics\n')
+        for cls, scores in dice_scores_classes_of_interest.items():
+            write_and_print(f'Class {cls}')
+            write_scores(scores, prefix='  ')
+
+        write_and_print('\nClass average')
+        avg_scores = {name: [np.mean(cls_scores[name]) for cls_scores in dice_scores_classes_of_interest.values()]
+                        for name in dice_scores_fg}
+        write_scores(avg_scores, prefix='  ')
 
 
 def preprocess_cmd_args() -> argparse.Namespace:
@@ -38,6 +80,9 @@ def preprocess_cmd_args() -> argparse.Namespace:
     parser.add_argument('--stop', type=int, help='stopping volume index to be used for testing (index not included)')
     parser.add_argument('--logdir', type=str, help='Path to directory where logs and checkpoints are saved. Default: logs')  
     parser.add_argument('--seg_dir', type=str, help='Path to directory where segmentation checkpoints are saved')
+    
+    parser.add_argument('--classes_of_interest' , type=int, nargs='+')
+
     parser.add_argument('--wandb_project', type=str, help='Name of wandb project to log to. Default: "tta"')
     parser.add_argument('--wandb_log', type=parse_bool, help='Log tta to wandb. Default: False.')
     parser.add_argument('--device', type=str, help='Device to use for training. Default: "cuda"')
@@ -104,6 +149,7 @@ if __name__ == '__main__':
     
     tta_mode                = 'no_tta'
     seg_dir                 = tta_config['seg_dir']
+    classes_of_interest     = tta_config['classes_of_interest']
         
     params_seg              = load_config(os.path.join(seg_dir, 'params.yaml'))
     model_params_norm       = params_seg['model']['normalization_2D']
@@ -178,16 +224,16 @@ if __name__ == '__main__':
     if wandb_log:
         wandb.watch([norm], log='all', log_freq=1)
 
-    
     # Define the TTADAE object that does the test time adapatation
     # :=========================================================================:
     bg_supp_x_norm_eval         = tta_config[tta_mode]['bg_supp_x_norm_eval']
     bg_suppression_opts         = tta_config[tta_mode]['bg_suppression_opts']
-   
+
     no_tta = NoTTA(
         norm=norm,
         seg=seg,
         n_classes=n_classes,
+        classes_of_interest=classes_of_interest,
         wandb_log=wandb_log,
         device=device,
         bg_supp_x_norm_eval=bg_supp_x_norm_eval,
@@ -201,9 +247,9 @@ if __name__ == '__main__':
 
     # Arguments related to visualization of the results
     # :=========================================================================:    
-    slice_vols_for_viz = (((10, 58), (0, -1), (0, -1))) if dataset_name.startswith('vu') \
+    slice_vols_for_viz = (((24, 72), (0, -1), (0, -1))) if dataset_name.startswith('vu') \
         else None
-
+    
     # Start the TTA loop
     # :=========================================================================:
     start_idx = 0 if tta_config['start'] is None else tta_config['start']
@@ -217,6 +263,10 @@ if __name__ == '__main__':
     dice_scores_fg = {
         'dice_score_fg_classes': [],
         'dice_score_fg_classes_sklearn': [],
+    }
+
+    dice_scores_classes_of_interest = {
+        cls: copy.deepcopy(dice_scores_fg) for cls in classes_of_interest
     }
 
     for i in range(start_idx, stop_idx):
@@ -244,12 +294,18 @@ if __name__ == '__main__':
                 no_tta.get_current_average_test_score(dice_score_name)
             )
 
-        print('--------------------------------------------')
-    
-    print('\n\nDataset level metrics \n\n')
+        for cls in classes_of_interest:
+            for dice_score_name in dice_scores_fg:
+                dice_scores_classes_of_interest[cls][dice_score_name].append(
+                    no_tta.get_current_test_score(
+                        dice_score_name,
+                        cls - 1 if 'fg' in dice_score_name else cls
+                    )
+                )
 
-    for dice_score_name, dice_scores in dice_scores_fg.items():
-        print(f'{dice_score_name} : {np.mean(dice_scores):0.3f} +- {np.std(dice_scores):0.5f}')
+        print('--------------------------------------------')
+
+    write_summary(logdir, dice_scores_fg, dice_scores_classes_of_interest)
 
     if wandb_log:
         wandb.finish()

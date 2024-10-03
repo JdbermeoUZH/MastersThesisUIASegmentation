@@ -1,17 +1,14 @@
 import os
 import copy
 from tqdm import tqdm
-from dataclasses import asdict, dataclass, field, is_dataclass
+from dataclasses import asdict, dataclass, field
 from typing import OrderedDict, Optional, Any, Literal
 
 import wandb
 import torch
 import numpy as np
-from pandas import DataFrame
 from torch.nn import functional as F
 from torch.utils.data import DataLoader, Subset
-
-from tta_uia_segmentation.src.models.normalization import background_suppression
 from tta_uia_segmentation.src.utils.io import save_checkpoint
 from tta_uia_segmentation.src.utils.loss import dice_score, DiceLoss, onehot_to_class
 from tta_uia_segmentation.src.utils.utils import (
@@ -20,15 +17,6 @@ from tta_uia_segmentation.src.dataset import DatasetInMemory
 from tta_uia_segmentation.src.dataset.utils import normalize
 from tta_uia_segmentation.src.models import DomainStatistics
 from tta_uia_segmentation.src.tta import BaseTTAState, NoTTA
-
-
-DICE_SMOOTHING = 1e-10
-
-EVAL_METRICS = {
-    'dice_score_all_classes': lambda y_pred, y_gt: dice_score(y_pred, y_gt, soft=False, reduction='none', smooth=DICE_SMOOTHING),
-    'dice_score_fg_classes': lambda y_pred, y_gt: dice_score(y_pred, y_gt, soft=False, reduction='none', foreground_only=True, 
-                                                             smooth=DICE_SMOOTHING)
-}
 
 
 @dataclass
@@ -66,8 +54,8 @@ class TTADAEState(BaseTTAState):
     norm_td_statistics: Optional[DomainStatistics | dict] = None
         
     _create_initial_state: bool = field(default=True)
-    _initial_state: Optional['TTADAEState'] = field(default=None, init=False)
-    _best_state: Optional['TTADAEState'] = field(default=None, init=False)
+    _initial_state: Optional['TTADAEState'] = field(default=None)
+    _best_state: Optional['TTADAEState'] = field(default=None)
 
     def __post_init__(self):
         """
@@ -152,16 +140,17 @@ class TTADAEState(BaseTTAState):
         """
 
         # Copy the _initial_state and _best_state attributes
-        _initial_state = self._initial_state.current_state \
-            if self._initial_state is not None else None
-        _best_state = self._best_state.current_state \
-            if self._best_state is not None else None
-        current_state_dict = asdict(self)
+        #_initial_state = self._initial_state.current_state \
+        #    if self._initial_state is not None else None
+        # _best_state = self._best_state.current_state \
+        #     if self._best_state is not None else None
+        # current_state_dict = asdict(self)
         
         # Remove the initial and best states from the state_dict
         current_state_dict = asdict(self)
-        del current_state_dict['_initial_state']
-        del current_state_dict['_best_state']
+        current_state_dict['_create_initial_state'] = False
+        # del current_state_dict['_initial_state']
+        # del current_state_dict['_best_state']
         
         # Move the state_dict of the model to CPU
         model_state_dicts = ['norm_state_dict']
@@ -169,17 +158,16 @@ class TTADAEState(BaseTTAState):
             current_state_dict['norm_state_dict'])  
 
         # Create a deep copy of all other attributes
-        for key, value in current_state_dict.items():
-            if key not in model_state_dicts:
-                current_state_dict[key] = copy.deepcopy(value)
+        current_state_dict = {
+            key: copy.deepcopy(value) if key not in model_state_dicts else value
+            for key, value in current_state_dict.items()
+            }
 
         # Create the new TTADAEState instance
-        current_state_dict['_create_initial_state'] = False
         current_state_dict = TTADAEState(**current_state_dict)
-
         # Add the initial and best states back to the state_dict
-        current_state_dict._initial_state = _initial_state
-        current_state_dict._best_state = _best_state
+        # current_state_dict._initial_state = _initial_state
+        # current_state_dict._best_state = _best_state
 
         return current_state_dict
 
@@ -273,7 +261,7 @@ class TTADAE(NoTTA):
         learning_rate: float = 1e-3,
         alpha: float = 1.0,
         beta: float = 0.25,
-        eval_metrics: OrderedDict[str, callable] = EVAL_METRICS,
+        eval_metrics: OrderedDict[str, callable] = NoTTA.EVAL_METRICS,
         classes_of_interest: Optional[list[int]] = None,
         use_only_dae_pl: bool = False,
         use_only_atlas: bool = False,
@@ -571,6 +559,9 @@ class TTADAE(NoTTA):
 
             prediction_kwargs = {'manually_norm_img_before_seg': norm_value}
 
+            # TODO
+            breakpoint()
+            print('Modify this so that it works with the BaseTTA method')
             eval_metrics = super().evaluate(
                 dataset=dataset,
                 vol_idx=vol_idx,
@@ -579,7 +570,7 @@ class TTADAE(NoTTA):
                 store_visualization=store_visualization,
                 save_predicted_vol_as_nifti=save_predicted_vol_as_nifti,
                 other_volumes_to_visualize=other_volumes_to_visualize,
-                **prediction_kwargs
+                prediction_kwargs=prediction_kwargs
                 )
 
             results[norm_mode] = eval_metrics   
@@ -801,9 +792,6 @@ class TTADAE(NoTTA):
 
     def get_current_iteration(self) -> int:
         return self._state.iteration
-    
-    def get_all_test_scores_as_df(self, name_contains: Optional[str] = None) -> dict[DataFrame]:
-        return self._state.get_all_test_scores_as_df(name_contains=name_contains)
 
     def load_state(self, path: str) -> None:
         raise NotImplementedError('Method not implemented for TTADAE')

@@ -167,3 +167,4 @@ scripts/*/*/wandb/
 scripts/*/wandb/
 *.nii.gz
 /wandb/
+scripts/tta/run_multiple_no_tta.py

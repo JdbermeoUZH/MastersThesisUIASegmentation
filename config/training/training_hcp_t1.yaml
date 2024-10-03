@@ -64,7 +64,7 @@ segmentation:
   fg_only:                      False  
 
   bg_suppression_opts:
-    type:               none  # possible values: none, fixed_value, random_value
+    type:               none  # possible values: none, fixed_value, random_value, None means no background suppression
     bg_value:           -0.5
     bg_value_min:       -0.5
     bg_value_max:       1

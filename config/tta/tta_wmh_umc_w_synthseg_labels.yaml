@@ -27,6 +27,24 @@ bg_suppression_opts:
   hole_filling: True
 
 
+no_tta:
+  wandb_project: baseline_performance 
+  logdir: /scratch_net/biwidl319/jbermeo/logs/wmh/tta/umc_w_synthseg_labels/debugging/no_tta/9_30/reproduce_previous_results
+
+  batch_size: 64
+  
+  # Supress background x_norm 
+  bg_supp_x_norm_eval: False
+  bg_suppression_opts:
+    type: none  # possible values: fixed_value, random_value, (none if not used)
+    bg_value: -0.5
+    bg_value_min: -0.5
+    bg_value_max: 1
+    mask_source: thresholding  # possible values: thresholding, ground_truth
+    thresholding: otsu  # possible values: isodata, li, mean, minimum, otsu, triangle, yen
+    hole_filling: True
+
+
 dae:
   wandb_project: mt-tta-wmh
   logdir: /scratch_net/biwidl319/jbermeo/logs/brain/tta/debugging/dae_only/3_01/lr_1em3_grad_acc_1x1_conv_norm

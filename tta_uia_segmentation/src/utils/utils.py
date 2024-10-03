@@ -445,3 +445,23 @@ def parse_bool(value: str) -> bool:
     """
     assert value.lower() in ['true', 'false'], "Value must be 'true' or 'false'"
     return value.lower() == 'true'
+
+
+def torch_to_numpy(*tensors: torch.Tensor) -> np.ndarray:
+    """
+    Convert one or more PyTorch tensors to NumPy arrays.
+
+    Parameters
+    ----------
+    *tensors : torch.Tensor
+        Input tensors to convert.
+
+    Returns
+    -------
+    np.ndarray
+        NumPy array representation of the input tensors.
+    """
+    if len(tensors) == 1:
+        return tensors[0].detach().cpu().numpy()
+    
+    return tuple(t.detach().cpu().numpy() for t in tensors)

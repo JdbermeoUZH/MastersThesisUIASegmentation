@@ -1,4 +1,5 @@
 import os
+import math
 from typing import Literal, Optional
 
 import h5py
@@ -163,7 +164,8 @@ class DatasetInMemory(data.Dataset):
         self.background_mask = self.get_background_mask(self.images, self.labels)
         
         if label_names is None:
-            label_names = {i: str(i) for i in range(n_classes)}
+            num_zeros_pad = math.ceil(math.log10(n_classes + 1))
+            label_names = {i: str(i).zfill(num_zeros_pad) for i in range(n_classes)}
         else:
             assert len(label_names) == n_classes, 'len(label_names) != n_classes'
         

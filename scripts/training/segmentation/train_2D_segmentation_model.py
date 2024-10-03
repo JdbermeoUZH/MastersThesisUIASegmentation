@@ -173,8 +173,7 @@ if __name__ == '__main__':
 
     # Setup wandb logging
     # :=========================================================================:
-    if wandb_log:
-        wandb_dir = setup_wandb(params, logdir, wandb_project)
+    wandb_dir = setup_wandb(params, logdir, wandb_project) if wandb_log else None
     
     # Define the dataset that is to be used for training
     # :=========================================================================:
@@ -212,8 +211,6 @@ if __name__ == '__main__':
     
     # Define the 2D segmentation model
     # :=========================================================================:
-    
-    print(f'Using Device {device}')
     # Model definition
     norm = Normalization(
         n_layers        = model_config['normalization_2D']['n_layers'],
@@ -258,7 +255,8 @@ if __name__ == '__main__':
         logdir              = logdir,
         wandb_log           = wandb_log,
         wandb_dir           = wandb_dir,
-        bg_suppression_opts = bg_suppression_opts
+        bg_suppression_opts = bg_suppression_opts,
+        with_bg_supression  = train_config['segmentation']['with_bg_supression']
     )
 
     if wandb_log:
@@ -269,15 +267,15 @@ if __name__ == '__main__':
     # :=========================================================================:
     epochs                  = train_config['segmentation']['epochs']
     validate_every          = train_config['segmentation']['validate_every']
-    with_bg_supression      = train_config['segmentation']['with_bg_supression']
-    with_bg_supression      = train_config['segmentation']['with_bg_supression']
+
+    if trainer.with_bg_supression:
+        print(f'Using background suppression with {trainer.bg_suppression_opts["type"]} type')
     
     trainer.train(
         train_dataloader = train_dataloader,
         val_dataloader = val_dataloader,
         epochs = epochs,
         validate_every = validate_every,
-        with_bg_supression = with_bg_supression
     )
     
     write_to_csv(

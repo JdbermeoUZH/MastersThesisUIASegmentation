@@ -40,7 +40,7 @@ def one_hot_score_to_onehot_pred(mask_pred, class_dim=1, dtype=None):
     return one_hot
 
 
-def dice_score(mask_pred, mask_gt, soft=True, reduction='mean', bg_channel=0, smooth=0, epsilon=1e-10,
+def dice_score(mask_pred, mask_gt, soft=True, reduction='mean', bg_channel=0, smooth=0, epsilon=0,
                classes_to_exclude: torch.Tensor = None, foreground_only: bool = False, debug_mode=False):
     """ 
     Assumes that mask_pred and mask_gt are one-hot encoded.
@@ -79,6 +79,7 @@ def dice_score(mask_pred, mask_gt, soft=True, reduction='mean', bg_channel=0, sm
         mask_pred = one_hot_score_to_onehot_pred(mask_pred)
     
     N, C = mask_pred.shape[0:2]
+
     mask_pred = mask_pred.reshape(N, C, -1)
     mask_gt = mask_gt.reshape(N, C, -1)
     
@@ -90,7 +91,7 @@ def dice_score(mask_pred, mask_gt, soft=True, reduction='mean', bg_channel=0, sm
 
     assert mask_pred.shape == mask_gt.shape
 
-    tp = einsum(mask_gt, mask_pred, 'b c ..., b c ... -> b c') # torch.sum(mask_gt * mask_pred, dim=-1), but more memory efficient
+    tp = torch.sum(mask_gt * mask_pred, dim=-1) # einsum(mask_gt, mask_pred, 'b c ..., b c ... -> b c') but more memory efficient
     tp_plus_fp = torch.sum(mask_pred, dim=-1)
     tp_plus_fn = torch.sum(mask_gt, dim=-1)
     dices = (2 * tp + smooth) / (tp_plus_fp + tp_plus_fn + smooth + epsilon)
@@ -134,7 +135,7 @@ def print_dice_debug_info(mask_pred, mask_gt, tp, tp_plus_fp, tp_plus_fn, dices)
 
 
 class DiceLoss(nn.Module):
-    def __init__(self, smooth = 0, epsilon=1e-10, debug_mode=False, fg_only=False):
+    def __init__(self, smooth = 0, epsilon=0, debug_mode=False, fg_only=False):
         """
         Dice loss.
         
