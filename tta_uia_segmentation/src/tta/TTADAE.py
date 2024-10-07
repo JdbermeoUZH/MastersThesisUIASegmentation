@@ -16,7 +16,7 @@ from tta_uia_segmentation.src.utils.utils import (
 from tta_uia_segmentation.src.dataset import DatasetInMemory
 from tta_uia_segmentation.src.dataset.utils import normalize
 from tta_uia_segmentation.src.models import DomainStatistics
-from tta_uia_segmentation.src.tta import BaseTTAState, NoTTA
+from tta_uia_segmentation.src.tta import BaseTTAState, BaseTTA, NoTTA
 
 
 @dataclass
@@ -139,23 +139,14 @@ class TTADAEState(BaseTTAState):
             TTADAEState: The current state.
         """
 
-        # Copy the _initial_state and _best_state attributes
-        #_initial_state = self._initial_state.current_state \
-        #    if self._initial_state is not None else None
-        # _best_state = self._best_state.current_state \
-        #     if self._best_state is not None else None
-        # current_state_dict = asdict(self)
-        
         # Remove the initial and best states from the state_dict
         current_state_dict = asdict(self)
         current_state_dict['_create_initial_state'] = False
-        # del current_state_dict['_initial_state']
-        # del current_state_dict['_best_state']
         
         # Move the state_dict of the model to CPU
         model_state_dicts = ['norm_state_dict']
         current_state_dict['norm_state_dict'] = state_dict_to_cpu(
-            current_state_dict['norm_state_dict'])  
+            current_state_dict['norm_state_dict'], clone=True)  
 
         # Create a deep copy of all other attributes
         current_state_dict = {
@@ -165,9 +156,6 @@ class TTADAEState(BaseTTAState):
 
         # Create the new TTADAEState instance
         current_state_dict = TTADAEState(**current_state_dict)
-        # Add the initial and best states back to the state_dict
-        # current_state_dict._initial_state = _initial_state
-        # current_state_dict._best_state = _best_state
 
         return current_state_dict
 
@@ -485,7 +473,7 @@ class TTADAE(NoTTA):
 
                 if accumulate_over_volume:
                     loss /= len(volume_dataloader)
-
+                
                 loss.backward()
 
                 if not accumulate_over_volume:
@@ -526,25 +514,34 @@ class TTADAE(NoTTA):
         self,
         dataset: DatasetInMemory,
         vol_idx: int,
-        iteration: int,
         output_dir: str,
+        batch_size: int,
+        num_workers: int,
         store_visualization: bool = True,
         save_predicted_vol_as_nifti: bool = False,
+        iteration: Optional[int] = None,
+        file_name: Optional[str] = None,
+        slice_vols_for_viz: Optional[tuple[tuple[int, int], tuple[int, int], tuple[int, int]]] = None
     ):
         self._evaluation_mode()
         dataset.set_augmentation(False)
 
-        # Create dictionary with the volumes to visualize
+        # Create dictionary of the volumes to visualize, namely the current prior
+        current_pixels_size = dataset.get_processed_pixel_size()
+        current_pixels_size /= np.array(self._rescale_factor) if self._rescale_factor is not None else 1 
+        target_pixels_size = np.array(dataset.get_original_pixel_size(vol_idx)) 
+        
         other_volumes_to_visualize = {
             'y_dae_or_atlas': {
                 'vol': self._state.y_pl.cpu(),
-                'current_pix_size': [1, 1, 1],
-                'target_pix_size': self._rescale_factor,
+                'current_pix_size': current_pixels_size,
+                'target_pix_size': target_pixels_size,
                 'target_img_size': dataset.get_original_image_size(vol_idx), # xyz
                 'slice_z_axis': False
                 } 
         } if self._state.y_pl is not None else None
 
+        # Dictionary with the different normalization mode parameters
         normalization_modes = {
             'no_manual_normalization': False
         }
@@ -553,25 +550,52 @@ class TTADAE(NoTTA):
             norm_type = f'with_manual_normalization_{self._normalization_strategy}'
             normalization_modes[norm_type] = True
 
+        # Get the preprocessed vol for that has the same position as
+        # the original vol (preprocessed vol may have a translation in xy)
+        vol_preproc, _, bg_preproc = dataset.get_preprocessed_images(
+            vol_idx, same_position_as_original=True)
+
+        vol_orig, y_gt, _ = dataset.get_original_images(vol_idx) 
+
+        file_name = f'{dataset.dataset_name}_vol_{vol_idx:03d}' \
+            if file_name is None else file_name
+
+        if iteration is not None:
+            file_name = f'{file_name}_{iteration:03d}'
+        
+        predict_kwargs = {
+            'bg_mask': bg_preproc,
+            'bg_supp_x_norm': self._bg_supp_x_norm_eval,
+            'bg_suppression_opts': self._bg_suppression_opts_eval,
+            'batch_size': batch_size,
+            'num_workers': num_workers
+        }
+
         results = {}
         for norm_mode, norm_value in normalization_modes.items():
             output_dir_norm_mode = os.path.join(output_dir, norm_mode)
 
-            prediction_kwargs = {'manually_norm_img_before_seg': norm_value}
+            predict_kwargs['other_fwd_pass_seg_kwargs'] = {
+                'manually_norm_img_before_seg': norm_value
+            }
 
-            # TODO
-            breakpoint()
-            print('Modify this so that it works with the BaseTTA method')
-            eval_metrics = super().evaluate(
-                dataset=dataset,
-                vol_idx=vol_idx,
-                iteration=iteration,
+            eval_metrics = BaseTTA.evaluate(
+                self,
+                x_preprocessed=vol_preproc,
+                x_original=vol_orig,
+                y_original_gt=y_gt.float(),
+                preprocessed_pix_size=dataset.get_processed_pixel_size(),
+                gt_pix_size=dataset.get_original_pixel_size(vol_idx),
+                metrics=self._eval_metrics,
+                classes_of_interest=self._classes_of_interest,
                 output_dir=output_dir_norm_mode,
+                file_name=file_name,
                 store_visualization=store_visualization,
                 save_predicted_vol_as_nifti=save_predicted_vol_as_nifti,
-                other_volumes_to_visualize=other_volumes_to_visualize,
-                prediction_kwargs=prediction_kwargs
-                )
+                slice_vols_for_viz=slice_vols_for_viz,
+                predict_kwargs=predict_kwargs,
+                other_volumes_to_visualize=other_volumes_to_visualize
+            )
 
             results[norm_mode] = eval_metrics   
 
@@ -582,8 +606,26 @@ class TTADAE(NoTTA):
 
             # Print mean dice score of the foreground classes
             dices_fg_mean = np.mean(eval_metrics['dice_score_fg_classes']).mean().item()
-            print(f'Iteration {iteration} - dice score_fg_classes ({norm_mode}): {dices_fg_mean}') 
+            dices_fg_sklearn_mean = np.mean(eval_metrics['dice_score_fg_classes_sklearn']).mean().item()
+            
+            print(f'Iteration {iteration} - dice score_fg_classes ({norm_mode}): {dices_fg_mean}')
+            print(f'Iteration {iteration} - dice score_fg_sklearn_mean ({norm_mode}): {dices_fg_sklearn_mean}') 
 
+            if self._wandb_log and iteration is not None:
+                wandb.log({f'dice_score_fg_sklearn_mean/{norm_mode}/img_{vol_idx:03d}': dices_fg_sklearn_mean,
+                           'tta_step': iteration})
+                
+            if self._classes_of_interest is not None and iteration is not None:
+                classes_of_interest = [cls - 1 for cls in self._classes_of_interest]
+                dices_fg_sklearn_mean = np.mean(eval_metrics['dice_score_fg_classes_sklearn'][classes_of_interest])   
+                
+                print(f'Iteration {iteration} - dice score_classes_of_interest ({norm_mode}): {dices_fg_sklearn_mean}')
+
+                if self._wandb_log:
+                    wandb.log({f'dice_score_classes_of_interest/{norm_mode}/img_{vol_idx:03d}': dices_fg_sklearn_mean,
+                                'tta_step': iteration})
+            print()
+                
         return results
 
     
@@ -653,11 +695,16 @@ class TTADAE(NoTTA):
         dae_dataloader: DataLoader,
     ) -> torch.Tensor:  
         
+        other_fwd_pass_seg_kwargs = {
+                'manually_norm_img_before_seg': self._manually_norm_img_before_seg_tta
+        }            
+
         _, masks, _ = self.predict(
             dae_dataloader, output_vol_format='1CDHW',
             bg_supp_x_norm=self._bg_supp_x_norm_tta_dae,
             bg_suppression_opts=self._bg_suppression_opts_tta,
-            manually_norm_img_before_seg=self._manually_norm_img_before_seg_tta)
+            other_fwd_pass_seg_kwargs=other_fwd_pass_seg_kwargs
+        )
 
         if self._rescale_factor is not None:
             masks = F.interpolate(masks, scale_factor=self._rescale_factor, mode='trilinear')
@@ -721,7 +768,7 @@ class TTADAE(NoTTA):
     
     def _define_custom_wandb_metrics(self):
         wandb.define_metric("tta_step")
-        wandb.define_metric('dice_score_fg/*', step_metric='tta_step')
+        wandb.define_metric('dice_score_fg_sklearn_mean/*', step_metric='tta_step')
         wandb.define_metric('dice_score_classes_of_interest/*', step_metric='tta_step')
         wandb.define_metric('tta_loss/*', step_metric='tta_step')
         
@@ -735,12 +782,12 @@ class TTADAE(NoTTA):
         # Save normalizer weights with the highest agreement with the pseudo label
         save_checkpoint(
             os.path.join(cpt_dir, f'checkpoint_tta_{dataset_name}_{index:02d}_best_score.pth'), 
-            **self.get_best_state(as_dict=True)
+            **self.get_best_state(as_dict=True, remove_initial_state=True)
             )
         
         save_checkpoint(
             os.path.join(cpt_dir, f'checkpoint_tta_{dataset_name}_{index:02d}_last_step.pth'),
-            **self.get_current_state(as_dict=True)
+            **self.get_current_state(as_dict=True, remove_initial_state=True)
         )
 
     def load_best_state_norm(self) -> None:
@@ -756,7 +803,7 @@ class TTADAE(NoTTA):
             lr=self._learning_rate
         )
         
-        # Reset TTADAEState
+        # Reset TTADAEState to initial state
         self._state.reset()
 
         # Reset normalization model
@@ -775,17 +822,47 @@ class TTADAE(NoTTA):
     def get_score(self, metric_name: str) -> OrderedDict[int, float]:
         return self._state.get_score(metric_name)
     
-    def get_best_state(self, as_dict: bool = False) -> TTADAEState | dict:
+    def get_best_state(
+        self,
+        as_dict: bool = True,
+        remove_initial_state: bool = True,
+        down_cast_y_pl: bool = False
+        ) -> TTADAEState | dict:
         if as_dict:
-            return asdict(self._state.best_state)
+            best_state_dict = asdict(self._state.best_state)
+            if remove_initial_state:
+                best_state_dict['_initial_state'] = None 
+            if down_cast_y_pl:
+                best_state_dict['y_pl'] = best_state_dict['y_pl'].half()
+            return best_state_dict
+        
         else:
+            best_state = self._state.best_state
+            if remove_initial_state or down_cast_y_pl:
+                best_state = best_state.current_state # create deep copy of best_state
+                if remove_initial_state:
+                    best_state._initial_state = None
+                if down_cast_y_pl:
+                    best_state.y_pl = best_state.y_pl.half() 
+                
             return self._state.best_state
         
-    def get_current_state(self, as_dict: bool = False) -> TTADAEState | dict:
+    def get_current_state(
+        self,
+        as_dict: bool = True,
+        remove_initial_state: bool = True,
+        down_cast_y_pl: bool = True
+        ) -> TTADAEState | dict:
         if as_dict:
-            return asdict(self._state)
+            current_state_dict = asdict(self._state)
+            current_state_dict['_initial_state'] = None 
+            current_state_dict['_best_state'] = None
+            return current_state_dict
         else:
-            return self._state
+            current_state = self._state
+            if remove_initial_state:
+                current_state = current_state.current_state
+                
 
     def get_model_selection_score(self) -> float:
         return self._state.model_selection_score

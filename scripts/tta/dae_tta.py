@@ -6,6 +6,7 @@ import wandb
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+import torch
 
 sys.path.append(os.path.normpath(os.path.join(
     os.path.dirname(__file__), '..', '..')))
@@ -49,6 +50,9 @@ def preprocess_cmd_args() -> argparse.Namespace:
     parser.add_argument('--start_new_exp', type=parse_bool, help='Start a new wandb experiment. Default: False')
     parser.add_argument('--device', type=str, help='Device to use for training. Default: "cuda"')
     parser.add_argument('--debug_mode', type=parse_bool, help='Whether to run in debug mode. Default: False')
+    
+    parser.add_argument('--save_checkpoints', type=parse_bool, help='Whether to save checkpoints. Default: True')
+
     # TTA loop
     # -------------:
     # Optimization parameters
@@ -62,7 +66,6 @@ def preprocess_cmd_args() -> argparse.Namespace:
     parser.add_argument('--smooth', type=float, help='Smooth parameter for dice loss. Added to both numerator and denominator. Default: 0.')
     parser.add_argument('--epsilon', type=float, help='Epsilon parameter for dice loss (avoid division by zero). Default: 1e-5')
 
-    
     # DAE and Atlas parameters
     parser.add_argument('--alpha', type=float, help='Proportion of how much better the dice of the DAE pseudolabel and predicted segmentation'
                                                     'should be than the dice of the Atlas pseudolabel. Default: 1')
@@ -78,7 +81,8 @@ def preprocess_cmd_args() -> argparse.Namespace:
     parser.add_argument('--image_size', type=int, nargs='+', help='Size of images in dataset. Default: [560, 640, 160]')
     parser.add_argument('--resolution_proc', type=float, nargs='+', help='Resolution of images in dataset. Default: [0.3, 0.3, 0.6]')
     parser.add_argument('--rescale_factor', type=float, help='Rescale factor for images in dataset. Default: None')
-    
+    parser.add_argument('--classes_of_interest' , type=int, nargs='+')
+
     # Augmentations
     parser.add_argument('--aug_da_ratio', type=float, help='Ratio of images to apply DA to. Default: 0.25')
     parser.add_argument('--aug_sigma', type=float, help='augmentation. Default: 20') #TODO: specify what this is
@@ -132,35 +136,6 @@ def get_configuration_arguments() -> tuple[dict, dict]:
     return dataset_config, tta_config
 
 
-def write_dice_scores(dae_tta: TTADAE, logdir: str, dataset_name: str, iteration_type: str):
-    """
-    Write dice scores to CSV files.
-
-    Parameters
-    ----------
-    dae_tta : TTADAE
-        The Test Time Adaptation DAE object.
-    logdir : str
-        Directory to save the CSV files.
-    dataset_name : str
-        Name of the dataset.
-    iteration_type : str
-        Type of iteration (e.g., 'last_iteration', 'best_scoring_iteration').
-
-    """
-    test_scores_fg = dae_tta.get_all_test_scores_as_df(name_contains='dice_score_fg_classes')
-    
-    for score_name, score_df in test_scores_fg.items():
-        score_name = score_name.replace('/', '__')
-        file_name = f'{score_name}_{dataset_name}_{iteration_type}.csv'
-        last_scores = score_df.iloc[-1].values
-        write_to_csv(
-            os.path.join(logdir, file_name),
-            np.hstack([[[f'volume_{i:02d}']], [last_scores]]),
-            mode='a',
-        )
-
-
 if __name__ == '__main__':
     
     # Load Hyperparameters
@@ -171,9 +146,9 @@ if __name__ == '__main__':
     dataset_config, tta_config = get_configuration_arguments()
     
     tta_mode                = 'dae'
-    dae_dir                 = tta_config[tta_mode]['dae_dir']
     seg_dir                 = tta_config['seg_dir']
-    
+    dae_dir                 = tta_config[tta_mode]['dae_dir']
+
     params_dae              = load_config(os.path.join(dae_dir, 'params.yaml'))
     model_params_dae        = params_dae['model']['dae']
     train_params_dae        = params_dae['training']
@@ -196,6 +171,7 @@ if __name__ == '__main__':
     start_new_exp           = tta_config['start_new_exp']
     logdir                  = tta_config[tta_mode]['logdir']
     wandb_project           = tta_config[tta_mode]['wandb_project']  
+    classes_of_interest     = tta_config['classes_of_interest']
     
     os.makedirs(logdir, exist_ok=True)
     dump_config(os.path.join(logdir, 'params.yaml'), params)
@@ -214,7 +190,7 @@ if __name__ == '__main__':
     dataset_name           = tta_config['dataset']
     split                  = tta_config['split']
     n_classes              = dataset_config[dataset_name]['n_classes']
-    bg_suppression_opts    = tta_config['bg_suppression_opts']
+    bg_suppression_opts    = tta_config[tta_mode]['bg_suppression_opts']
     aug_params             = tta_config[tta_mode]['augmentation']
   
     test_dataset, = get_datasets(
@@ -258,7 +234,23 @@ if __name__ == '__main__':
     )
 
     if wandb_log:
-        wandb.watch([norm], log='all', log_freq=1)
+        wandb.watch(
+            [norm, seg], 
+            log='all', 
+            log_freq=5,
+            criterion={
+                "gradients": {
+                    "norm_too_high": lambda x: torch.norm(x) > 10.0,
+                    "contains_nan": lambda x: torch.isnan(x).any(),
+                    "contains_inf": lambda x: torch.isinf(x).any(),
+                    "too_small": lambda x: torch.abs(x).mean() < 1e-7
+                },
+                "parameters": {
+                    "diverging": lambda x: torch.abs(x).max() > 100,
+                    "dead": lambda x: torch.abs(x).mean() < 1e-10
+                }
+            }
+        )
 
     print('Loading DAE model and Atlas')
 
@@ -284,11 +276,10 @@ if __name__ == '__main__':
     update_norm_td_statistics   = tta_config[tta_mode]['update_norm_td_statistics']
     bg_supp_x_norm_eval         = tta_config[tta_mode]['bg_supp_x_norm_eval']
     bg_supp_x_norm_tta_dae      = tta_config[tta_mode]['bg_supp_x_norm_tta_dae']
-    bg_suppression_opts         = tta_config[tta_mode]['bg_suppression_opts']
     normalization_strategy      = tta_config[tta_mode]['normalization_strategy']
     manually_norm_img_before_seg_tta = tta_config[tta_mode]['manually_norm_img_before_seg_tta']
     manually_norm_img_before_seg_eval = tta_config[tta_mode]['manually_norm_img_before_seg_eval']
-
+    
     test_eval_metrics           = { 
         'dice_score_all_classes': lambda y_pred, y_gt: dice_score(
             y_pred, y_gt, soft=False, reduction='none', smooth=1e-5), 
@@ -311,6 +302,7 @@ if __name__ == '__main__':
         alpha=alpha,
         beta=beta,
         wandb_log=wandb_log,
+        classes_of_interest=classes_of_interest,
         debug_mode=debug_mode,
         device=device,
         update_norm_td_statistics=update_norm_td_statistics,
@@ -350,6 +342,10 @@ if __name__ == '__main__':
         
     for i in range(start_idx, stop_idx):
 
+        if debug_mode:
+            print('DEBUG: Check this is always the same for different volumes ' +
+            'layers.6.bias: ', dae_tta._state.norm_state_dict['layers.6.bias'])
+
         seed_everything(seed)
         print(f'processing volume {i}')
 
@@ -386,7 +382,7 @@ if __name__ == '__main__':
         )
         
         # Store csv with dice scores for all classes 
-        write_dice_scores(dae_tta, last_iter_dir, dataset_name, iteration_type='last_iteration')
+        dae_tta.write_current_dice_scores(i, last_iter_dir, dataset_name, iteration_type='last_iteration')
 
         # Get evaluation for best scoring iteration with prediction in as Nifti volumes
         print('\nEvaluating best scoring iteration')
@@ -408,7 +404,7 @@ if __name__ == '__main__':
         )
 
         # Store csv with dice scores for all classes at the best scoring iteration
-        write_dice_scores(dae_tta, best_score_iter_dir, dataset_name, iteration_type='best_scoring_iteration')
+        dae_tta.write_current_dice_scores(i, best_score_iter_dir, dataset_name, iteration_type='best_scoring_iteration')
 
         # Write the score of to a file
         write_to_csv(

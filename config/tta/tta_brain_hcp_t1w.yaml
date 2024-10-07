@@ -18,15 +18,6 @@ num_workers: 0
 device: cuda
 seed: 0
 
-bg_suppression_opts:
-  type: fixed_value  # possible values: none, fixed_value, random_value
-  bg_value: -0.5
-  bg_value_min: -0.5
-  bg_value_max: 1
-  mask_source: thresholding  # possible values: thresholding, ground_truth
-  thresholding: otsu  # possible values: isodata, li, mean, minimum, otsu, triangle, yen
-  hole_filling: True
-
 no_tta:
   wandb_project: baseline_performance 
   logdir: /scratch_net/biwidl319/jbermeo/logs/brain/tta/debugging/no_tta/9_06/reproduce_previous_results

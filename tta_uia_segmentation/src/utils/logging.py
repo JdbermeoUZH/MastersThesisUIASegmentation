@@ -41,7 +41,7 @@ def setup_wandb(params: dict, logdir: str, wandb_project: str, start_new_exp: bo
 
     wandb_params['name'] = wandb.run.name
     wandb_params['project'] = wandb.run.project
-    wandb_params['link'] = f'https://wandb.ai/{wandb.run.path}'
+    wandb_params['link'] = wandb.run.get_url()
 
     dump_config(wandb_params_path, wandb_params)
     

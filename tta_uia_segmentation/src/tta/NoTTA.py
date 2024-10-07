@@ -147,10 +147,10 @@ class NoTTA(BaseTTA):
         bg_mask: Optional[torch.Tensor] = None,
         bg_supp_x_norm: Optional[bool] = None,
         bg_suppression_opts: Optional[dict] = None,
+        other_fwd_pass_seg_kwargs: dict = {},
         output_vol_format: Literal['DCHW', '1CDHW'] = '1CDHW',
         batch_size: Optional[int] = None,
-        num_workers: Optional[int] = None,
-        forward_pass_kwargs: dict = {}
+        num_workers: Optional[int] = None
         ) -> torch.Tensor:
         """Predict the segmentation mask for a given volume.
 
@@ -169,9 +169,7 @@ class NoTTA(BaseTTA):
             Whether to manually normalize the image before segmentation.
         device : str, optional
             Device to be used for computation.
-        **kwargs : dict
-            Additional arguments to be passed to generate_2D_dl_for_vol if x is a Tensor.
-
+       
         Returns
         -------
         torch.Tensor
@@ -194,7 +192,7 @@ class NoTTA(BaseTTA):
                 x_b = x_b.to(self._device).float()
                 x_norm, mask, logits = self.forward_pass_seg(
                     x_b, bg_mask_b, bg_supp_x_norm, bg_suppression_opts,
-                    **forward_pass_kwargs)
+                    **other_fwd_pass_seg_kwargs)
                 x_norms.append(x_norm)
                 masks.append(mask)
                 logits_list.append(logits)
@@ -208,11 +206,12 @@ class NoTTA(BaseTTA):
 
             dl = generate_2D_dl_for_vol(*vols, batch_size=batch_size, num_workers=num_workers)
             
-            for x_b, bg_mask_b in dl:
-                x_b = x_b.to(self._device).float()
+            for vols_b in dl:
+                x_b = vols_b[0].to(self._device).float()
+                bg_mask_b = vols_b[1].to(self._device).float() if len(vols_b) > 1 else None
                 x_norm, mask, logits = self.forward_pass_seg(
-                    x_b, bg_mask_b, bg_supp_x_norm, 
-                    bg_suppression_opts, **forward_pass_kwargs)
+                    x_b, bg_mask_b, bg_supp_x_norm, bg_suppression_opts,
+                    **other_fwd_pass_seg_kwargs)
                 x_norms.append(x_norm)
                 masks.append(mask)
                 logits_list.append(logits)

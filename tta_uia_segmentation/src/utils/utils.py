@@ -357,13 +357,13 @@ def stratified_sampling(a, b, m, n, return_torch: bool = True) -> Union[np.ndarr
         return sample
 
 
-def state_dict_to_cpu(state_dict: dict) -> dict:
+def state_dict_to_cpu(state_dict: dict, clone: bool = True) -> dict:
     """
     Convert state_dict to CPU.
     """
     new_state_dict = {}
     for key, value in state_dict.items():
-        new_state_dict[key] = value.cpu()
+        new_state_dict[key] = value.cpu().clone() if clone else value.cpu()
     return new_state_dict
 
 

@@ -127,7 +127,7 @@ def _visualize_predictions(
                     other_vols_preprocessed[vol_name], 
                     slice_idxs=slice_idxs, 
                     convert_to_categorical=convert_to_categorical)[0]
-            
+                
         export_images(
             x_original,
             x_norm,
@@ -235,26 +235,16 @@ class BaseTTAState(TTAStateInterface):
         BaseTTAState
             The current state.
         """
-        # TODO: Delete these comments
-        # # Copy the _initial_state and _best_state attributes
-        # _initial_state = self._initial_state.current_state \
-        #     if self._initial_state is not None else None
-        # _best_state = self._best_state.current_state \
-        #     if self._best_state is not None else None
-        
+
         # Get the dict of the remaining attributes and deep copy them
         current_state_dict = asdict(self)
-        # del current_state_dict['_initial_state']
-        # del current_state_dict['_best_state']
         current_state_dict['_create_initial_state'] = False
-
+        
         current_state_dict = {key: copy.deepcopy(value) 
                               for key, value in current_state_dict.items()}
 
         # Create a new BaseTTAState object with the copied attributes
         current_state = BaseTTAState(**current_state_dict)
-        # current_state._initial_state = _initial_state
-        # current_state._best_state = _best_state
 
         return current_state
 
@@ -356,6 +346,7 @@ class BaseTTAState(TTAStateInterface):
             self.model_selection_score = new_score
 
             self._best_state = self.current_state
+            self._best_state._best_state = None
 
     def get_loss(self, loss_name: str) -> float | list:
         """
@@ -692,12 +683,23 @@ class BaseTTA(TTAInterface):
         test_scores_fg = self._state.get_all_test_scores_as_df(name_contains='dice_score')
         
         for score_name, score_df in test_scores_fg.items():
-            score_name = score_name.replace('/', '__')
+            score_sub_dir = os.path.dirname(score_name)
+            score_name = os.path.basename(score_name)
             file_name = f'{score_name}_{dataset_name}_{iteration_type}.csv'
             last_scores = score_df.iloc[-1].values
             write_to_csv(
-                os.path.join(logdir, file_name),
+                os.path.join(logdir, score_sub_dir, file_name),
                 np.hstack([[[f'volume_{vol_idx:02d}']], [last_scores]]),
+                mode='a',
+            )
+
+            # Store the average 
+            file_name = 'summary_per_vol' + file_name
+            mean = np.mean(last_scores)
+            std = np.std(last_scores)
+            write_to_csv(
+                os.path.join(logdir, score_sub_dir, file_name),
+                np.array([[f'volume_{vol_idx:02d}', mean, std]]),
                 mode='a',
             )
 
