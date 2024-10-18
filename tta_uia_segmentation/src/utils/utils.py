@@ -4,6 +4,7 @@ from typing import Optional, Union, Literal, Tuple
 
 import torch
 import torch.nn.functional as F
+from torch.utils.data import TensorDataset
 import numpy as np
 import nibabel as nib
 import nibabel.processing as nibp
@@ -357,17 +358,20 @@ def stratified_sampling(a, b, m, n, return_torch: bool = True) -> Union[np.ndarr
         return sample
 
 
-def state_dict_to_cpu(state_dict: dict, clone: bool = True) -> dict:
+def clone_state_dict_to_cpu(state_dict: dict) -> dict:
     """
     Convert state_dict to CPU.
     """
     new_state_dict = {}
     for key, value in state_dict.items():
-        new_state_dict[key] = value.cpu().clone() if clone else value.cpu()
+        if value.device.type == 'cpu':
+            new_state_dict[key] = value.clone()
+        else:
+            new_state_dict[key] = value.cpu()
     return new_state_dict
 
 
-def generate_2D_dl_for_vol(*vols: torch.Tensor, batch_size: int, num_workers: int, **kwargs) -> torch.utils.data.DataLoader:
+def generate_2D_dl_for_vol(*vols: torch.Tensor, batch_size: int, num_workers: int, **dl_kwargs) -> torch.utils.data.DataLoader:
     """
     Generate a 2D dataloader for one or more 3D volume tensors.
 
@@ -410,23 +414,12 @@ def generate_2D_dl_for_vol(*vols: torch.Tensor, batch_size: int, num_workers: in
     # Ensure all tensors have the same number of slices
     assert all(t.size(0) == processed_vols[0].size(0) for t in processed_vols), \
         "All input tensors must have the same number of slices"
-
-    # Create a custom dataset that iterates over multiple volumes along N dimension
-    class MultipleVolumeDataset(torch.utils.data.Dataset):
-        def __init__(self, *vols):
-            self.vols = vols
-
-        def __getitem__(self, index):
-            return tuple(vol[index] for vol in self.vols)
-
-        def __len__(self):
-            return self.vols[0].size(0)
-
-    dataset = MultipleVolumeDataset(*processed_vols)
     
     return torch.utils.data.DataLoader(
-        dataset, batch_size=batch_size, num_workers=num_workers,
-        **kwargs
+        TensorDataset(*processed_vols),
+        batch_size=batch_size,
+        num_workers=num_workers,
+        **dl_kwargs
     )
 
 def parse_bool(value: str) -> bool:
@@ -465,3 +458,19 @@ def torch_to_numpy(*tensors: torch.Tensor) -> np.ndarray:
         return tensors[0].detach().cpu().numpy()
     
     return tuple(t.detach().cpu().numpy() for t in tensors)
+
+
+def exists(x):
+    return x is not None
+
+
+def default(val, d):
+    if exists(val):
+        return val
+    return d() if callable(d) else d
+
+
+def cast_tuple(t, length = 1):
+    if isinstance(t, tuple):
+        return t
+    return ((t,) * length)

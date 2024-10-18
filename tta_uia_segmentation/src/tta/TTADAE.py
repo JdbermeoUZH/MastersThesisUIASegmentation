@@ -12,7 +12,7 @@ from torch.utils.data import DataLoader, Subset
 from tta_uia_segmentation.src.utils.io import save_checkpoint
 from tta_uia_segmentation.src.utils.loss import dice_score, DiceLoss, onehot_to_class
 from tta_uia_segmentation.src.utils.utils import (
-    get_seed, state_dict_to_cpu, generate_2D_dl_for_vol, resize_volume)
+    get_seed, clone_state_dict_to_cpu, generate_2D_dl_for_vol, resize_volume)
 from tta_uia_segmentation.src.dataset import DatasetInMemory
 from tta_uia_segmentation.src.dataset.utils import normalize
 from tta_uia_segmentation.src.models import DomainStatistics
@@ -145,8 +145,8 @@ class TTADAEState(BaseTTAState):
         
         # Move the state_dict of the model to CPU
         model_state_dicts = ['norm_state_dict']
-        current_state_dict['norm_state_dict'] = state_dict_to_cpu(
-            current_state_dict['norm_state_dict'], clone=True)  
+        current_state_dict['norm_state_dict'] = clone_state_dict_to_cpu(
+            current_state_dict['norm_state_dict'])  
 
         # Create a deep copy of all other attributes
         current_state_dict = {
@@ -254,6 +254,7 @@ class TTADAE(NoTTA):
         use_only_dae_pl: bool = False,
         use_only_atlas: bool = False,
         use_atlas_only_for_intit: bool = False,
+        max_grad_norm: Optional[float] = None,
         norm_sd_statistics: Optional[DomainStatistics] = None,
         update_norm_td_statistics: bool = False,
         manually_norm_img_before_seg_tta: bool = False,
@@ -302,6 +303,8 @@ class TTADAE(NoTTA):
                 self._norm.parameters(),
                 lr=learning_rate
             )
+
+        self._max_grad_norm = max_grad_norm
         
         # Whether the segmentation model uses background suppression of input images
         self._bg_supp_x_norm_tta_dae = bg_supp_x_norm_tta_dae
@@ -314,7 +317,6 @@ class TTADAE(NoTTA):
         if self._wandb_log:
             TTADAE._define_custom_wandb_metrics(self)
 
-        
         # Handling of target domain statistics
         self._update_norm_td_statistics = update_norm_td_statistics        
         self._norm_sd_statistics = norm_sd_statistics
@@ -342,14 +344,18 @@ class TTADAE(NoTTA):
             norm_state_dict=norm.state_dict(),
             norm_td_statistics=norm_td_statistics
         )
+
+        # Set the object in tta_fit_mode 
+        self._tta_fit_mode()
     
     def _evaluation_mode(self) -> None:
         """
-        Set the model to evaluation mode.
+        Set the models to evaluation mode.
 
         """
         self._norm.eval()
         self._seg.eval()
+        self._dae.eval()
 
     def _tta_fit_mode(self) -> None:
         """
@@ -378,7 +384,6 @@ class TTADAE(NoTTA):
         logdir: Optional[str] = None,
         slice_vols_for_viz: Optional[tuple[tuple[int, int], tuple[int, int], tuple[int, int]]] = None
     ) -> None:
-        self._tta_fit_mode()
 
         # Change batch size for the pseudo label (in case it has a smaller size)
         if self._rescale_factor is not None:
@@ -477,6 +482,9 @@ class TTADAE(NoTTA):
                 loss.backward()
 
                 if not accumulate_over_volume:
+                    if self._max_grad_norm is not None:
+                        torch.nn.utils.clip_grad_norm_(
+                            self._norm.parameters(), self._max_grad_norm)
                     self._optimizer.step()
 
                 with torch.no_grad():
@@ -484,6 +492,9 @@ class TTADAE(NoTTA):
                     n_samples += x.shape[0]
 
             if accumulate_over_volume:
+                if self._max_grad_norm is not None:
+                        torch.nn.utils.clip_grad_norm_(
+                            self._norm.parameters(), self._max_grad_norm)
                 self._optimizer.step()
             
             if self._update_norm_td_statistics:
@@ -495,7 +506,7 @@ class TTADAE(NoTTA):
                 iteration=step, loss_name='tta_loss', loss_value=tta_loss)
             
             if self._wandb_log:
-                wandb.log({f'tta_loss/img_{vol_idx}': tta_loss, 'tta_step': step})
+                wandb.log({f'tta_loss/img_{vol_idx:02d}': tta_loss, 'tta_step': step})
 
         if save_checkpoints:
             self._save_checkpoint(logdir, dataset.dataset_name, vol_idx)
@@ -526,7 +537,7 @@ class TTADAE(NoTTA):
         self._evaluation_mode()
         dataset.set_augmentation(False)
 
-        # Create dictionary of the volumes to visualize, namely the current prior
+        # Create dictionary of the other volumes to visualize, namely the current prior
         current_pixels_size = dataset.get_processed_pixel_size()
         current_pixels_size /= np.array(self._rescale_factor) if self._rescale_factor is not None else 1 
         target_pixels_size = np.array(dataset.get_original_pixel_size(vol_idx)) 
@@ -625,6 +636,8 @@ class TTADAE(NoTTA):
                     wandb.log({f'dice_score_classes_of_interest/{norm_mode}/img_{vol_idx:03d}': dices_fg_sklearn_mean,
                                 'tta_step': iteration})
             print()
+
+        self._tta_fit_mode()
                 
         return results
 
@@ -694,6 +707,7 @@ class TTADAE(NoTTA):
         self,
         dae_dataloader: DataLoader,
     ) -> torch.Tensor:  
+        self._evaluation_mode()
         
         other_fwd_pass_seg_kwargs = {
                 'manually_norm_img_before_seg': self._manually_norm_img_before_seg_tta
@@ -730,6 +744,8 @@ class TTADAE(NoTTA):
             
         self._state.check_new_best_score(dice)
         
+        self._tta_fit_mode()
+
         return self._state.y_pl
         
     def _normalize_image_intensities_to_sd(self, x_norm: torch.Tensor) -> torch.Tensor:
@@ -851,17 +867,34 @@ class TTADAE(NoTTA):
         self,
         as_dict: bool = True,
         remove_initial_state: bool = True,
+        remove_best_state: bool = True,
         down_cast_y_pl: bool = True
         ) -> TTADAEState | dict:
         if as_dict:
             current_state_dict = asdict(self._state)
-            current_state_dict['_initial_state'] = None 
-            current_state_dict['_best_state'] = None
+            if remove_initial_state:
+                current_state_dict['_initial_state'] = None 
+            if remove_best_state:
+                current_state_dict['_best_state'] = None
+            if down_cast_y_pl:
+                current_state_dict['y_pl'] = current_state_dict['y_pl'].half()
             return current_state_dict
         else:
             current_state = self._state
-            if remove_initial_state:
+            if remove_initial_state or remove_best_state:
                 current_state = current_state.current_state
+                
+                if remove_initial_state:
+                    current_state._initial_state = None
+                
+                if remove_best_state:
+                    current_state._best_state = None
+
+            if down_cast_y_pl:
+                current_state = current_state.current_state
+                current_state.y_pl = current_state.y_pl.half()
+            
+            return current_state
                 
 
     def get_model_selection_score(self) -> float:

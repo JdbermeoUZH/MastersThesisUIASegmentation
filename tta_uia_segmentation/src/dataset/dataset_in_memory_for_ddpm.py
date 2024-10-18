@@ -146,7 +146,7 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
         
         background_mask = self.background_mask[index,...]
 
-        if self.augmentation:
+        if self.apply_augmentation:
             images, labels, background_mask = apply_data_augmentation(
                 images,
                 labels,

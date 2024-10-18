@@ -14,7 +14,7 @@ from tta_uia_segmentation.src.models import UNet
 from tta_uia_segmentation.src.train.DAETrainer import DAETrainer
 from tta_uia_segmentation.src.utils.loss import DiceLoss
 from tta_uia_segmentation.src.utils.io import load_config, rewrite_config_arguments, dump_config, print_config, save_checkpoint, write_to_csv
-from tta_uia_segmentation.src.utils.utils import seed_everything, define_device
+from tta_uia_segmentation.src.utils.utils import seed_everything, define_device, parse_bool
 from tta_uia_segmentation.src.utils.logging import setup_wandb
 
 
@@ -33,11 +33,11 @@ def preprocess_cmd_args() -> argparse.Namespace:
     
     # Training parameters. If provided, overrides default parameters from config file.
     # :================================================================================================:
-    parser.add_argument('--resume', type=lambda s: s.strip().lower() == 'true', 
+    parser.add_argument('--resume', type=parse_bool, 
                         help='Resume training from last checkpoint. Default: True.') 
     parser.add_argument('--logdir', type=str, 
                         help='Path to directory where logs and checkpoints are saved. Default: logs')  
-    parser.add_argument('--wandb_log', type=lambda s: s.strip().lower() == 'true', 
+    parser.add_argument('--wandb_log', type=parse_bool, 
                         help='Log training to wandb. Default: False.')
 
     # Model parameters
@@ -60,7 +60,12 @@ def preprocess_cmd_args() -> argparse.Namespace:
     parser.add_argument('--device', type=str, help='Device to use for training. Default cuda', )
     parser.add_argument('--checkpoint_last', type=str, help='Name of last checkpoint file. Default: checkpoint_last.pth')
     parser.add_argument('--checkpoint_best', type=str, help='Name of best checkpoint file. Default: checkpoint_best.pth')
-    
+
+    # Loss function parameters
+    parser.add_argument('--smooth', type=float, help='Smooth parameter for dice loss. Added to both numerator and denominator. Default: 0.')
+    parser.add_argument('--epsilon', type=float, help='Epsilon parameter for dice loss (avoid division by zero). Default: 1e-5') 
+    parser.add_argument('--fg_only', type=parse_bool, help='Whether to compute dice loss only on foreground. Default: False')
+
     # Dataset and its transformations to use for training
     # ---------------------------------------------------:
     parser.add_argument('--dataset', type=str, help='Name of dataset to use for training. Default: USZ')
@@ -91,8 +96,8 @@ def preprocess_cmd_args() -> argparse.Namespace:
                         choices=['squares_jigsaw', 'zeros', 'jigsaw', 'random_labels'])
     parser.add_argument('--mask_radius', type=int, help='Radius of mask for deformation. Default: 10') 
     parser.add_argument('--mask_squares', type=int, help='Number of squares for mask. Default: 200') 
-    parser.add_argument('--is_num_masks_fixed', type=lambda s: s.strip().lower() == 'true', help='Whether to use jigsaw mask. Default: False')
-    parser.add_argument('--is_size_masks_fixed', type=lambda s: s.strip().lower() == 'true', help='Whether to use jigsaw mask. Default: False')
+    parser.add_argument('--is_num_masks_fixed', type=parse_bool, help='Whether to use jigsaw mask. Default: False')
+    parser.add_argument('--is_size_masks_fixed', type=parse_bool, help='Whether to use jigsaw mask. Default: False')
     
     args = parser.parse_args()
     
@@ -165,6 +170,8 @@ if __name__ == '__main__':
     wandb_log       = train_config['wandb_log']
     logdir          = train_config['dae']['logdir']
     wandb_project   = train_config['dae']['wandb_project']
+
+    dae_train_cfg   = train_config['dae']
     
     # Write or load parameters to/from logdir, used if a run is resumed.
     # :=========================================================================:
@@ -182,31 +189,31 @@ if __name__ == '__main__':
 
     # Setup wandb logging
     # :=========================================================================:
-    if wandb_log:
-        wandb_dir = setup_wandb(params, logdir, wandb_project)
+    wandb_dir = setup_wandb(params, logdir, wandb_project) if wandb_log else None
     
     # Define the dataset that is to be used for training
     # :=========================================================================:
     print('Defining dataset')
     seed_everything(seed)
     device              = define_device(device)
-    dataset             = train_config['dae']['dataset']
+    dataset             = train_config['dataset']
     n_classes           = dataset_config[dataset]['n_classes']
-    batch_size          = train_config['dae']['batch_size']
-    num_workers         = train_config['dae']['num_workers']
+    batch_size          = dae_train_cfg['batch_size']
+    num_workers         = dae_train_cfg['num_workers']
     
     # Dataset definition
     train_dataset, val_dataset = get_datasets(
+        dataset_name    = dataset,
         paths           = dataset_config[dataset]['paths_processed'],
         paths_original  = dataset_config[dataset]['paths_original'],
         splits          = ['train', 'val'],
-        image_size      = train_config['dae']['image_size'],
+        image_size      = dae_train_cfg['image_size'],
         resolution_proc = dataset_config[dataset]['resolution_proc'],
-        rescale_factor  = train_config['dae']['rescale_factor'],
+        rescale_factor  = dae_train_cfg['rescale_factor'],
         dim_proc        = dataset_config[dataset]['dim'],
         n_classes       = n_classes,
-        aug_params      = train_config['dae']['augmentation'],
-        deformation     = train_config['dae']['deformation'],
+        aug_params      = dae_train_cfg['augmentation'],
+        deformation     = dae_train_cfg['deformation'],
         load_original   = False,
     )
 
@@ -215,7 +222,8 @@ if __name__ == '__main__':
     train_dataloader = DataLoader(dataset=train_dataset, batch_size=batch_size,
         shuffle=True, num_workers=num_workers, drop_last=True)
     
-    val_dataset = ConcatDataset([val_dataset] * train_config['dae']['validate_every'])
+    # Increase the number of examples evaluated (they are data augmented)
+    val_dataset = ConcatDataset([val_dataset] * dae_train_cfg['validate_every'])
     val_dataloader = DataLoader(dataset=val_dataset, batch_size=batch_size,
         shuffle=False, num_workers=num_workers, drop_last=False)
 
@@ -237,11 +245,18 @@ if __name__ == '__main__':
     # Define the Trainer that will be used to train the model
     # :=========================================================================:
     print('Defining trainer: training loop, optimizer and loss')
+
+    loss_func = DiceLoss(
+        smooth                 = dae_train_cfg['smooth'],
+        epsilon                = dae_train_cfg['epsilon'],
+        fg_only                = dae_train_cfg['fg_only']
+    )
+
     dae_trainer = DAETrainer(
         dae                     = dae,
-        learning_rate           = train_config['dae']['learning_rate'],
+        learning_rate           = dae_train_cfg['learning_rate'],
         device                  = device,
-        loss_func               = DiceLoss(),
+        loss_func               = loss_func,
         is_resumed              = is_resumed,
         checkpoint_last         = train_config['checkpoint_last'],
         checkpoint_best         = train_config['checkpoint_best'],
@@ -261,8 +276,8 @@ if __name__ == '__main__':
     dae_trainer.train(
         train_dataloader        = train_dataloader,
         val_dataloader          = val_dataloader,
-        epochs                  = train_config['dae']['epochs'],
-        validate_every          = train_config['dae']['validate_every']
+        epochs                  = dae_train_cfg['epochs'],
+        validate_every          = dae_train_cfg['validate_every']
     )
     
     # Save/Log results

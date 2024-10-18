@@ -12,7 +12,7 @@ from torch.utils.data import ConcatDataset, DataLoader, TensorDataset
 
 
 from tta_uia_segmentation.src.tta import TTADAE
-from tta_uia_segmentation.src.models import ConditionalGaussianDiffusion
+from tta_uia_segmentation.src.models import ConditionalGaussianDiffusionInterface
 from tta_uia_segmentation.src.utils.io import save_checkpoint, write_to_csv
 from tta_uia_segmentation.src.utils.loss import dice_score
 from tta_uia_segmentation.src.utils.visualization import export_images
@@ -50,7 +50,7 @@ class DiffusionTTA_and_TTADAE(TTADAE):
         self,
         norm: torch.nn.Module,
         seg: torch.nn.Module,
-        ddpm: ConditionalGaussianDiffusion,
+        ddpm: ConditionalGaussianDiffusionInterface,
         dae: torch.nn.Module,
         learning_rate: float,
         n_classes: int,
@@ -118,8 +118,8 @@ class DiffusionTTA_and_TTADAE(TTADAE):
         
         self.pair_sampling_type = pair_sampling_type 
         self.t_sampling_strategy = t_sampling_strategy
-        self.min_t_diffusion_tta = int(np.ceil(t_ddpm_range[0] * (self.ddpm.num_timesteps - 1)))
-        self.max_t_diffusion_tta = int(np.floor(t_ddpm_range[1] * (self.ddpm.num_timesteps - 1)))
+        self.min_t_diffusion_tta = int(np.ceil(t_ddpm_range[0] * (self.ddpm.num_train_timesteps - 1)))
+        self.max_t_diffusion_tta = int(np.floor(t_ddpm_range[1] * (self.ddpm.num_train_timesteps - 1)))
         
         self.min_intensity_imgs = min_max_intensity_imgs[0]
         self.max_intensity_imgs = min_max_intensity_imgs[1]
@@ -452,32 +452,16 @@ class DiffusionTTA_and_TTADAE(TTADAE):
                 x_cond_mb = x_cond_mb.squeeze(0).permute(1, 0, 2, 3)
                                             
             # Calculate the DDPM loss and backpropagate
-            if self.ddpm_loss == 'jacobian':
-                ddpm_loss = ddpm_reweigh_factor * self.ddpm(
-                    x_mb, 
-                    x_cond_mb,
-                    t_mb,
-                    noise=noise_mb,
-                    min_t=self.min_t_diffusion_tta,
-                    max_t=self.max_t_diffusion_tta,
-                    w_clf_free=self.w_cfg,
-                )
+            ddpm_loss = ddpm_reweigh_factor * self.ddpm.tta_loss(
+                x_mb, 
+                x_cond_mb,
+                t_mb,
+                noise=noise_mb,
+                min_t=self.min_t_diffusion_tta,
+                max_t=self.max_t_diffusion_tta,
+                w_clf_free=self.w_cfg,
+            )
             
-            elif self.ddpm_loss in ['sds', 'dds', 'pds']:
-                ddpm_loss = ddpm_reweigh_factor * self.ddpm.distillation_loss(
-                    x_mb, 
-                    x_cond_mb,
-                    t_mb,
-                    noise=noise_mb,
-                    type=self.ddpm_loss,
-                    min_t=self.min_t_diffusion_tta,
-                    max_t=self.max_t_diffusion_tta,
-                    w_clf_free=self.w_cfg,
-                )
-    
-            else:
-                raise ValueError(f'Invalid DDPM loss: {self.ddpm_loss}, options are: jacobian, sds, dds, pds')
-
             ddpm_loss.backward()
             ddpm_loss_value += ddpm_loss.detach()
                                     
@@ -514,7 +498,7 @@ class DiffusionTTA_and_TTADAE(TTADAE):
         assert t_values.shape == (num_samples,), 't values must be a 1D tensor'
 
         # Sample noise
-        noise = torch.randn((num_samples, self.ddpm.channels,
+        noise = torch.randn((num_samples, self.ddpm.num_img_channels,
                              int(self.ddpm.image_size), int(self.ddpm.image_size)))
         
         if self.pair_sampling_type == 'one_per_volume':

@@ -311,6 +311,8 @@ if __name__ == '__main__':
         cpt_fp = cpt_fp,
         device = device,
     )
+    norm.eval()
+    seg.eval()
     print('Segmentation model loaded')
     
     # Evaluate the model

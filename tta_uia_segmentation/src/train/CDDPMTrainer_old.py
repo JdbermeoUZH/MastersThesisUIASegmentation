@@ -26,11 +26,11 @@ from torchmetrics.functional.image import (
 )
 from torchmetrics.functional.regression import mean_absolute_error
 
+from denoising_diffusion_pytorch.fid_evaluation import FIDEvaluation
 from denoising_diffusion_pytorch.denoising_diffusion_pytorch import (
-    divisible_by, cycle, exists)
+    divisible_by, exists, Trainer)
 
-from tta_uia_segmentation.src.models.ddpm import ConditionalGaussianDiffusionInterface
-from tta_uia_segmentation.src.models.ddpm.utils import FIDEvaluation
+from tta_uia_segmentation.src.models import ConditionalGaussianDiffusionInterface
 from tta_uia_segmentation.src.dataset import DatasetInMemoryForDDPM
 from tta_uia_segmentation.src.dataset.utils import onehot_to_class
 
@@ -64,11 +64,6 @@ def check_btw_minus_1_plus_1(*args: torch.Tensor):
     for tensor in args:
         assert tensor.min() >= -1 and tensor.max() <= 1, 'tensor values should be between -1 and 1'
 
-def cycle_only_imgs(dl: DatasetInMemoryForDDPM):
-    while True:
-        for img, _, _ in dl:
-            yield img
-
 
 class CDDPMTrainer:
 
@@ -100,6 +95,8 @@ class CDDPMTrainer:
         calculate_fid = True,
         inception_block_idx = 2048,
         max_grad_norm = 1.,
+        num_fid_samples = 50000,
+        save_best_and_latest_only = False,
         use_ddim_sampling = True,
         enable_xformers: bool = False,
         gradient_checkpointing: bool = False,
@@ -112,7 +109,6 @@ class CDDPMTrainer:
     ):
        
         # Training hyperparameters
-        self.train_num_steps = train_num_steps
         self.max_grad_norm = max_grad_norm
         self.batch_size = train_batch_size
         self.gradient_accumulate_every = gradient_accumulate_every
@@ -137,6 +133,10 @@ class CDDPMTrainer:
             shuffle=True, pin_memory=True,
             num_workers = self.num_workers)   
         
+        self.train_num_steps = train_num_steps
+        self.num_update_steps_per_epoch = math.ceil(len(train_dl) / gradient_accumulate_every)
+        self.num_train_epochs = math.ceil(train_num_steps / self.num_update_steps_per_epoch)
+
         # model
         self.model = ddpm
         self.channels = ddpm.num_img_channels
@@ -191,8 +191,6 @@ class CDDPMTrainer:
             train_dl,
             val_dl
         )
-        self.train_dl_cycle = cycle(self.train_dl)
-        self.val_dl_cycle = cycle(self.val_dl)
 
         # Move non trainable parameters to half-precision to save memory
         if self.accelerator.mixed_precision in ['fp16', 'bf16']:
@@ -229,69 +227,75 @@ class CDDPMTrainer:
                     "WARNING: Robust FID computation requires a lot of generated samples and can therefore be very time consuming."\
                     "Consider using DDIM sampling to save time."
                 )
-
+            # TODO: 
+            # 1. Create an appropriate dataloader for the FID computation
+            # 2. Modify the FIDEvaluation class so that it works with a conditional model
             self.fid_scorer = FIDEvaluation(
                 batch_size=self.batch_size,
-                dl=cycle_only_imgs(self.val_dl),
+                dl=self.dl,
                 sampler=self.ema.ema_model,
                 channels=self.channels,
                 accelerator=self.accelerator,
                 stats_dir=results_folder,
                 device=self.device,
-                num_fid_samples=num_validation_samples,
+                num_fid_samples=num_fid_samples,
                 inception_block_idx=inception_block_idx
             )
+
+        if save_best_and_latest_only:
+            assert calculate_fid, "`calculate_fid` must be True to provide a means for model evaluation for `save_best_and_latest_only`."
+            self.best_fid = 1e10 # infinite
+
+        self.save_best_and_latest_only = save_best_and_latest_only
         
     def train(self):
-        device = self.accelerator.device
-
-        pbar = tqdm(
-            range(0, self.train_num_steps), 
-            initial=self.step,
-            desc='Steps',
-            disable=not self.accelerator.is_main_process
-        ) 
+        accelerator = self.accelerator
+        device = accelerator.device
 
         self.model.train_mode()
-        total_loss = 0.
-        while self.step < self.train_num_steps:
-            img, cond_img, _ = next(self.train_dl_cycle)               
-            with self.accelerator.accumulate(*self.model.get_modules_to_train()):
-                img, cond_img = img.to(device), cond_img.to(device)
 
-                with self.accelerator.autocast():
-                    loss = self.model(img, cond_img)
-                    loss = loss / self.gradient_accumulate_every
-                    total_loss += loss.item()
+        with tqdm(initial = self.step, total = self.train_num_steps, disable = not accelerator.is_main_process) as pbar:
 
-                self.accelerator.backward(loss)
+            while self.step < self.train_num_steps:
 
-                if self.accelerator.sync_gradients:
-                    # If it is the step that will update the gradients, clip them
-                    self.accelerator.clip_grad_norm_(
-                        self.model.get_params_of_modules_to_train(), 
-                        self.max_grad_norm
-                    )
+                total_loss = 0.
 
-                # Take update step
+                for _ in range(self.gradient_accumulate_every):
+                    img, cond_img, _ = next(self.train_dl)
+                    img, cond_img = img.to(device), cond_img.to(device)
+
+
+                    with self.accelerator.autocast():
+                        loss = self.model(img, cond_img)
+                        loss = loss / self.gradient_accumulate_every
+                        total_loss += loss.item()
+
+                    self.accelerator.backward(loss)
+
+                pbar.set_description(f'loss: {total_loss:.4f}')
+                
+                accelerator.wait_for_everyone()
+                accelerator.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
+
                 self.opt.step()
                 self.opt.zero_grad()
 
-            # If it is an update step, log the loss and update the EMA model
-            if self.accelerator.sync_gradients():
-                if self.accelerator.is_main_process:
+                accelerator.wait_for_everyone()
+
+                self.step += 1
+                if accelerator.is_main_process:
                     if self.wandb_log:
                         wandb.log({'total_loss': total_loss}, step = self.step)
                             
                     self.ema.update()
                     
-                    if self.step == self.train_num_steps - 1 or divisible_by(self.step, self.log_val_loss_every):
+                    if self.step != 0 and divisible_by(self.step, self.log_val_loss_every):
                         self._log_val_loss(device=device)
 
                     if self.step != 0 and divisible_by(self.step, self.save_and_sample_every):
+                        self.ema.ema_model.eval()
                         milestone = self.step // self.save_and_sample_every
-                        self.save(milestone)
-
+                    
                         # Evaluate the model on a sample of the training set
                         train_sample_dl = DataLoader(
                             self.train_ds.sample_slices(self.num_validation_samples), 
@@ -302,44 +306,45 @@ class CDDPMTrainer:
                         # Evaluate the model on a sample of the validation set
                         val_sample_dl = DataLoader(
                             self.val_ds.sample_slices(self.num_validation_samples), 
-                            batch_size=self.batch_size, pin_memory=True, num_workers=self.num_workers,)
-                        self.evaluate(val_sample_dl, device=device, prefix='val', 
-                                      unconditional_sampling=False,
-                                      calculate_fid_wrt_val=self.calculate_fid)
+                            batch_size=self.batch_size, pin_memory=True, num_workers=self.num_workers)
+                        self.evaluate(val_sample_dl, device=device, prefix='val', unconditional_sampling=False)
                         
                         # Evaluate the model on the sample set in unconditional mode if the model is also trained unconditionally
                         if self.model.also_unconditional:
                             self.evaluate(train_sample_dl, device=device, prefix='train_unconditional',
                                           unconditional_sampling=True)
                             self.evaluate(val_sample_dl, device=device, prefix='val_uncondtional',
-                                          unconditional_sampling=True,
-                                          calculate_fid_wrt_val=self.calculate_fid)
-                                                    
-                self.step += 1
+                                          unconditional_sampling=True)
+                            
+                        # whether to calculate fid
+                        if self.calculate_fid:
+                            fid_score = self.fid_scorer.fid_score()
+                            accelerator.print(f'fid_score: {fid_score}')
+                        if self.save_best_and_latest_only:
+                            if self.best_fid > fid_score:
+                                self.best_fid = fid_score
+                                self.save("best")
+                            self.save("latest")
+                        else:
+                            self.save(milestone)
+                        
+                        self.ema.ema_model.train()
+
                 pbar.update(1)
 
-        self.accelerator.print('training complete')
-    
+        accelerator.print('training complete')
+        
     @torch.inference_mode()
-    def evaluate(
-        self,
-        sample_dl: DataLoader,
-        device, prefix: str = '',
-        unconditional_sampling = False,
-        calculate_fid_wrt_val = False
-    ):
-        samples_viz_imgs = [] 
-        sampled_imgs = []                
+    def evaluate(self, sample_dl: DataLoader, device, prefix: str = '', unconditional_sampling = False):
+        samples_imgs = []                 
         milestone = self.step // self.save_and_sample_every
+        
         metric_cum = {metric_name: 0. for metric_name in self.metrics_to_log.keys()}
         
-        # Set the model to evaluation mode
-        self.ema.ema_model.eval_mode()
-
         for img_gt, seg_gt, _ in sample_dl:
-            # Sample images from the model
             img_gt, seg_gt = img_gt.to(device), seg_gt.to(device).type(torch.int8)
-            generated_img = self.ema.ema_model.sample(
+            ema_model: ConditionalGaussianDiffusionInterface = self.ema.ema_model
+            generated_img = ema_model.sample(
                 img_shape=img_gt.shape, 
                 x_cond=seg_gt,
                 unconditional_sampling=unconditional_sampling
@@ -354,8 +359,8 @@ class CDDPMTrainer:
             assert seg_gt.shape[1] == 1, 'seg_gt should be single channel'
             
             # Store the generated image and the segmentation map side by side
-            if len(samples_viz_imgs) * sample_dl.batch_size <= self.num_viz_samples:
-                samples_viz_imgs.append(torch.cat([seg_gt, img_gt, generated_img], dim = -1)) 
+            if len(samples_imgs) * sample_dl.batch_size <= self.num_viz_samples:
+                samples_imgs.append(torch.cat([seg_gt, img_gt, generated_img], dim = -1)) 
             
             check_btw_0_1(img_gt, seg_gt, generated_img)
             
@@ -363,12 +368,8 @@ class CDDPMTrainer:
             if self.wandb_log:
                 for metric_name, metric_func in self.metrics_to_log.items():
                     metric_cum[metric_name] += metric_func(generated_img, img_gt).item()
-                sampled_imgs.append(generated_img)
-        
-        # Set the model back to training mode
-        self.ema.ema_model.train_mode()
-
-        all_images = torch.cat(samples_viz_imgs, dim = 0)[0: self.num_viz_samples]
+                    
+        all_images = torch.cat(samples_imgs, dim = 0)[0: self.num_viz_samples]
 
         all_images_fn = f'{prefix}-sample-m{milestone}-step-{self.step}-img_gt_seg_gt_gen_img.png'
         utils.save_image(all_images, str(self.results_folder / all_images_fn), 
@@ -379,10 +380,6 @@ class CDDPMTrainer:
             for metric_name, metric_val in metric_cum.items():
                 metric_val /= len(sample_dl)
                 wandb.log({f'{prefix}_{metric_name}': metric_val}, step = self.step)
-            
-            if calculate_fid_wrt_val:
-                fid = self.fid_scorer.fid_score_from_samples(torch.cat(sampled_imgs, dim = 0))
-                wandb.log({f'{prefix}_FID': fid}, step = self.step)
 
             wandb.log(
                 {all_images_fn: wandb.Image(
@@ -392,7 +389,7 @@ class CDDPMTrainer:
                         )
                     )}, 
                 step = self.step
-                )
+                ) 
     
     @torch.no_grad()
     def _log_val_loss(self, device, max_batches = 10):
@@ -425,26 +422,6 @@ class CDDPMTrainer:
         cpt_fp = str(self.results_folder / f'model-{milestone}.pt')
         torch.save(data, cpt_fp)
 
-    def load(self, milestone):
-        accelerator = self.accelerator
-        device = accelerator.device
-
-        data = torch.load(str(self.results_folder / f'model-{milestone}.pt'), map_location=device)
-
-        model = self.accelerator.unwrap_model(self.model)
-        model.load_state_dict(data['model'])
-
-        self.step = data['step']
-        self.opt.load_state_dict(data['opt'])
-        if self.accelerator.is_main_process:
-            self.ema.load_state_dict(data["ema"])
-
-        if 'version' in data:
-            print(f"loading from version {data['version']}")
-
-        if exists(self.accelerator.scaler) and exists(data['scaler']):
-            self.accelerator.scaler.load_state_dict(data['scaler'])
-
     @property
     def device(self):
         return self.accelerator.device
@@ -471,11 +448,8 @@ class CDDPMTrainer:
             xformers_version = version.parse(xformers.__version__)
             if xformers_version == version.parse("0.0.16"):
                 logger.warning(
-                    "xFormers 0.0.16 cannot be used for training in some GPUs. "
-                    "If you observe problems during training, please update xFormers "
-                    "to at least 0.0.17. See https://huggingface.co/docs/diffusers/main/en/optimization/xformers for more details."
+                    "xFormers 0.0.16 cannot be used for training in some GPUs. If you observe problems during training, please update xFormers to at least 0.0.17. See https://huggingface.co/docs/diffusers/main/en/optimization/xformers for more details."
                 )
             self.model.enable_xformers()
         else:
             raise ValueError("xformers is not available. Make sure it is installed correctly")
-        

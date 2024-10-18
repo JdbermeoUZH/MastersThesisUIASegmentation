@@ -48,6 +48,7 @@ dae:
   alpha: 1.0
   beta: 0.25
   learning_rate: 0.001
+  max_grad_norm: null
   save_checkpoints: True
   const_aug_per_volume: False
 

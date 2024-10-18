@@ -1,13 +1,7 @@
-from typing import Optional, Union
-
-import torch
 import torch.nn as nn
-from torch import nn as nn
-from ema_pytorch import EMA
-from denoising_diffusion_pytorch import Unet
 
 from tta_uia_segmentation.src.utils.utils import assert_in
-from tta_uia_segmentation.src.models.ConditionalGaussianDiffusion import ConditionalGaussianDiffusion
+
 
 def get_conv(in_channels, out_channels, kernel_size, n_dimensions=3, *args, **kwargs):
     assert_in(n_dimensions, 'n_dimensions', [1, 2, 3])
@@ -46,3 +40,4 @@ def get_max_pool(kernel_size, n_dimensions=3, *args, **kwargs):
         max_pool = nn.MaxPool3d
 
     return max_pool(kernel_size, *args, **kwargs)
+

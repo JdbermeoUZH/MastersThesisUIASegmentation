@@ -8,10 +8,14 @@ from torch import nn as nn
 from tdigest import TDigest
 from ema_pytorch import EMA
 
-from tta_uia_segmentation.src.models import Normalization, ConditionalUnet, UNet
-from tta_uia_segmentation.src.models.ConditionalGaussianDiffusion import ConditionalGaussianDiffusion
-from tta_uia_segmentation.src.models.UNetModelOAI import create_model_conditioned_on_seg_mask, model_defaults
-from tta_uia_segmentation.src.models.ConditionalGaussianDiffusionOAI import ConditionalGaussianDiffusionOAI, diffusion_defaults
+from tta_uia_segmentation.src.models import (
+    Normalization,
+    ConditionalUnet,
+    UNet,
+    ConditionalGaussianDiffusion
+)
+from tta_uia_segmentation.src.models.ddpm.UNetModelOAI import create_model_conditioned_on_seg_mask, model_defaults
+from tta_uia_segmentation.src.models.ddpm.ConditionalGaussianDiffusionOAI import ConditionalGaussianDiffusionOAI, diffusion_defaults
 from tta_uia_segmentation.src.models import DomainStatistics
 from improved_diffusion.script_util import create_gaussian_diffusion
 from improved_diffusion.resample import create_named_schedule_sampler

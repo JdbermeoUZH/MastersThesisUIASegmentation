@@ -6,7 +6,7 @@ import torch
 sys.path.append(os.path.normpath(os.path.join(
     os.path.dirname(__file__), '..', '..')))
 
-from tta_uia_segmentation.src.models.UNetModelOAI import UNetModelConditionedOnSegMask
+from tta_uia_segmentation.src.models.ddpm.UNetModelOAI import UNetModelConditionedOnSegMask
 from improved_diffusion import dist_util
 from improved_diffusion.respace import SpacedDiffusion
 from improved_diffusion.resample import LossAwareSampler, ScheduleSampler

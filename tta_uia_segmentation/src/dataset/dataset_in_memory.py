@@ -14,7 +14,7 @@ from torch.utils import data
 from tta_uia_segmentation.src.dataset.augmentation import apply_data_augmentation
 from tta_uia_segmentation.src.dataset.deformation import make_noise_masks_3d
 from tta_uia_segmentation.src.dataset.utils import transform_orientation
-from tta_uia_segmentation.src.models.normalization import RBF
+from tta_uia_segmentation.src.models.norm_seg.normalization import RBF
 from tta_uia_segmentation.src.utils.io import deep_get
 from tta_uia_segmentation.src.utils.loss import class_to_onehot
 from tta_uia_segmentation.src.utils.utils import crop_or_pad_to_size, get_seed, assert_in, resize_volume
@@ -116,8 +116,10 @@ class DatasetInMemory(data.Dataset):
         self.n_classes = n_classes
         self.aug_params = aug_params
         self.deformation = deformation
-        self.augmentation = not aug_params is None
+        self.apply_deformation = deformation is not None
+        self.apply_augmentation = aug_params is not None
         self.image_transform = image_transform
+        self.apply_image_transform = image_transform != 'none' and image_transform is not None
         self.bg_suppression_opts = bg_suppression_opts
         self.seed = seed
         self.mode = '2D' if image_size[0] == 1 else '3D'
@@ -539,10 +541,10 @@ class DatasetInMemory(data.Dataset):
 
 
     def set_augmentation(self, augmentation: bool):
-        self.augmentation = augmentation
+        self.apply_augmentation = augmentation
         
     def get_augmentation(self) -> bool:
-        return self.augmentation
+        return self.apply_augmentation
 
     def set_seed(self, seed=None):
         self.seed = seed
@@ -611,7 +613,7 @@ class DatasetInMemory(data.Dataset):
             
         background_mask = self.background_mask[index,...]
 
-        if self.augmentation:
+        if self.apply_augmentation:
             images, labels, background_mask = apply_data_augmentation(
                 images,
                 labels,
@@ -621,7 +623,7 @@ class DatasetInMemory(data.Dataset):
             )
         background_mask = (background_mask == 1)
 
-        if self.deformation is not None:
+        if self.apply_deformation:
             labels_deformed = make_noise_masks_3d(
                 self.deformation['mask_type'],
                 self.deformation['mask_radius'],
@@ -635,7 +637,9 @@ class DatasetInMemory(data.Dataset):
             labels_deformed = torch.tensor([])
 
         images = torch.from_numpy(images)
-        images = self.image_transformation(images)
+
+        if self.apply_deformation:
+            images = self.image_transformation(images)
 
         labels = torch.from_numpy(labels)
         labels = class_to_onehot(labels, self.n_classes, class_dim=0)

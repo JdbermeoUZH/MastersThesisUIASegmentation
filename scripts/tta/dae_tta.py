@@ -61,6 +61,7 @@ def preprocess_cmd_args() -> argparse.Namespace:
     parser.add_argument('--accumulate_over_volume', type=parse_bool, help='Whether to accumulate over volume. Default: True')
     parser.add_argument('--batch_size', type=int, help='Batch size for tta. Default: 4')
     parser.add_argument('--num_workers', type=int, help='Number of workers for dataloader. Default: 0')
+    parser.add_argument('--max_grad_norm', type=float, help='Maximum gradient norm. Default: 1.0')
 
     # Loss function parameters
     parser.add_argument('--smooth', type=float, help='Smooth parameter for dice loss. Added to both numerator and denominator. Default: 0.')
@@ -269,6 +270,7 @@ if __name__ == '__main__':
     debug_mode                  = tta_config['debug_mode']
 
     learning_rate               = tta_config[tta_mode]['learning_rate']
+    max_grad_norm               = tta_config[tta_mode]['max_grad_norm']
     alpha                       = tta_config[tta_mode]['alpha']
     beta                        = tta_config[tta_mode]['beta']
     smooth                      = tta_config[tta_mode]['smooth']
@@ -279,13 +281,6 @@ if __name__ == '__main__':
     normalization_strategy      = tta_config[tta_mode]['normalization_strategy']
     manually_norm_img_before_seg_tta = tta_config[tta_mode]['manually_norm_img_before_seg_tta']
     manually_norm_img_before_seg_eval = tta_config[tta_mode]['manually_norm_img_before_seg_eval']
-    
-    test_eval_metrics           = { 
-        'dice_score_all_classes': lambda y_pred, y_gt: dice_score(
-            y_pred, y_gt, soft=False, reduction='none', smooth=1e-5), 
-        'dice_score_fg_classes': lambda y_pred, y_gt: dice_score(
-            y_pred, y_gt, soft=False, reduction='none', foreground_only=True, smooth=1e-5)
-        }
     
     dice_loss = DiceLoss(smooth=smooth, epsilon=epsilon, debug_mode=debug_mode)
     
@@ -299,6 +294,7 @@ if __name__ == '__main__':
         rescale_factor=rescale_factor,
         loss_func=dice_loss,
         learning_rate=learning_rate,
+        max_grad_norm=max_grad_norm,
         alpha=alpha,
         beta=beta,
         wandb_log=wandb_log,

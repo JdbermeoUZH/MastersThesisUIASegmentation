@@ -16,7 +16,7 @@ from tta_uia_segmentation.src.models import ConditionalGaussianDiffusion
 from tta_uia_segmentation.src.utils.io import write_to_csv
 from tta_uia_segmentation.src.utils.utils import get_seed, stratified_sampling
 from tta_uia_segmentation.src.dataset import DatasetInMemory, utils as du
-from tta_uia_segmentation.src.models.normalization import background_suppression
+from tta_uia_segmentation.src.models.norm_seg.normalization import background_suppression
 
 
 def subtract_gradients_dicts(gradients_old: defaultdict, gradients_new: dict) -> dict:

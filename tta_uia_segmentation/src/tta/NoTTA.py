@@ -7,7 +7,7 @@ from torch.utils.data import DataLoader
 from tta_uia_segmentation.src.dataset import DatasetInMemory
 from tta_uia_segmentation.src.tta.BaseTTA import BaseTTA, BaseTTAState
 from tta_uia_segmentation.src.utils.utils import generate_2D_dl_for_vol
-from tta_uia_segmentation.src.models.normalization import background_suppression
+from tta_uia_segmentation.src.models.norm_seg.normalization import background_suppression
 
 
 class NoTTA(BaseTTA):

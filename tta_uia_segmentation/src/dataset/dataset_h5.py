@@ -13,7 +13,7 @@ import nibabel.processing as nibp
 
 from tta_uia_segmentation.src.dataset.augmentation import apply_data_augmentation
 from tta_uia_segmentation.src.dataset.deformation import make_noise_masks_3d
-from tta_uia_segmentation.src.models.normalization import RBF
+from tta_uia_segmentation.src.models.norm_seg.normalization import RBF
 from tta_uia_segmentation.src.utils.io import deep_get
 from tta_uia_segmentation.src.utils.loss import class_to_onehot
 from tta_uia_segmentation.src.utils.utils import get_seed, assert_in, resize_and_resample_nibp

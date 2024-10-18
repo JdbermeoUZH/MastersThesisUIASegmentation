@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 
-import tta_uia_segmentation.src.models.utils as mu
+import tta_uia_segmentation.src.models.norm_seg.utils as mu
 from tta_uia_segmentation.src.utils.io import deep_get
 from tta_uia_segmentation.src.utils.utils import assert_in
 

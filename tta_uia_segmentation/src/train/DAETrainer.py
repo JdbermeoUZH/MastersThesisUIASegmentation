@@ -87,16 +87,12 @@ class DAETrainer:
         logdir: Optional[str] = None,
         val_dataloader: Optional[DataLoader] = None,
         device: Optional[torch.device] = None, 
-        wandb_log: Optional[bool] = None,
-        wandb_dir: Optional[str] = None,
         ):
         
-        wandb_log = wandb_log or self.wandb_log
         device = device or self.device
         logdir = logdir or self.logdir
         checkpoint_best = checkpoint_best or self.checkpoint_best
         checkpoint_last = checkpoint_last or self.checkpoint_last
-        wandb_dir = wandb_dir or self.wandb_dir
         
         print('Starting training')
         
@@ -148,14 +144,14 @@ class DAETrainer:
                     # Checkpoint best state
                     self._save_checkpoint(os.path.join(logdir, checkpoint_best))
             
-            if wandb_log:
+            if self.wandb_log:
                 wandb.log({
                     'training_loss': training_loss,
                     'validation_loss': validation_loss if val_dataloader is not None else None,
                     'validation_score': validation_score if val_dataloader is not None else None,
                 }, step=epoch)
-                wandb.save(os.path.join(wandb_dir, checkpoint_last), base_path=wandb_dir)
-                wandb.save(os.path.join(wandb_dir, checkpoint_best), base_path=wandb_dir)
+                wandb.save(os.path.join(self.wandb_dir, checkpoint_last), base_path=self.wandb_dir)
+                wandb.save(os.path.join(self.wandb_dir, checkpoint_best), base_path=self.wandb_dir)
     
     def evaluate(
         self,
@@ -178,7 +174,7 @@ class DAETrainer:
                 y_pred, _ = self.dae(x)
 
                 loss = self.loss_func(y_pred, y)
-                dice, dice_fg = dice_score(y_pred, y, soft=False, reduction='mean')
+                dice_fg = dice_score(y_pred, y, soft=False, reduction='mean', foreground_only=True)
 
                 validation_loss += loss * x.shape[0]
                 validation_score += dice_fg * x.shape[0]
