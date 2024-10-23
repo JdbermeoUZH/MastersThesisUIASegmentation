@@ -1,4 +1,6 @@
 import random
+import itertools
+from functools import partial 
 from tqdm import tqdm
 from typing import Optional, Literal, Union
 
@@ -14,8 +16,9 @@ from diffusers import (
     SchedulerMixin,
 )
 from diffusers.models.controlnet import ControlNetConditioningEmbedding
+from diffusers.models.embeddings import get_2d_rotary_pos_embed, get_2d_sincos_pos_embed
 
-from tta_uia_segmentation.src.models.ddpm import ConditionalGaussianDiffusionInterface
+from tta_uia_segmentation.src.models import BaseConditionalGaussianDiffusion
 from tta_uia_segmentation.src.models.ddpm.utils import (
     sample_t, sample_noise, generate_unconditional_mask,
     normalize, unnormalize)
@@ -30,15 +33,13 @@ objective_to_prediction_type = {
     }
 
 
-
-class ConditionalLatentGaussianDiffusion(ConditionalGaussianDiffusionInterface):
+class ConditionalLatentGaussianDiffusion(BaseConditionalGaussianDiffusion):
     """
-    Conditional Latent GaussianDdiffusion model
+    Conditional Latent GaussianDiffusion model
     
-    Based on the interface from https://github.com/lucidrains/denoising-diffusion-pytorch
-
     Attributes:
     ----------
+    
         
     """
     
@@ -46,32 +47,32 @@ class ConditionalLatentGaussianDiffusion(ConditionalGaussianDiffusionInterface):
         self,
         vae: AutoencoderKL,
         unet: UNet2DConditionModel | UNet2DModel,
-        image_size: int,
+        train_image_size: int,
         cond_img_channels: int,
         beta_schedule: Literal['cosine', 'linear', 'sigmoid'] = 'sigmoid',
         objective: Literal['pred_noise', 'pred_xt_m_1', 'pred_v', 'pred_x0'] = 'pred_v',
-        forward_type: Literal['model_output', 'train_loss', 'sds'] = 'model_output',
+        forward_type: Literal['train_loss', 'model_output', 'sds'] = 'model_output',
         num_train_timesteps: int = 1000,
         num_sample_timesteps: int = 100,
         unconditional_rate: Optional[float] = None,
-        device: Optional[Union[str, torch.device]] = None,
         w_cfg: float = 0.0,
         cfg_rescale: float = 0.0, 
-        use_offset_noise: bool = False,
         fit_emb_for_cond_img: bool = True,
         cond_type: Literal['concat', 'sum'] = 'sum',
         clamp_after_norm: bool = True,
         snr_weighting_gamma: Optional[float] = None,
         reset_betas_zero_snr: bool = False,
+        mixed_precision: Optional[Literal["fp16", "bf16"]] = None
         ):
  
-        super().__init__()
+        #super(ConditionalLatentGaussianDiffusion, self).__init__()
+        super(ConditionalLatentGaussianDiffusion, self).__init__()
 
         # Check the image is large enough for the downsample blocks
-        self._num_downsamples_vae = len(vae.config.down_block_types)
-        self._num_downsamples_unet = len(unet.down_block_types) - 1
+        self._num_downsamples_vae = len(vae.config.down_block_types) - 1
+        self._num_downsamples_unet = len(unet.config.down_block_types) - 1
         min_img_size = 2 ** (self._num_downsamples_vae + self._num_downsamples_unet)
-        assert image_size >= min_img_size, f"Image size must be at least {min_img_size}"
+        assert train_image_size >= min_img_size, f"Image size must be at least {min_img_size}"
 
         self._vae = vae
         self._unet = unet
@@ -86,16 +87,25 @@ class ConditionalLatentGaussianDiffusion(ConditionalGaussianDiffusionInterface):
             #  ControlNet: https://arxiv.org/pdf/2302.05543
             self._cond_emb = ControlNetConditioningEmbedding(
                 conditioning_channels=cond_img_channels,
-                conditioning_embedding_channels=self._vae.config.in_channels,
-                block_out_channels=[16, 32, 96, 256][-self._num_downsamples_vae:],
+                conditioning_embedding_channels=self._vae.config.latent_channels,
+                block_out_channels=[16, 32, 96, 256][-(self._num_downsamples_vae + 1):],
             )
         else:
             # Use the VAE to encode the conditioning image
             self._cond_emb = self._vae
 
+        # If network uses cross attention, create an encoding 
+        #  that matches the cross_attention_dim
+        if isinstance(self._unet, UNet2DConditionModel):
+            self._uses_x_attention = True
+
+            # TODO: define module that maps from mask encoding network to cross attention dim adding first 2D positional embeddings, then flattening, and then linear layer to cross_attention_dim
+            self._cond_emb_flat = None           
+        else:
+            self._uses_x_attention = False
+        
         # Parameters of the training
-        self._device = device
-        self._train_image_size = image_size
+        self._train_image_size = train_image_size
         self._num_train_timesteps = num_train_timesteps
 
         # Training objective
@@ -130,7 +140,6 @@ class ConditionalLatentGaussianDiffusion(ConditionalGaussianDiffusionInterface):
         self._w_cfg = w_cfg
         self._cfg_rescale = cfg_rescale
         
-        self._use_offset_noise = use_offset_noise
         self._reset_betas_zero_snr = reset_betas_zero_snr 
         self._snr_weighting_gamma = snr_weighting_gamma
 
@@ -146,21 +155,83 @@ class ConditionalLatentGaussianDiffusion(ConditionalGaussianDiffusionInterface):
 
         self.unconditional_rate = unconditional_rate
 
+        # Mixed precision attributes
+        if mixed_precision is not None:
+            self._set_mixed_precision_attributes(mixed_precision)
+    
     @property
-    def _num_train_timesteps(self):
+    def img_dtype(self):
+        return self._vae.dtype
+
+    @property
+    def cond_img_dtype(self):
+        return torch.float32
+
+    @property
+    def num_train_timesteps(self):
         return self._num_train_timesteps
 
     @property
-    def _num_sample_timesteps(self):
+    def num_sample_timesteps(self):
         return self._num_sample_timesteps
 
     @property
-    def _device(self):
-        return self._device
+    def device(self):
+        return self._unet.device
 
     @property
-    def _train_image_size(self):
+    def train_image_size(self):
         return self._train_image_size     
+    
+    @property
+    def num_img_channels(self):
+        return self._vae.config.in_channels
+
+    @property
+    def also_unconditional(self):
+        return self._also_unconditional
+    
+    def train_mode(self):
+        """
+        Set the model in train mode
+        """
+        self._unet.train()
+        
+        if self._fit_emb_for_cond_img:
+            self._cond_emb.train()
+
+        if self._uses_x_attention:
+            self._cond_emb_flat.train()
+
+    def eval_mode(self):
+        """
+        Set the model in evaluation mode
+        """
+        self._unet.eval()
+        self._cond_emb.eval()
+        if self._uses_x_attention:
+            self._cond_emb_flat.eval()
+
+    def get_modules_to_train(self):
+        """
+        Get the modules to train
+        """
+        modules_to_train = [self._unet]
+        if self._fit_emb_for_cond_img:
+            modules_to_train.append(self._cond_emb)
+        if self._uses_x_attention:
+            modules_to_train.append(self._cond_emb_flat)
+        return modules_to_train
+    
+    def get_params_of_modules_to_train(self):
+        """
+        Get the parameters of the modules to train
+        """
+        params_to_train = []
+        for module in self.get_modules_to_train():
+            params_to_train.extend(module.parameters())
+        
+        return itertools.chain(*params_to_train)
     
     def forward(
         self,
@@ -211,21 +282,6 @@ class ConditionalLatentGaussianDiffusion(ConditionalGaussianDiffusionInterface):
         if h != self._train_image_size or w != self._train_image_size:
             print(f'Warning: img has shape {h}x{w}, but DDPM trained on {self._train_image_size}x{self._train_image_size}')
 
-        # If no noise is given, sample it
-        if noise is None:
-            also_return_noise = True
-            noise = sample_noise(img.shape, self._use_offset_noise, self._device)
-
-        # If no time step is given, sample it
-        if t is None:
-            also_return_t = True
-            min_t = default(min_t, 0)
-            max_t = default(max_t, self._num_train_timesteps)
-            t = sample_t(min_t, max_t, batch_size, self._device)
-        else:
-            if min_t is not None and max_t is not None:
-                assert (min_t <= t).all() and (t <= max_t).all(), f't must be between {min_t} and {max_t}, but got {t}'
-
         # Preprocess images and conditioning to be in the correct range (-1, 1)
         if img.max() > 1 or img.min() < 0:
             print('Warning: img is not normalized between 0 and 1 '
@@ -246,7 +302,22 @@ class ConditionalLatentGaussianDiffusion(ConditionalGaussianDiffusionInterface):
         img_latents = self._encode_image(img)
         cond_img_latents = self._encode_cond_img(cond_img)
 
+        # If no time step is given, sample it
+        if t is None:
+            also_return_t = True
+            min_t = default(min_t, 0)
+            max_t = default(max_t, self._num_train_timesteps)
+            t = sample_t(min_t, max_t, batch_size, self.device)
+        else:
+            if min_t is not None and max_t is not None:
+                assert (min_t <= t).all() and (t <= max_t).all(), f't must be between {min_t} and {max_t}, but got {t}'
+
         # Noise the image latent
+        #  If no noise is given, sample it
+        if noise is None:
+            also_return_noise = True
+            noise = sample_noise(img_latents.shape, self.device)
+        
         noised_img_latents = self._noise_scheduler.add_noise(
             img_latents, noise, t)
 
@@ -267,7 +338,7 @@ class ConditionalLatentGaussianDiffusion(ConditionalGaussianDiffusionInterface):
         
         if self._forward_type == 'train_loss':
             output_dict['loss'] = self._train_loss(
-                img_latents, latents, model_output, t, noise)
+                img_latents, model_output, t, noise)
         
         if self._forward_type == 'sds':
             raise NotImplementedError('sds not implemented yet')
@@ -281,7 +352,6 @@ class ConditionalLatentGaussianDiffusion(ConditionalGaussianDiffusionInterface):
     def _train_loss(
         self,
         img_latents: torch.Tensor,
-        model_input: torch.Tensor,
         model_output: torch.Tensor,
         t: torch.Tensor,
         noise: torch.Tensor,
@@ -304,11 +374,11 @@ class ConditionalLatentGaussianDiffusion(ConditionalGaussianDiffusionInterface):
         if self._objective == 'pred_noise':
             target = noise
         elif self._objective == "pred_v":
-            target = self._noise_scheduler.get_velocity(model_input, noise, t)
+            target = self._noise_scheduler.get_velocity(img_latents, noise, t)
         elif self._objective == "pred_x_t_m_1":
             target = self._noise_scheduler.add_noise(
                 img_latents, noise, (t - 1).clamp(min=0))
-        elif self._noise_scheduler.config.prediction_type == "pred_x0":
+        elif self._objective == "pred_x0":
             target = img_latents
 
         # Compute MSE with SNR weighting if gamma is set
@@ -399,28 +469,28 @@ class ConditionalLatentGaussianDiffusion(ConditionalGaussianDiffusionInterface):
         noise_scheduler = default(sample_scheduler, self._noise_scheduler)
 
         # Set the noise scheduler inference timesteps
-        num_sample_timesteps = default(num_sample_timesteps, self._num_sample_timesteps)
+        num_sample_timesteps = default(num_sample_timesteps, self.num_sample_timesteps)
         noise_scheduler.set_timesteps(num_sample_timesteps)
         timesteps = noise_scheduler.timesteps
 
         # Get the latent noise at step T 
         latents = self._prepare_latents(
             batch_size=img_shape[0], height=img_shape[2], width=img_shape[3],
-            device=self._device)
+            device=self.device)
 
         # Get an unconditional mask if needed
         if unconditional_sampling:
             x_cond = generate_unconditional_mask(
-                x_cond.shape, device=self._device)
+                x_cond.shape, device=self.device)
 
         # If using cfg, create a batch with the conditional and unconditional masks (prompts)
-        x_cond = x_cond.to(self._device)
+        x_cond = x_cond.to(self.device)
 
         if with_cfg:
             assert not unconditional_sampling, 'Cannot sample with cfg when unconditional_sampling is True'
             x_cond = torch.cat([
                 x_cond, 
-                generate_unconditional_mask(x_cond.shape, device=self._device)
+                generate_unconditional_mask(x_cond.shape, device=self.device)
                 ])
 
         # Encode the conditioning 
@@ -438,7 +508,7 @@ class ConditionalLatentGaussianDiffusion(ConditionalGaussianDiffusionInterface):
                 latents, x_cond_latents)
 
              # predict noise model_output
-            model_pred = self.unet(latents, t, return_dict=False)[0]
+            model_pred = self._unet(latents, t, return_dict=False)[0]
 
             # Correct the models prediction with CFG
             if with_cfg:
@@ -469,10 +539,11 @@ class ConditionalLatentGaussianDiffusion(ConditionalGaussianDiffusionInterface):
         )
         
         # Sample the initial noise
-        latents = sample_noise(shape, use_offset_noise=False, device=device)
+        latents = sample_noise(shape, device)
 
         # scale the initial noise by the standard deviation required by the scheduler
-        latents = latents * self.scheduler.init_noise_sigma
+        latents = latents * self._noise_scheduler.init_noise_sigma
+        
         return latents
 
     def _decode_latents(self, latents) -> torch.Tensor:
@@ -484,6 +555,7 @@ class ConditionalLatentGaussianDiffusion(ConditionalGaussianDiffusionInterface):
     def _encode_image(self, img: torch.Tensor) -> torch.Tensor:
         # Normalize the image
         img = self._normalize(img)
+
         img_latents = self._vae.encode(img).latent_dist.sample()
         if 'scaling_factor' in self._vae.config:             
             img_latents *= self._vae.config.scaling_factor
@@ -494,7 +566,7 @@ class ConditionalLatentGaussianDiffusion(ConditionalGaussianDiffusionInterface):
             return self._encode_image(cond_img)
         else:
             # Normalize the conditioning image
-            x_cond = self._normalize(x_cond)
+            cond_img = self._normalize(cond_img)
             
             return self._cond_emb(cond_img)
 
@@ -560,3 +632,119 @@ class ConditionalLatentGaussianDiffusion(ConditionalGaussianDiffusionInterface):
     
     def _unnormalize(self, img: torch.Tensor) -> torch.Tensor:
         return unnormalize(img, clamp=self._clamp_after_norm)
+    
+    def enable_gradient_checkpointing(self):
+        """
+        Enable gradient checkpointing for the model
+        """
+        self._unet.enable_gradient_checkpointing()
+
+    def _set_mixed_precision_attributes(self, mixed_precision_type: Literal["fp16", "bf16"]):
+        if mixed_precision_type == "fp16":
+            dtype = torch.float16
+        elif mixed_precision_type == "bf16":
+            dtype = torch.bfloat16
+        else:
+            raise ValueError('Unknown mixed precision')
+        
+        # Move inference parts of the model to the desired dtype
+        self._vae.to(dtype=dtype)
+    
+    def move_non_trainable_params_to(
+            self,
+            device: Optional[str | torch.device] = None,
+            mixed_precision_type: Optional[Literal["fp16", "bf16"]] = None
+        ):
+        """
+        Set the mixed precision attributes of the model
+        """
+        if mixed_precision_type is not None:
+            self._set_mixed_precision_attributes(mixed_precision_type)
+        
+        if device is not None:
+            self._vae.to(device=device)
+
+
+
+class PosEmbed2D(torch.nn.Module):
+    """Based on PatchEmbed from diffusers"""
+
+    def __init__(
+        self,
+        in_channels: int = 3,
+        embed_dim: int = 518,
+        patch_size: int = 1,
+        usual_height: int = 256,
+        usual_width: int = 256,
+        layer_norm: bool =False,
+        flatten: bool = True,
+        bias: bool = True,
+        pos_embed_type: Literal["sincos", "rotary"] = "sincos",
+        persist_pos_emb: bool = True,
+        **kwargs,
+    ):
+        super().__init__()
+
+        self.flatten = flatten
+        self.layer_norm = layer_norm
+
+        #  Projection Block
+        self.proj = torch.nn.Conv2d(
+            in_channels, embed_dim, kernel_size=(patch_size, patch_size), stride=patch_size, bias=bias
+        )
+            
+        self.norm = torch.nn.LayerNorm(embed_dim, elementwise_affine=False, eps=1e-6) \
+            if layer_norm else None
+
+        self.embed_dim = embed_dim
+        self.usual_height = usual_height
+        self.usual_width = usual_width
+        self.patch_size = patch_size
+        
+        # get the positional embedding function to use
+        self.pos_embed_type = pos_embed_type
+        if pos_embed_type == "sincos":
+            if 'base_size' not in kwargs:
+                kwargs['base_size'] = usual_height // patch_size
+            self.pos_emb_fn = partial(get_2d_sincos_pos_embed, **kwargs)
+        elif pos_embed_type == "rotary":
+            self.pos_emb_fn = partial(get_2d_rotary_pos_embed, **kwargs)
+        else:
+            raise ValueError(f"Unsupported pos_embed_type: {pos_embed_type}")
+        
+        # Calculate what would be typical positional embeddings used 
+        pos_embed = self._calculate_pos_embed(usual_height, usual_width, force_recalc=True)
+        self.register_buffer("pos_embed", pos_embed, persistent=persist_pos_emb)
+
+
+    def _calculate_pos_embed(self, height, width, force_recalc=False):
+        if height != self.usual_height or width != self.usual_width \
+            or force_recalc:
+            grid_size = (height // self.patch_size, width // self.patch_size)
+            
+            extra_kwargs = dict(crops_coords = ((0,0), grid_size)) \
+                if self.pos_embed_type == "rotary" else dict()
+            
+            pos_embed = self.pos_emb_fn(self.embed_dim, grid_size=grid_size, 
+                                        **extra_kwargs)
+            pos_embed = torch.from_numpy(pos_embed).float().unsqueeze(0)
+
+            return pos_embed            
+        
+        return self.pos_embed
+
+
+    def forward(self, latent):
+        height, width = tuple(latent.shape[-2:])
+
+        latent = self.proj(latent)
+
+        if self.flatten:
+            latent = latent.flatten(2).transpose(1, 2)  # BCHW -> BNC
+        
+        if self.layer_norm:
+            latent = self.norm(latent)
+        
+        pos_embed = self._calculate_pos_embed(height, width).to(latent.dtype)
+
+        return (latent + pos_embed).to(latent.dtype)

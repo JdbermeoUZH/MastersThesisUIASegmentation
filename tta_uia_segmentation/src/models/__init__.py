@@ -1,6 +1,6 @@
 from tta_uia_segmentation.src.models.norm_seg.UNet import UNet
 from tta_uia_segmentation.src.models.norm_seg.normalization import Normalization
-from tta_uia_segmentation.src.models.ddpm.ConditionalGaussianDiffusionInterface import ConditionalGaussianDiffusionInterface
+from tta_uia_segmentation.src.models.ddpm.BaseConditionalGaussianDiffusion import BaseConditionalGaussianDiffusion
 from tta_uia_segmentation.src.models.ddpm.ConditionalGaussianDiffusion import ConditionalGaussianDiffusion
 from tta_uia_segmentation.src.models.ddpm.ConditionalLatentGaussianDiffusion import ConditionalLatentGaussianDiffusion
 from tta_uia_segmentation.src.models.ddpm.ConditionalUnet import ConditionalUnet

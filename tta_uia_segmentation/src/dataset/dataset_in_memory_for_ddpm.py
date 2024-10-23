@@ -70,6 +70,7 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
         classes_of_interest: Optional[list[int]] = None,
         invalid_images_args: dict[str, float] = None,
         invalid_labels_args: dict[str, float] = None,
+        return_imgs_in_rgb: bool = False,
         *args,
         **kwargs,
     ):
@@ -96,7 +97,8 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
         self.norm_neg_one_to_one = norm_neg_one_to_one
         self.one_hot_encode = one_hot_encode
         self.num_vols = int(self.images.shape[0] / self.dim_proc[0]) if self.image_size[0] == 1 else self.images.shape[0]
-        
+        self.return_imgs_in_rgb = return_imgs_in_rgb
+
         self.always_search_for_min_max = always_search_for_min_max
         self.images_min, self.images_max = np.inf, -np.inf
         
@@ -208,6 +210,9 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
         if self.invalid_labels_args is not None and self.invalid_labels_args['prob'] > 0:
             if random.random() < self.invalid_labels_args['prob']:
                 labels, weights = du.invalid_labels(labels, **self.invalid_labels_args)
+
+        if self.return_imgs_in_rgb:
+            images = du.grayscale_to_rgb(images)
         
         return images, labels, weights    
     
@@ -225,6 +230,8 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
         return Subset(self, sampled_slices)
     
     def _find_min_max_in_normalized_imgs(self) -> tuple[float, float]:
+        return_imgs_in_rgb_status = self.return_imgs_in_rgb
+        self.return_imgs_in_rgb = False
         images_min, images_max = np.inf, -np.inf
         
         if self.normalized_img_path is not None:    
@@ -234,7 +241,7 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
                 images_max = images.max()
         
         elif self.norm is not None:
-            normalize_old = self.normalize
+            normalize_status = self.normalize
             self.normalize = 'none'
             
             sample_dataset = self.sample_slices(min(256, self.__len__()), range_= (0, 1.0))
@@ -257,7 +264,7 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
                 images_min = torch.quantile(images, self.norm_q_range[0])
                 images_max = torch.quantile(images, self.norm_q_range[1])  
             
-            self.normalize = normalize_old
+            self.normalize = normalize_status
             
         else: 
             raise ValueError('No normalization model or normalized images were given, '
@@ -265,6 +272,8 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
             
         assert images_min != np.inf and images_max != -np.inf, 'Could not determine min and max values of normalized images'    
         
+        self.return_imgs_in_rgb = return_imgs_in_rgb_status
+
         return images_min, images_max 
 
     def _find_min_max_in_original_imgs(self):

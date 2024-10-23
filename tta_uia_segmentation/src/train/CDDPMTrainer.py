@@ -29,10 +29,11 @@ from torchmetrics.functional.regression import mean_absolute_error
 from denoising_diffusion_pytorch.denoising_diffusion_pytorch import (
     divisible_by, cycle, exists)
 
-from tta_uia_segmentation.src.models.ddpm import ConditionalGaussianDiffusionInterface
+from tta_uia_segmentation.src.models.ddpm import BaseConditionalGaussianDiffusion
 from tta_uia_segmentation.src.models.ddpm.utils import FIDEvaluation
 from tta_uia_segmentation.src.dataset import DatasetInMemoryForDDPM
-from tta_uia_segmentation.src.dataset.utils import onehot_to_class
+from tta_uia_segmentation.src.dataset.utils import onehot_to_class, grayscale_to_rgb
+from tta_uia_segmentation.src.utils.utils import garbage_collection
 
 
 
@@ -74,16 +75,79 @@ class CDDPMTrainer:
 
     """
     Trainer for Conditional Diffusion models that follow the ConditionalGaussianDiffusionInterface.
+
+    Attributes:
+    -----------
+    ddpm : ConditionalGaussianDiffusionInterface
+        The model to train
+    train_dataset : DatasetInMemoryForDDPM
+        The training dataset
+    val_dataset : Optional[DatasetInMemoryForDDPM]
+        The validation dataset
+    optimizer_type : Literal['adam', 'adamW', 'AdamW8bit']
+        The optimizer to use
+    train_batch_size : int
+        The batch size for training
+    gradient_accumulate_every : int
+        The number of steps to accumulate gradients before taking an optimizer step
+    train_lr : float
+        The learning rate
+    num_workers : int
+        The number of workers for the dataloader
+    train_num_steps : int
+        The number of training steps
+    ema_update_every : int
+        The number of steps to update the EMA model
+    ema_decay : float
+        The decay rate for the EMA model
+    adam_betas : tuple[float, float]
+        The beta values for the Adam optimizer
+    log_val_loss_every : int
+        The number of steps to log the validation loss
+    save_and_sample_every : int
+        The number of steps to save the model and sample images
+    num_validation_samples : int
+        The number of samples to use for validation
+    num_viz_samples : int
+        The number of samples to use for visualization
+    results_folder : str
+        The folder to save the results
+    amp : bool
+        Whether to use automatic mixed precision
+    mixed_precision_type : str
+        The mixed precision type to use
+    split_batches : bool
+        Whether to split the train_batch_size across the devices during distributed training.
+         If True, it has to be a round multiple of the number of processes used.
+    calculate_fid : bool
+        Whether to calculate the FID score
+    inception_block_idx : int
+        The inception block index
+    max_grad_norm : float
+        The maximum gradient norm
+    use_ddim_sampling : bool
+        Whether to use DDIM sampling during evaluation
+    enable_xformers : bool
+        Whether to enable xformers
+    gradient_checkpointing : bool
+        Whether to use gradient checkpointing during training to trade compute for memory
+    allow_tf32 : bool
+        Whether to allow TF32 typecasting, faset for training on Ampere GPUs
+    scale_lr : bool
+        Whether to scale (speed up) the learning rate by the batch size
+
     """
     def __init__(
         self,
-        ddpm: ConditionalGaussianDiffusionInterface,
+        ddpm: BaseConditionalGaussianDiffusion,
         train_dataset: DatasetInMemoryForDDPM,
         val_dataset: Optional[DatasetInMemoryForDDPM] = None,
-        optimizer_type: Literal['adam', 'adamW', 'AdamW8bit'] = 'adam',
+        optimizer_type: Literal['adam', 'adamW', 'adamW8bit'] = 'adamW',
         train_batch_size = 16,
         gradient_accumulate_every = 1,
-        train_lr = 1e-4,
+        split_batches = True,
+        train_lr = 8e-5,
+        scale_lr: bool = False,
         num_workers = cpu_count(),
         train_num_steps = 100000,
         ema_update_every = 10,
@@ -94,17 +158,15 @@ class CDDPMTrainer:
         num_validation_samples = 100,
         num_viz_samples = 25,
         results_folder = './results',
-        amp = False,
+        amp = True,
         mixed_precision_type = 'fp16',
-        split_batches = True,
         calculate_fid = True,
         inception_block_idx = 2048,
         max_grad_norm = 1.,
         use_ddim_sampling = True,
         enable_xformers: bool = False,
         gradient_checkpointing: bool = False,
-        allow_tf32: bool = False,
-        scale_lr: bool = False,
+        allow_tf32: bool = True,
         wandb_log: bool = True,
         wandb_dir: str = 'wandb',
         metrics_to_log: dict[str, callable] = metrics_to_log_default, 
@@ -116,7 +178,11 @@ class CDDPMTrainer:
         self.max_grad_norm = max_grad_norm
         self.batch_size = train_batch_size
         self.gradient_accumulate_every = gradient_accumulate_every
-        assert (train_batch_size * gradient_accumulate_every) >= 16, \
+        
+        # Check batch size is at least 16
+        effective_batch_size = train_batch_size * gradient_accumulate_every
+        effective_batch_size *= accelerator.num_processes if not split_batches else 1
+        assert effective_batch_size >= 16, \
             'effective batch size (train_batch_size x gradient_accumulate_every)' + \
             'should be at least 16 or above'
 
@@ -141,7 +207,7 @@ class CDDPMTrainer:
         self.model = ddpm
         self.channels = ddpm.num_img_channels
         self.use_ddim_sampling = use_ddim_sampling
-        self.image_size = ddpm.image_size
+        self.train_image_size = ddpm.train_image_size
 
         # setup xformers
         if enable_xformers:
@@ -156,13 +222,14 @@ class CDDPMTrainer:
 
         # optimizer
         if scale_lr:
-            train_lr = train_lr * gradient_accumulate_every * train_batch_size * accelerator.num_processes
+            train_lr = train_lr * gradient_accumulate_every * train_batch_size
+            train_lr *= accelerator.num_processes if not split_batches else 1
 
         if optimizer_type == 'adam':
             opt_class = Adam
         elif optimizer_type == 'adamW':
-            self.opt = AdamW
-        elif optimizer_type == 'AdamW8bit':
+            opt_class = AdamW
+        elif optimizer_type == 'adamW8bit':
             from bitsandbytes.optim import AdamW8bit
             opt_class = AdamW8bit
         else:
@@ -176,7 +243,7 @@ class CDDPMTrainer:
             mixed_precision=mixed_precision_type if amp else 'no',
             gradient_accumulation_steps=gradient_accumulate_every,
             log_with='wandb' if wandb_log else None,
-            project_config=ProjectConfiguration(wandb_dir=wandb_dir, project_dir=results_folder)
+            project_config=ProjectConfiguration(project_dir=results_folder)
         )
 
         # Setup EMA model on the main process
@@ -198,7 +265,7 @@ class CDDPMTrainer:
         if self.accelerator.mixed_precision in ['fp16', 'bf16']:
             self.model.move_non_trainable_params_to(
                 device=self.accelerator.device,
-                dtype=self.accelerator.mixed_precision
+                mixed_precision_type=self.accelerator.mixed_precision
             )
 
         # Wandb logging
@@ -257,7 +324,8 @@ class CDDPMTrainer:
         while self.step < self.train_num_steps:
             img, cond_img, _ = next(self.train_dl_cycle)               
             with self.accelerator.accumulate(*self.model.get_modules_to_train()):
-                img, cond_img = img.to(device), cond_img.to(device)
+                img = img.to(device, dtype=self.model.img_dtype)
+                cond_img = cond_img.to(device, dtype=self.model.cond_img_dtype)
 
                 with self.accelerator.autocast():
                     loss = self.model(img, cond_img)
@@ -277,12 +345,16 @@ class CDDPMTrainer:
                 self.opt.step()
                 self.opt.zero_grad()
 
-            # If it is an update step, log the loss and update the EMA model
-            if self.accelerator.sync_gradients():
+            # If it is an update step and log the loss and update the EMA model with the main process
+            if self.accelerator.sync_gradients:
+                self.step += 1
+                pbar.update(1)
+                
                 if self.accelerator.is_main_process:
                     if self.wandb_log:
                         wandb.log({'total_loss': total_loss}, step = self.step)
-                            
+                    total_loss = 0.
+                    
                     self.ema.update()
                     
                     if self.step == self.train_num_steps - 1 or divisible_by(self.step, self.log_val_loss_every):
@@ -302,7 +374,8 @@ class CDDPMTrainer:
                         # Evaluate the model on a sample of the validation set
                         val_sample_dl = DataLoader(
                             self.val_ds.sample_slices(self.num_validation_samples), 
-                            batch_size=self.batch_size, pin_memory=True, num_workers=self.num_workers,)
+                            batch_size=self.batch_size, pin_memory=True, num_workers=self.num_workers)
+                        
                         self.evaluate(val_sample_dl, device=device, prefix='val', 
                                       unconditional_sampling=False,
                                       calculate_fid_wrt_val=self.calculate_fid)
@@ -314,9 +387,6 @@ class CDDPMTrainer:
                             self.evaluate(val_sample_dl, device=device, prefix='val_uncondtional',
                                           unconditional_sampling=True,
                                           calculate_fid_wrt_val=self.calculate_fid)
-                                                    
-                self.step += 1
-                pbar.update(1)
 
         self.accelerator.print('training complete')
     
@@ -338,14 +408,16 @@ class CDDPMTrainer:
 
         for img_gt, seg_gt, _ in sample_dl:
             # Sample images from the model
-            img_gt, seg_gt = img_gt.to(device), seg_gt.to(device).type(torch.int8)
+            img_gt = img_gt.to(device, dtype=self.model.img_dtype)
+            seg_gt = seg_gt.to(device, dtype=self.model.cond_img_dtype)
+            
             generated_img = self.ema.ema_model.sample(
                 img_shape=img_gt.shape, 
                 x_cond=seg_gt,
                 unconditional_sampling=unconditional_sampling
             )
             
-            # Convert seg_gt to single channel to plot it
+            # Preprocess seg_gt to to plot it
             assert seg_gt.max() == 1, 'seg_gt should be one-hot encoded'
             assert seg_gt.min() == 0, 'seg_gt should be one-hot encoded'
             n_classes = seg_gt.shape[1]
@@ -353,6 +425,9 @@ class CDDPMTrainer:
             seg_gt = seg_gt / (n_classes - 1)
             assert seg_gt.shape[1] == 1, 'seg_gt should be single channel'
             
+            if generated_img.shape[1] == 3:
+                seg_gt = grayscale_to_rgb(seg_gt)
+
             # Store the generated image and the segmentation map side by side
             if len(samples_viz_imgs) * sample_dl.batch_size <= self.num_viz_samples:
                 samples_viz_imgs.append(torch.cat([seg_gt, img_gt, generated_img], dim = -1)) 
@@ -393,6 +468,7 @@ class CDDPMTrainer:
                     )}, 
                 step = self.step
                 )
+        garbage_collection()
     
     @torch.no_grad()
     def _log_val_loss(self, device, max_batches = 10):
@@ -403,7 +479,8 @@ class CDDPMTrainer:
         
         total_loss_val = 0.
         for img, cond_img, _ in tqdm(val_sample_dl, desc = 'total_loss_val'):
-            img, cond_img = img.to(device), cond_img.to(device)
+            img = img.to(device, dtype=self.model.img_dtype)
+            cond_img = cond_img.to(device, dtype=self.model.cond_img_dtype)
             loss = self.model(img, cond_img)
             total_loss_val += (1 / len(val_sample_dl)) * loss.item()
 

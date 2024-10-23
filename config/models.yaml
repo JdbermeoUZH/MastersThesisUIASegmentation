@@ -42,15 +42,22 @@ segmentation_3D:
   skips:                            [True, True, True]
   n_dimensions:                     3
 
+lddpm_unet:
+  dim:                              64            # Number of filters in the first layer. Default 64
+  dim_mults:                        [1, 2, 2, 2]  # Multipliers for the number of filters in each layer. Default: [1, 2, 4, 8]
+  channels:                         3             # Number of input channels
+  use_x_attention:                  True          # Use cross-attention. 
+  time_embedding_dim:               512           # Dimension of the time embedding. Default 512, Only used if use_x_attention is True
+  cond_type:                        'sum'         # 'sum', 'concat'
 
 ddpm_unet:
-  dim:                              64            # Number of filetrs in the first layer. Default 64
+  dim:                              64            # Number of filters in the first layer. Default 64
   dim_mults:                        [1, 2, 4, 8]  # Multipliers for the number of filters in each layer. Default: [1, 2, 4, 8]
   channels:                         1             # Number of input channels
-  
+  cond_type:                        'sum'         # 'sum', 'concat'
 
 ddpm_unet_oai:
-  num_channels:                     128            # Number of filetrs in the first layer. Default 64
+  num_channels:                     128            # Number of filters in the first layer. Default 64
   channel_mult:                     [1, 2, 3, 4]  # Multipliers for the number of filters in each layer. Default: [1, 2, 4, 8]
   channels:                         1             # Number of input channels
   num_res_blocks:                   3             # Default is 2, but for bigger datasets they use 3

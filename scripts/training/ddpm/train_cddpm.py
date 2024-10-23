@@ -1,9 +1,3 @@
-""" 
-TODO:
- - Conditioning by multiplication has the difficulty that masks with lower support are not denoised
-    - How to weigh each mask by the inverse of their support? 
-"""
-
 import os
 import re
 import sys

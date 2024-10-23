@@ -1,8 +1,10 @@
 import os
+import gc
 import random
 from typing import Optional, Union, Literal, Tuple
 
 import torch
+import torch.distributed
 import torch.nn.functional as F
 from torch.utils.data import TensorDataset
 import numpy as np
@@ -474,3 +476,31 @@ def cast_tuple(t, length = 1):
     if isinstance(t, tuple):
         return t
     return ((t,) * length)
+
+
+# def is_main_process():
+#     from accelerate.state import PartialState
+#     return PartialState().is_main_process
+
+
+def is_main_process():
+    # Check if the distributed environment is initialized
+    if torch.distributed.is_initialized():
+        # The main process usually has rank 0
+        return torch.distributed.get_rank() == 0
+    else:
+        return True
+    
+
+def print_if_main_process(string: str):
+    if is_main_process():
+        print(string)
+
+
+def count_parameters(model: torch.nn.Module) -> int:
+    return sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+
+def garbage_collection():
+    gc.collect()
+    torch.cuda.empty_cache() 

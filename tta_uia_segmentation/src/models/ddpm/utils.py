@@ -7,21 +7,39 @@ from denoising_diffusion_pytorch.fid_evaluation import FIDEvaluation
 from pytorch_fid.fid_score import calculate_frechet_distance
 
 
-from tta_uia_segmentation.src.utils.utils import stratified_sampling
+from tta_uia_segmentation.src.utils.utils import stratified_sampling, torch_to_numpy
 
 
 def normalize(img: torch.Tensor, clamp: bool = True):
     return (img * 2 - 1).clamp(-1, 1) if clamp else (img * 2 - 1)
 
+
 def unnormalize(img: torch.Tensor, clamp: bool = True):
     return ((img + 1) / 2).clamp(0, 1) if clamp else (img + 1) / 2
 
+
 def sample_t(min_t: int, max_t: int, batch_size: int, device: str) -> torch.Tensor:
-    return torch.randint(min_t, max_t, (batch_size,), device)
+    return torch.randint(min_t, max_t, (batch_size,), device=device, dtype=torch.long)
 
 
-def sample_noise(img_batch_shape: tuple[int, ...], use_offset_noise: bool, device: str) -> torch.Tensor:
-    noise = torch.randn_like(img_batch_shape, device=device)
+def sample_noise(
+        img_batch_shape: tuple[int, ...] | torch.Size,
+        device: str,
+        use_offset_noise: bool = False
+    ) -> torch.Tensor:
+    """
+    Generate noise for the given image batch shape
+
+    Parameters
+    ----------
+    img_batch_shape : tuple[int, ...]
+        Shape of the image batch
+    use_offset_noise : bool
+        Whether to add offset noise as suggested in: https://www.crosslabs.org//blog/diffusion-with-offset-noise
+         If setting rescale_betas_zero_snr=True in Scheduler, then this is not needed
+    """
+    img_batch_shape = tuple(img_batch_shape)
+    noise = torch.randn(img_batch_shape, device=device)
     if use_offset_noise:
         noise += 0.1 * torch.randn(
             img_batch_shape.shape[0], img_batch_shape.shape[1], 1, 1,
@@ -96,12 +114,12 @@ class FIDEvaluation(FIDEvaluation):
         
         # Calculate the inception features of the samples
         stacked_fake_features = []
-        for sample in dl:
+        for (sample,) in dl:
             fake_features = self.calculate_inception_features(sample.to(self.device))
             stacked_fake_features.append(fake_features)
         stacked_fake_features = torch.cat(stacked_fake_features, dim=0)
-        m1 = np.mean(stacked_fake_features, axis=0)
-        s1 = np.cov(stacked_fake_features, rowvar=False)
+        m1 = np.mean(torch_to_numpy(stacked_fake_features), axis=0)
+        s1 = np.cov(torch_to_numpy(stacked_fake_features), rowvar=False)
 
         return calculate_frechet_distance(m1, s1, self.m2, self.s2)
     

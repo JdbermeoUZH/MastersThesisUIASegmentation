@@ -53,7 +53,6 @@ dae:
 segmentation:
   batch_size:                   16
   num_workers:                  3
-  dataset:                      hcp_t1  # brain: hcp_t1, hcp_t2, abide_caltech, abide_stanford; wmh: nuhs, umc, vu
   image_size:                   [1, 256, 256]
   epochs:                       150  # 150 for brain, 1000 for WMH (nuhs, umc)
   validate_every:               3
@@ -187,4 +186,111 @@ ddpm:
 
 
 lddpm:
+  logdir:                       /scratch_net/biwidl319/jbermeo/logs/brain/lddpm/hcp_t1/normalized_imgs/3x3_norm_filters/debugging/test_run_DELETE_ME
+  wandb_project:                mt-ddpm
   
+  # Model Parameters
+  fit_emb_for_cond_img:         True     # Fit an embedding network for the conditional image
+  vae_path:                     "runwayml/stable-diffusion-v1-5"     # Path to the VAE model to use for the embedding network  
+  vae_pretrained_on_nat_images: True    # Whether the VAE model was pretrained on natural images
+  
+  # Noising Parameters
+  timesteps:                    1000     # Range of noising steps to sample from during training. 1000 in the constructor  
+  reset_betas_zero_snr:         False    # Whether to rescale the betas to have zero terminal SNR. Enables generating very bright and dark images: https://www.crosslabs.org//blog/diffusion-with-offset-noise 
+  
+  # Optimization Parameters
+  train_num_steps:              50000    # 
+  
+  optimizer_type:               "adamW"  # Default is "adamW". Options are "adam", "adamW", "adamW8bit"
+
+  objective:                    pred_v   # default is pred_v. Options are: 'pred_noise', 'pred_xt_m_1', 'pred_v', 'pred_x0'
+  snr_weighting_gamma:          null     # When used, use 5.0 as it was the value found in the paper: https://arxiv.org/pdf/2303.09556
+
+  learning_rate:                8e-5     # Default of 5e-6 in dreambooth. If scale_lr is True and effective batch size is 16, it becomes 8e-5  
+  scale_lr:                     False    # Increase learning rate by the effective batch size (5e-6)
+  batch_size:                   2        # Default 8 for A6000, 2 for GTX Titan Xp
+  gradient_accumulate_every:    64       # Default 16 for A6000, 64 for GTX Titan Xp
+  num_workers:                  2
+
+  unconditional_rate:           0.2      # Rate of unconditional forward passes (Required to train CFG model)
+
+  amp:                          False
+  mixed_precision_type:         "fp16"   # Options are: 'fp16', 'bf16', or 'fp8'
+  enable_xformers:              False
+  gradient_checkpointing:       False
+  allow_tf32:                   False
+
+  # Evaluation parameters
+  log_val_loss_every:           250      # Frequency to log denoising loss during training
+
+  save_and_sample_every:        2500     # Frequency to log reconstruction/sampling losses during training
+  sampling_timesteps:           100      # Number of sampling steps to generate images. If less than 1000, will use DDIM sampling. If null, will be the same as timesteps => linear denoising steps
+  num_validation_samples:       100      # Num of images to sample to check performance during training
+  num_viz_samples:              50       # Must have an interger square root to store images in a square grid
+  
+  calculate_fid:                True    # Whether to calculate FID during training
+  
+  # Preprocessing Parameters
+  clamp_after_norm:             True     # Whether to clamp images after normalization and unnormalization 
+  
+  use_original_imgs:            False
+  
+  norm_with_nn_on_fly:          True      # Whether to normalize images on the fly
+  norm_dir:                     /scratch_net/biwidl319/jbermeo/data/models/brain/segmentation/hcp_t1/no_bg_supp_norm_w_3x3_conv
+  load_best_cpt:                True
+
+  normalize:                    min_max
+  norm_q_range:                 [0.001, 0.999]
+  
+  rescale_factor:               [1, 1, 1]
+  image_size:                   [1, 256, 256]
+  
+  augmentation:                 
+    da_ratio:           0.25
+    sigma:              20
+    alpha:              1000
+    trans_min:          -10
+    trans_max:          10
+    rot_min:            -10
+    rot_max:            10
+    scale_min:          0.9
+    scale_max:          1.1
+    gamma_min:          0.5     # Default 0.5
+    gamma_max:          2.0     # Default 2.0
+    brightness_min:     0.0     # Default 0.0
+    brightness_max:     0.1     # Default 0.1
+    noise_mean:         0.0
+    noise_std:          0.0
+
+  invalid_img:
+    prob:               0.0
+    bad_contrast:
+      prob:             0.0
+      gamma_min:        0.01
+      gamma_max:        0.2 
+    blurry:
+      prob:             0.0
+      blur_factor:      0.5
+  
+    invalid_labels:
+      prob:             0.0
+      jigsaw_cropping:    
+        prob:           0.0
+        mask_radius:    10
+        mask_squares:   200
+        is_num_masks_fixed:   False
+        is_size_masks_fixed:  False
+      random_pixel_erasure:
+        prob:           0.0
+        erasure_prob:   0.5
+        erasure_size:   10
+      random_label_erasure:
+        prob:           0.0
+        erasure_prob:   0.5
+      random_component_erasure:
+        prob:           0.0
+        erasure_prob:   0.5
+      random_label_mask:
+        prob:           0.0
+        random_noise_p: 0.5
+        random_shapes_p: 0.5

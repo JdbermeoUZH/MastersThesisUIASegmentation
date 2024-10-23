@@ -10,7 +10,7 @@ from tdigest import TDigest
 from torch.utils.data import DataLoader
 
 from tta_uia_segmentation.src.models import UNet
-from tta_uia_segmentation.src.models.normalization import background_suppression
+from tta_uia_segmentation.src.models.norm_seg.normalization import background_suppression
 from tta_uia_segmentation.src.utils.loss import DiceLoss, dice_score
 from tta_uia_segmentation.src.utils.io import save_checkpoint
 

@@ -139,3 +139,25 @@ def calculate_class_weights(
         class_weights = new_class_weights
         
     return class_weights
+
+
+def grayscale_to_rgb(img: torch.Tensor) -> torch.Tensor:
+    repeat = [1] * len(img.shape)
+    repeat[-3] = 3
+    return img.repeat(*repeat)
+
+
+def rgb_to_grayscale(img, is_originally_gray_scale: bool = False) -> torch.Tensor:
+    # Extract the R, G, B channels
+    r, g, b = img[:, 0, ...], img[:, 1, ...], img[:, 2, ...]
+    
+    # Apply the grayscale formula
+    if is_originally_gray_scale:
+        grayscale_img = img
+    else:
+        grayscale_img = 0.2989 * r + 0.5870 * g + 0.1140 * b
+    
+    # Add a channel dimension for consistency (1, H, W)
+    grayscale_img = grayscale_img.unsqueeze(0)
+    
+    return grayscale_img
