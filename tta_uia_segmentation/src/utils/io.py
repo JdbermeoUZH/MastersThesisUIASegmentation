@@ -14,10 +14,17 @@ import nibabel as nib
 
 from tta_uia_segmentation.src.utils.utils import assert_in
 
+def env_var_constructor(loader, node):
+    value = loader.construct_scalar(node)
+    return os.path.expandvars(value)
+
 
 def load_config(path):
+    yaml.add_constructor('tag:yaml.org,2002:str', env_var_constructor, Loader=yaml.SafeLoader)
+
+    # Register the constructor for any string value
     with open(path, 'r') as file:
-        cfg = yaml.load(file, Loader=yaml.FullLoader)
+        cfg = yaml.load(file, Loader=yaml.SafeLoader)
     return cfg
 
 

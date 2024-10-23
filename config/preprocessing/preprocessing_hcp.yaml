@@ -6,7 +6,7 @@ splits:           [train, val, test]
 
 normalize_with_model:             True
 normalization_params:   
-  logdir:                         /scratch_net/biwidl319/jbermeo/logs/brain/preprocessing/hcp_t2
+  logdir: $RESULTS_DIR/brain/preprocessing/hcp_t2
   batch_size: 16
   num_workers: 3
   image_size: [1, 256, 256]
@@ -22,7 +22,7 @@ normalization_params:
     type: fixed_value
 
   model:
-    checkpoint: /scratch_net/biwidl319/jbermeo/data/models/brain/hcp_t1/bg_supp/checkpoint_best.pth
+    checkpoint: $RESULTS_DIR/brain/hcp_t1/bg_supp/checkpoint_best.pth
     activation: rbf
     batch_norm: true
     channel_size: 16

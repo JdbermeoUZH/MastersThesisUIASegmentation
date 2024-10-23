@@ -155,7 +155,6 @@ if __name__ == '__main__':
     # Loading general parameters
     # :=========================================================================:
     dataset_config, model_config, train_config = get_configuration_arguments()
-    
     resume          = train_config['resume']
     seed            = train_config['seed']
     wandb_log       = train_config['wandb_log']
@@ -170,6 +169,7 @@ if __name__ == '__main__':
     print_if_main_process(f'training resumed: {is_resumed}')
 
     if is_resumed:
+        breakpoint()
         params = load_config(os.path.join(logdir, 'params.yaml'))
         
         # We need the original model and dataset definitions

@@ -4,11 +4,19 @@
 #SBATCH --gres=gpu:1
 #SBATCH --constraint='geforce_gtx_titan_x'
 
-source /scratch_net/biwidl319/jbermeo/conda/conda/etc/profile.d/conda.sh
-conda activate /scratch_net/biwidl319/jbermeo/GNN-Domain-Generalization-main/net_scratch/conda_envs/tta_uia_seg
+if [ "$CLUSTER" = "bmic" ]; then
+    source /scratch_net/biwidl319/jbermeo/conda/conda/etc/profile.d/conda.sh
+    conda activate $ENV_DIR
+
+elif [ "$CLUSTER" = "euler" ]; then
+    source $ENV_DIR
+
+else
+    echo "Python environment not activated. (env variable cluster: $CLUSTER)"
+fi
 
 python train_lcddpm.py \
-    /scratch_net/biwidl319/jbermeo/MastersThesisUIASegmentation/config/datasets.yaml \
-    /scratch_net/biwidl319/jbermeo/MastersThesisUIASegmentation/config/models.yaml \
-    /scratch_net/biwidl319/jbermeo/MastersThesisUIASegmentation/config/training/training_hcp_t1.yaml \
+    $REPO_DIR/config/datasets.yaml \
+    $REPO_DIR/config/models.yaml \
+    $REPO_DIR/config/training/training_hcp_t1.yaml \
     "$@" 

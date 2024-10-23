@@ -19,7 +19,7 @@ dae:
   validate_every:               50                    # 50 for brain (hcp_t1, hcp_t2), 100 for brain (abide_caltech) and WMH (nuhs, umc, vu)
   learning_rate:                1.0e-3
   validation_set_multiplier:    50
-  logdir:                       /scratch_net/biwidl319/jbermeo/logs/brain/dae/debugging/hcp_t1/test_run
+  logdir:                       $RESULTS_DIR/brain/dae/debugging/hcp_t1/test_run
   
   # Loss function parameters
   epsilon:                      1e-10
@@ -57,7 +57,7 @@ segmentation:
   epochs:                       150  # 150 for brain, 1000 for WMH (nuhs, umc)
   validate_every:               3
   learning_rate:                0.001
-  logdir:                       /scratch_net/biwidl319/jbermeo/data/models/brain/segmentation/hcp_t1/no_bg_supp_norm_w_3x3_conv
+  logdir:                       $RESULTS_DIR/brain/segmentation/hcp_t1/no_bg_supp_norm_w_3x3_conv
   wandb_project:                mt-segmentation_models
   
   with_bg_supression:           False
@@ -96,7 +96,7 @@ segmentation:
 
 
 ddpm:
-  logdir:                       /scratch_net/biwidl319/jbermeo/logs/brain/ddpm/hcp_t1/normalized_imgs/3x3_norm_filters/4_15/batch_size_128_cond_by_concat
+  logdir:                       $RESULTS_DIR/brain/ddpm/hcp_t1/normalized_imgs/3x3_norm_filters/4_15/batch_size_128_cond_by_concat
   wandb_project:                mt-ddpm
 
   batch_size:                   8
@@ -128,7 +128,7 @@ ddpm:
   num_viz_samples:              50       # Must have an interger square root to store images in a square grid
   log_val_loss_every:           250  
   
-  norm_dir:                     /scratch_net/biwidl319/jbermeo/data/models/brain/segmentation/hcp_t1/no_bg_supp_norm_w_3x3_conv
+  norm_dir:                     $RESULTS_DIR/brain/segmentation/hcp_t1/no_bg_supp_norm_w_3x3_conv
   load_best_cpt:                True
   
   augmentation:                 
@@ -186,7 +186,7 @@ ddpm:
 
 
 lddpm:
-  logdir:                       /scratch_net/biwidl319/jbermeo/logs/brain/lddpm/hcp_t1/normalized_imgs/3x3_norm_filters/debugging/test_run_DELETE_ME
+  logdir:                       $RESULTS_DIR/brain/lddpm/hcp_t1/normalized_imgs/3x3_norm_filters/debugging/test_run_DELETE_ME
   wandb_project:                mt-ddpm
   
   # Model Parameters
@@ -236,7 +236,7 @@ lddpm:
   use_original_imgs:            False
   
   norm_with_nn_on_fly:          True      # Whether to normalize images on the fly
-  norm_dir:                     /scratch_net/biwidl319/jbermeo/data/models/brain/segmentation/hcp_t1/no_bg_supp_norm_w_3x3_conv
+  norm_dir:                     $RESULTS_DIR/brain/segmentation/hcp_t1/no_bg_supp_norm_w_3x3_conv
   load_best_cpt:                True
 
   normalize:                    min_max

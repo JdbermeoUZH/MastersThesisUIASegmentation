@@ -47,8 +47,11 @@ def sample_noise(
     return noise
 
 
-def generate_unconditional_mask(img_shape, device) -> torch.Tensor:
-    return torch.zeros(img_shape, device=device)
+def generate_unconditional_mask(
+        img_shape: tuple[int, ...],
+        device: str | torch.device,
+        dtype: Optional[torch.dtype] = None) -> torch.Tensor:
+    return torch.zeros(img_shape, device=device, dtype=dtype)
 
 
 def sample_t_noise_pairs(

@@ -480,8 +480,9 @@ class ConditionalLatentGaussianDiffusion(BaseConditionalGaussianDiffusion):
 
         # Get an unconditional mask if needed
         if unconditional_sampling:
+            breakpoint()
             x_cond = generate_unconditional_mask(
-                x_cond.shape, device=self.device)
+                x_cond.shape, device=self.device, dtype=x_cond.dtype)
 
         # If using cfg, create a batch with the conditional and unconditional masks (prompts)
         x_cond = x_cond.to(self.device)
