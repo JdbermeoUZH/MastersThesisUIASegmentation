@@ -12,14 +12,14 @@ import nibabel as nib
 import nibabel.processing as nibp
 
 
-def define_device(device: str) -> torch.device:
+def define_device(device: str, print_device: bool = False) -> torch.device:
     if device == 'cuda' and not torch.cuda.is_available():
         device = torch.device('cpu')
-        print('No GPU available, using CPU instead')
+        if print_device: print('No GPU available, using CPU instead')
     else:
         device = torch.device(device)
 
-    print(f'Using Device {device}')
+    if print_device: print(f'Using Device {device}')
     
     return device
 
@@ -333,7 +333,7 @@ def stratified_sampling(a, b, m, n, return_torch: bool = True) -> Union[np.ndarr
     assert m > 0, "Number of buckets must be greater than 0"
     
     if n < m:
-        print("Warning: Number of samples is less than number of groups to stratify on")
+        raise ValueError("Warning: Number of samples is less than number of groups to stratify on")
     
     bucket_size = (b - a) / (m)
     buckets = np.arange(a, b + 1, bucket_size)
@@ -485,9 +485,11 @@ def cast_tuple(t, length = 1):
 
 def is_main_process():
     # Check if the distributed environment is initialized
-    if torch.distributed.is_initialized():
+    if torch.distributed.is_available() and torch.distributed.is_initialized():
         # The main process usually has rank 0
         return torch.distributed.get_rank() == 0
+    elif "RANK" in os.environ:
+        return int(os.environ["RANK"]) == 0
     else:
         return True
     

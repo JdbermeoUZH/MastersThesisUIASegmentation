@@ -187,7 +187,7 @@ ddpm:
 
 lddpm:
   logdir:                       $RESULTS_DIR/brain/lddpm/hcp_t1/normalized_imgs/3x3_norm_filters/debugging/test_run_DELETE_ME
-  wandb_project:                mt-ddpm
+  wandb_project:                mt-ddpm-debug_lddpm
   
   # Model Parameters
   fit_emb_for_cond_img:         True     # Fit an embedding network for the conditional image
@@ -236,7 +236,7 @@ lddpm:
   use_original_imgs:            False
   
   norm_with_nn_on_fly:          True      # Whether to normalize images on the fly
-  norm_dir:                     $RESULTS_DIR/brain/segmentation/hcp_t1/no_bg_supp_norm_w_3x3_conv
+  norm_dir:                     $RESULTS_DIR/brain/segmentation/hcp_t1/no_bg_supp/norm_w_3x3_conv/09_30/w_epsilon_no_smoothing__neerav_impl_diceloss_all_classes
   load_best_cpt:                True
 
   normalize:                    min_max

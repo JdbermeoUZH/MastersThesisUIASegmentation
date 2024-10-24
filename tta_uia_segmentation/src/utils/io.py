@@ -63,7 +63,7 @@ def print_config(params, keys=None):
     
 
 # Function taken from https://stackoverflow.com/a/43621819
-def deep_get(_dict, *keys, default=None, suppress_warning=False):
+def deep_get(_dict, *keys, default=None, suppress_warning=True):
     for key in keys:
         if isinstance(_dict, dict) and key in _dict.keys():
             _dict = _dict.get(key, default)

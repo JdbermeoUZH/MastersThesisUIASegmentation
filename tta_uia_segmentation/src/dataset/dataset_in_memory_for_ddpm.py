@@ -60,7 +60,6 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
         intensity_value_range: Optional[tuple[float, float]] = None,
         norm_device: str = 'cpu',
         norm_neg_one_to_one: bool = False,
-        paths_normalized_h5: Optional[dict[str, str]] = None,
         shard: int = 0,
         num_shards: int = 1,
         always_search_for_min_max: bool = False,
@@ -71,15 +70,15 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
         invalid_images_args: dict[str, float] = None,
         invalid_labels_args: dict[str, float] = None,
         return_imgs_in_rgb: bool = False,
+        print_debug_msg: bool = False,
         *args,
         **kwargs,
     ):
-        
+        self._print_debug_msg_flag = print_debug_msg
+
         if norm is None and not use_original_imgs:
-            if paths_normalized_h5 is None:
-                raise ValueError('Either a normalization model or paths to normalized images should be given,'
-                                 'if not using original images')
-            kwargs['paths'] = paths_normalized_h5
+            raise ValueError('Either a normalization model or paths to normalized images should be given,'
+                            'if not using original images')
         
         super().__init__(*args, **kwargs)
         
@@ -89,9 +88,7 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
             self.norm.eval()
             self.norm.requires_grad_(False)
             self.norm.to(norm_device)
-        
-        self.normalized_img_path = paths_normalized_h5[self.split] if paths_normalized_h5 is not None else None
-        
+                
         self.normalize = normalize
         self.norm_q_range = norm_q_range
         self.norm_neg_one_to_one = norm_neg_one_to_one
@@ -110,7 +107,7 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
                 self.labels, self.n_classes, 
                 classes_of_interest=classes_of_interest,
                 clip_classes_of_interest_at_factor=clip_classes_of_interest_at_factor) 
-            print('Class weights: ', self.class_weights)
+            self._print_debug_msg('Class weights: ', self.class_weights)
         else:    
             if self.class_weights is None:
                 class_weighing = 'none'
@@ -136,7 +133,7 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
             
         assert self.images_min != np.inf and self.images_max != -np.inf, 'Could not determine min and max values of normalized images'
                 
-        print(f'Min and max values of normalized images: {self.images_min}, {self.images_max}')
+        self._print_debug_msg(f'Min and max values of normalized images: {self.images_min}, {self.images_max}')
         
 
     def __getitem__(self, index) -> Union[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]:
@@ -199,7 +196,7 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
         # Normalize image to [-1, 1], if specified
         if self.norm_neg_one_to_one:
             if self.normalize == 'none':
-                print('WARNING: Normalizing images to [-1, 1] without having normalized them to [0, 1] first')
+                self._print_debug_msg('WARNING: Normalizing images to [-1, 1] without having normalized them to [0, 1] first')
             images = du.normalize_to_neg_one_to_one(images)
             labels = du.normalize_to_neg_one_to_one(labels.type(torch.int8))
             
@@ -234,18 +231,12 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
         self.return_imgs_in_rgb = False
         images_min, images_max = np.inf, -np.inf
         
-        if self.normalized_img_path is not None:    
-            with h5py.File(self.normalized_img_path, 'r') as data:
-                images = data['images'][:]
-                images_min = images.min()
-                images_max = images.max()
-        
-        elif self.norm is not None:
+        if self.norm is not None:
             normalize_status = self.normalize
             self.normalize = 'none'
             
             sample_dataset = self.sample_slices(min(256, self.__len__()), range_= (0, 1.0))
-            print(f'Determining min and max values of normalized images from a sample of {len(sample_dataset)} images')
+            self._print_debug_msg(f'Determining min and max values of normalized images from a sample of {len(sample_dataset)} images')
             sample_dataset = DataLoader(sample_dataset, batch_size=4, num_workers=2)
             
             assert len(sample_dataset) > 0, 'Sample dataset is empty'
@@ -359,7 +350,7 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
             idxs_sample_filtered.append(img_idx)
             
         if len(idxs_sample_filtered) < n:
-            print(f'WARNING: Could not sample enough slices from volume {vol_idx} \n',
+            self._print_debug_msg(f'WARNING: Could not sample enough slices from volume {vol_idx} \n',
                   f'Sampled {len(idxs_sample_filtered)} images')
         
         return idxs_sample_filtered
@@ -377,7 +368,7 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
         # Sample positions in the range [low_z_lim, high_z_lim] 
         if high_z_lim - low_z_lim < n:
             n = high_z_lim - low_z_lim
-            print(f'WARNING: Not enough slices to sample, sampling {n} slices instead')
+            self._print_debug_msg(f'WARNING: Not enough slices to sample, sampling {n} slices instead')
          
         idxs_sample = random.sample(range(low_z_lim, high_z_lim), n)
         
@@ -401,7 +392,7 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
             _, dice_fg = dice_score(seg_i, seg_orig, reduction='mean')
             
             if dice_fg < min_dice_score_threshold:
-                print('Dice score too low to use sample: ', dice_fg)
+                self._print_debug_msg('Dice score too low to use sample: ', dice_fg)
                 continue
             
             idxs_sample_filtered.append(img_idx)
@@ -444,7 +435,6 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
             
             sampled = 0 
             for z in range(low_z_lim, high_z_lim + 1):
-                print(f'z: {z}')
                 img_idx = self.vol_and_z_idx_to_idx(vol_idx, z)
                 _, seg_i, _ = self[img_idx]
                 seg_i = seg_i[None, ...]
@@ -463,7 +453,7 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
                     break
             
             if sampled < n_slices:
-                print(f'WARNING: Could not sample enough slices from volume {vol_idx}')
+                self._print_debug_msg(f'WARNING: Could not sample enough slices from volume {vol_idx}')
             
         return idxs_sample_filtered
     
@@ -476,6 +466,10 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
         assert idx < self.images.shape[0], f'Index out of bounds, for vol_idx: {vol_idx}, z_idx: {z_idx}, dim_proc: {self.dim_proc}'
         
         return vol_idx * self.dim_proc[0] + z_idx
+    
+    def _print_debug_msg(self, msg: str):
+        if self._print_debug_msg_flag:
+            self._print_debug_msg(msg)
 
             
 if __name__ == '__main__':

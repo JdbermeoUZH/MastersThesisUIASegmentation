@@ -246,6 +246,8 @@ class CDDPMTrainer:
             project_config=ProjectConfiguration(project_dir=results_folder)
         )
 
+        self.batch_size_main_process = self.batch_size // self.accelerator.num_processes
+
         # Setup EMA model on the main process
         if self.accelerator.is_main_process:
             self.ema = EMA(self.model, beta = ema_decay, update_every = ema_update_every)
@@ -367,14 +369,16 @@ class CDDPMTrainer:
                         # Evaluate the model on a sample of the training set
                         train_sample_dl = DataLoader(
                             self.train_ds.sample_slices(self.num_validation_samples), 
-                            batch_size=self.batch_size, pin_memory = True, num_workers = self.num_workers)
+                            batch_size=self.batch_size_main_process, pin_memory = True,
+                            num_workers = self.num_workers)
                         
                         self.evaluate(train_sample_dl, device=device, prefix='train')
                         
                         # Evaluate the model on a sample of the validation set
                         val_sample_dl = DataLoader(
                             self.val_ds.sample_slices(self.num_validation_samples), 
-                            batch_size=self.batch_size, pin_memory=True, num_workers=self.num_workers)
+                            batch_size=self.batch_size_main_process, pin_memory=True,
+                            num_workers=self.num_workers)
                         
                         self.evaluate(val_sample_dl, device=device, prefix='val', 
                                       unconditional_sampling=False,
@@ -382,9 +386,11 @@ class CDDPMTrainer:
                         
                         # Evaluate the model on the sample set in unconditional mode if the model is also trained unconditionally
                         if self.model.also_unconditional:
-                            self.evaluate(train_sample_dl, device=device, prefix='train_unconditional',
+                            self.evaluate(train_sample_dl, device=device, 
+                                          prefix='train_unconditional',
                                           unconditional_sampling=True)
-                            self.evaluate(val_sample_dl, device=device, prefix='val_uncondtional',
+                            self.evaluate(val_sample_dl, device=device,
+                                          prefix='val_uncondtional',
                                           unconditional_sampling=True,
                                           calculate_fid_wrt_val=self.calculate_fid)
 
@@ -432,7 +438,7 @@ class CDDPMTrainer:
             if len(samples_viz_imgs) * sample_dl.batch_size <= self.num_viz_samples:
                 samples_viz_imgs.append(torch.cat([seg_gt, img_gt, generated_img], dim = -1)) 
             
-            check_btw_0_1(img_gt, seg_gt, generated_img)
+            #check_btw_0_1(img_gt, seg_gt, generated_img)
             
             # log metrics
             if self.wandb_log:
@@ -475,7 +481,8 @@ class CDDPMTrainer:
         sample_size = self.gradient_accumulate_every * self.batch_size * min(max_batches, self.num_validation_samples)
         val_sample_dl = DataLoader(
             self.val_ds.sample_slices(sample_size), 
-            batch_size=self.batch_size, pin_memory=True, num_workers=self.num_workers)
+            batch_size=self.batch_size_main_process, 
+            pin_memory=True, num_workers=self.num_workers)
         
         total_loss_val = 0.
         for img, cond_img, _ in tqdm(val_sample_dl, desc = 'total_loss_val'):
@@ -517,7 +524,7 @@ class CDDPMTrainer:
             self.ema.load_state_dict(data["ema"])
 
         if 'version' in data:
-            print(f"loading from version {data['version']}")
+            self.accelerator.print(f"loading from version {data['version']}")
 
         if exists(self.accelerator.scaler) and exists(data['scaler']):
             self.accelerator.scaler.load_state_dict(data['scaler'])

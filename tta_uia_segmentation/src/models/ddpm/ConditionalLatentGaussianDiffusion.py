@@ -17,7 +17,6 @@ from diffusers import (
 )
 from diffusers.models.controlnet import ControlNetConditioningEmbedding
 from diffusers.models.embeddings import get_2d_rotary_pos_embed, get_2d_sincos_pos_embed
-
 from tta_uia_segmentation.src.models import BaseConditionalGaussianDiffusion
 from tta_uia_segmentation.src.models.ddpm.utils import (
     sample_t, sample_noise, generate_unconditional_mask,
@@ -191,6 +190,14 @@ class ConditionalLatentGaussianDiffusion(BaseConditionalGaussianDiffusion):
     def also_unconditional(self):
         return self._also_unconditional
     
+    @property
+    def use_x_attention(self):
+        return self._uses_x_attention
+
+    @property
+    def objective(self):
+        return self._objective
+    
     def train_mode(self):
         """
         Set the model in train mode
@@ -322,11 +329,11 @@ class ConditionalLatentGaussianDiffusion(BaseConditionalGaussianDiffusion):
             img_latents, noise, t)
 
         # Join the latents with the conditioning image latents
-        latents = self._apply_conditioning_to_latents(
+        latents_w_conditioning = self._apply_conditioning_to_latents(
             noised_img_latents, cond_img_latents)
 
         # Make the prediction with the model (typically noise or velocity estimation)
-        model_output = self._unet(latents, t, return_dict=False)[0]
+        model_output = self._unet(latents_w_conditioning, t, return_dict=False)[0]
         
         if self._forward_type == 'model_output':
             output_dict['model_pred'] = model_output
@@ -480,7 +487,6 @@ class ConditionalLatentGaussianDiffusion(BaseConditionalGaussianDiffusion):
 
         # Get an unconditional mask if needed
         if unconditional_sampling:
-            breakpoint()
             x_cond = generate_unconditional_mask(
                 x_cond.shape, device=self.device, dtype=x_cond.dtype)
 
@@ -505,11 +511,11 @@ class ConditionalLatentGaussianDiffusion(BaseConditionalGaussianDiffusion):
             latents = noise_scheduler.scale_model_input(latents, t)
 
             # Apply the conditioning to the latents
-            latents = self._apply_conditioning_to_latents(
+            latents_w_conditioning = self._apply_conditioning_to_latents(
                 latents, x_cond_latents)
 
              # predict noise model_output
-            model_pred = self._unet(latents, t, return_dict=False)[0]
+            model_pred = self._unet(latents_w_conditioning, t, return_dict=False)[0]
 
             # Correct the models prediction with CFG
             if with_cfg:

@@ -7,12 +7,14 @@ import torch.nn as nn
 from torch import nn as nn
 from tdigest import TDigest
 from ema_pytorch import EMA
+from diffusers import AutoencoderKL, UNet2DModel, UNet2DConditionModel
 
 from tta_uia_segmentation.src.models import (
     Normalization,
     ConditionalUnet,
     UNet,
-    ConditionalGaussianDiffusion
+    ConditionalGaussianDiffusion,
+    ConditionalLatentGaussianDiffusion
 )
 from tta_uia_segmentation.src.models.ddpm.UNetModelOAI import create_model_conditioned_on_seg_mask, model_defaults
 from tta_uia_segmentation.src.models.ddpm.ConditionalGaussianDiffusionOAI import ConditionalGaussianDiffusionOAI, diffusion_defaults
@@ -118,6 +120,103 @@ def load_cddpm_from_configs_and_cpt(
     ddpm_ema.load_state_dict(cpt['ema'])
     
     return ddpm_ema.model
+
+
+def define_and_possibly_load_lcddpm(
+    train_config: dict,
+    model_config: dict,
+    n_classes: int,
+    device: Optional[torch.device | str] = None, 
+    cpt_fp: Optional[str] = None,
+    return_ema_model: bool = False,
+    ema_kwargs: dict = dict()
+    ) -> ConditionalLatentGaussianDiffusion:
+
+    vae_path = train_config['vae_path']
+    if train_config['vae_pretrained_on_nat_images']:
+        vae = AutoencoderKL.from_pretrained(vae_path, subfolder='vae')
+    else:
+        vae = AutoencoderKL.from_pretrained(vae_path)
+
+    # Define Denoising Unet    
+    dim                 = model_config['dim']
+    dim_mults           = model_config['dim_mults']
+    use_x_attention     = model_config['use_x_attention']
+    cond_type           = model_config['cond_type']
+    time_embedding_dim  = model_config['time_embedding_dim']
+
+    num_downsamples     = len(dim_mults) - 1
+    train_image_size    = train_config['image_size'][-1] * train_config['rescale_factor'][-1]
+    img_latent_dim      = train_image_size / (2 ** num_downsamples)
+    block_out_channels  = [dim * m for m in dim_mults]
+    in_channels         = vae.config.latent_channels 
+    in_channels         *= 2 if cond_type == 'concat' else 1
+    out_channels        = vae.config.latent_channels
+    down_attn_type_blocks = 'CrossAttnDownBlock2D' if use_x_attention else 'AttnDownBlock2D'
+    up_attn_type_blocks = 'CrossAttnUpBlock2D' if use_x_attention else 'AttnUpBlock2D'
+    unet_cls            = UNet2DConditionModel if use_x_attention else UNet2DModel
+
+    down_block_types = [down_attn_type_blocks] * num_downsamples + ['DownBlock2D']
+    up_block_types = ['UpBlock2D'] + [up_attn_type_blocks] * num_downsamples 
+     
+    unet_kwargs = dict(
+        sample_size = img_latent_dim,
+        in_channels = in_channels,
+        out_channels = out_channels,
+        block_out_channels = block_out_channels,
+        down_block_types = down_block_types,
+        up_block_types = up_block_types,
+    )
+
+    if use_x_attention:
+        unet_kwargs['cross_attention_dim'] = time_embedding_dim
+        unet_kwargs['time_embedding_dim'] = time_embedding_dim
+
+    unet = unet_cls(**unet_kwargs)
+    
+    # Define the diffusion model    
+    objective           = train_config['objective']
+    timesteps           = train_config['timesteps']
+    sampling_timesteps  = train_config['sampling_timesteps']
+    
+    unconditional_rate  = train_config['unconditional_rate']
+
+    fit_emb_for_cond_img= train_config['fit_emb_for_cond_img']
+    cond_type           = model_config['cond_type']
+
+    snr_weighting_gamma = train_config['snr_weighting_gamma']
+    reset_betas_zero_snr = train_config['reset_betas_zero_snr']
+
+    ddpm = ConditionalLatentGaussianDiffusion(
+        vae=vae,
+        unet=unet,
+        train_image_size=train_image_size,
+        cond_img_channels=n_classes,
+        objective=objective,
+        forward_type='train_loss',
+        num_train_timesteps=timesteps,
+        num_sample_timesteps=sampling_timesteps,
+        unconditional_rate=unconditional_rate,
+        fit_emb_for_cond_img=fit_emb_for_cond_img,
+        cond_type=cond_type,
+        snr_weighting_gamma=snr_weighting_gamma,
+        reset_betas_zero_snr=reset_betas_zero_snr,
+    )
+
+    if cpt_fp is not None:
+        cpt = torch.load(cpt_fp, map_location=device)
+
+        if return_ema_model:
+            ema_kwargs.setdefault('update_every', 10)
+            ema_kwargs.setdefault('beta', 0.995)
+            ddpm_ema = EMA(ddpm, **ema_kwargs)
+            ddpm_ema = ddpm_ema.to(device) if device is not None else ddpm_ema
+            ddpm_ema.load_state_dict(cpt['ema'])
+        else:
+            ddpm = ddpm.to(device) if device is not None else ddpm
+            ddpm.load_state_dict(cpt['model'])
+    
+    return ddpm
 
 
 def load_norm_from_configs_and_cpt(
