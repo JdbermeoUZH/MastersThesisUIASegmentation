@@ -8,7 +8,7 @@ import wandb
 import torch
 import numpy as np
 from torch.nn import functional as F
-from torch.utils.data import DataLoader, Subset
+from torch.utils.data import DataLoader, Subset, ConcatDataset
 from tta_uia_segmentation.src.utils.io import save_checkpoint
 from tta_uia_segmentation.src.utils.loss import dice_score, DiceLoss, onehot_to_class
 from tta_uia_segmentation.src.utils.utils import (
@@ -382,7 +382,9 @@ class TTADAE(NoTTA):
         const_aug_per_volume: bool,
         save_checkpoints: bool,
         logdir: Optional[str] = None,
-        slice_vols_for_viz: Optional[tuple[tuple[int, int], tuple[int, int], tuple[int, int]]] = None
+        slice_vols_for_viz: Optional[tuple[tuple[int, int], tuple[int, int], tuple[int, int]]] = None,
+        repeat_dataset: int = 1,
+        drop_last_batch_dl: bool = True
     ) -> None:
 
         # Change batch size for the pseudo label (in case it has a smaller size)
@@ -393,12 +395,15 @@ class TTADAE(NoTTA):
             label_batch_size = batch_size
 
         # Create dataloader for the volume on which we wish to adapt
+        #  We might want to repeat the dataset in 
+        vol_dataset = Subset(dataset, dataset.get_idxs_for_volume(vol_idx))
+        vol_dataset = ConcatDataset([vol_dataset] * repeat_dataset)
         volume_dataloader = DataLoader(
-            Subset(dataset, dataset.get_idxs_for_volume(vol_idx)),
+            vol_dataset,
             batch_size=batch_size,
             shuffle=False,
             num_workers=num_workers,
-            drop_last=False,
+            drop_last=drop_last_batch_dl,
         ) 
         
         # Start TTA iterations 
@@ -414,10 +419,11 @@ class TTADAE(NoTTA):
 
                 pl_dataloader = generate_2D_dl_for_vol(
                     y_pl,
+                    repeat_dataset=repeat_dataset,
                     batch_size=label_batch_size,
                     shuffle=False,
                     num_workers=num_workers,
-                    drop_last=False, 
+                    drop_last=drop_last_batch_dl, 
                 )
 
             # Test performance during adaptation.
@@ -437,6 +443,8 @@ class TTADAE(NoTTA):
             # Take optimization TTA step
             self._tta_fit_mode()
             dataset.set_augmentation(True)  
+            breakpoint()
+            print('Make sure this parameter changes for the dataset in vol_dataloader')
             
             tta_loss = 0
             n_samples = 0

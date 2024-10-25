@@ -83,6 +83,7 @@ def preprocess_cmd_args() -> argparse.Namespace:
     parser.add_argument('--resolution_proc', type=float, nargs='+', help='Resolution of images in dataset. Default: [0.3, 0.3, 0.6]')
     parser.add_argument('--rescale_factor', type=float, help='Rescale factor for images in dataset. Default: None')
     parser.add_argument('--classes_of_interest' , type=int, nargs='+')
+    parser.add_argument('--repeat_dataset', type=int, help='Number of times to repeat the dataset. Default: 1')
 
     # Augmentations
     parser.add_argument('--aug_da_ratio', type=float, help='Ratio of images to apply DA to. Default: 0.25')
@@ -313,9 +314,11 @@ if __name__ == '__main__':
     
     # Do TTA with a DAE
     # :=========================================================================:
+    num_workers                 = tta_config['num_workers']
+
     num_steps                   = tta_config[tta_mode]['num_steps']
     batch_size                  = tta_config[tta_mode]['batch_size']
-    num_workers                 = tta_config['num_workers']
+    repeat_dataset              = tta_config[tta_mode]['repeat_dataset']
     save_checkpoints            = tta_config[tta_mode]['save_checkpoints']
     update_dae_output_every     = tta_config[tta_mode]['update_dae_output_every']
     const_aug_per_volume        = tta_config[tta_mode]['const_aug_per_volume']

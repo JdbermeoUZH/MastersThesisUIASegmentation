@@ -6,7 +6,7 @@ from typing import Optional, Union, Literal, Tuple
 import torch
 import torch.distributed
 import torch.nn.functional as F
-from torch.utils.data import TensorDataset
+from torch.utils.data import TensorDataset, ConcatDataset
 import numpy as np
 import nibabel as nib
 import nibabel.processing as nibp
@@ -373,7 +373,12 @@ def clone_state_dict_to_cpu(state_dict: dict) -> dict:
     return new_state_dict
 
 
-def generate_2D_dl_for_vol(*vols: torch.Tensor, batch_size: int, num_workers: int, **dl_kwargs) -> torch.utils.data.DataLoader:
+def generate_2D_dl_for_vol(
+        *vols: torch.Tensor,
+        repeat_dataset: int,
+        batch_size: int,
+        num_workers: int,
+        **dl_kwargs) -> torch.utils.data.DataLoader:
     """
     Generate a 2D dataloader for one or more 3D volume tensors.
 
@@ -418,7 +423,7 @@ def generate_2D_dl_for_vol(*vols: torch.Tensor, batch_size: int, num_workers: in
         "All input tensors must have the same number of slices"
     
     return torch.utils.data.DataLoader(
-        TensorDataset(*processed_vols),
+        ConcatDataset([TensorDataset(*processed_vols)] * repeat_dataset),
         batch_size=batch_size,
         num_workers=num_workers,
         **dl_kwargs

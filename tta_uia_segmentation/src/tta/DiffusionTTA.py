@@ -9,7 +9,7 @@ import numpy as np
 from torch.nn import functional as F
 from torch.utils.data import ConcatDataset, DataLoader, TensorDataset
 
-from tta_uia_segmentation.src.models import ConditionalGaussianDiffusionInterface
+from tta_uia_segmentation.src.models import BaseConditionalGaussianDiffusion
 from tta_uia_segmentation.src.utils.io import save_checkpoint, write_to_csv
 from tta_uia_segmentation.src.utils.loss import dice_score
 from tta_uia_segmentation.src.utils.visualization import export_images
@@ -23,7 +23,7 @@ class DiffusionTTA:
         self,
         norm: torch.nn.Module,
         seg: torch.nn.Module,
-        ddpm: ConditionalGaussianDiffusionInterface,
+        ddpm: BaseConditionalGaussianDiffusion,
         learning_rate: float,
         n_classes: int,
         classes_of_interest: Optional[list[int]] = None,

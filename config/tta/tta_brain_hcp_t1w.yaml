@@ -38,10 +38,11 @@ no_tta:
 dae:
   wandb_project: tta-dae # mt-tta-brain-hcp_t2
   logdir: $RESULTS_DIR/brain/tta/debugging/dae_only/9_06/reproduce_previous_results
-  dae_dir: $RESULTS_DIR/brain/dae/hcp_t1
+  dae_dir: $RESULTS_DIR/brain/dae/hcp_t1/no_smoothing_fs_2024
   
   accumulate_over_volume: True
   batch_size: 32
+  repeat_dataset: 1 # 1 for subcortical structures, 2 for wmh
   num_steps: 1000 #1000  # 500 for brain, 2700 for wmh
   update_dae_output_every: 50
   calculate_dice_every: 25  # 25 for brain, 135 for wmh (nuhs, umc, vu)
