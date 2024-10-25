@@ -2,13 +2,14 @@
 #SBATCH --output=../../../../slurm_logs/%j_train_lcddpm.out
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
-#SBATCH --gres=gpu:1
-#SBATCH --constraint='geforce_gtx_titan_x'
+#SBATCH --mem-per-cpu=4g 
+#SBATCH --gpus=1 --gres=gpumem:10g
 
 
 if [ "$CLUSTER" = "bmic" ]; then
     source /scratch_net/biwidl319/jbermeo/conda/conda/etc/profile.d/conda.sh
     conda activate $ENV_DIR
+    echo "Python environment activated"
 
 elif [ "$CLUSTER" = "euler" ]; then
     # Load necessary modules
@@ -16,12 +17,14 @@ elif [ "$CLUSTER" = "euler" ]; then
     
     # Activate python environment
     source $ENV_DIR/bin/activate
+    echo "Python environment activated"
 
     # Copy data to compute node
     rsync -aqr $DATA_DIR/subcortical_structures/hcp/ ${TMPDIR}/data
 
     # Copy repo to compute node
     rsync -aqr $REPO_DIR ${TMPDIR}
+    echo "data and repo copied to compute node"
     
     # Reassign the necessary env variables
     export DATA_DIR=${TMPDIR}/data/hcp
