@@ -403,6 +403,7 @@ class ConditionalLatentGaussianDiffusion(BaseConditionalGaussianDiffusion):
         return_all_timesteps: bool = False, 
         num_sample_timesteps: Optional[int] = None,
         w_cfg: Optional[float] = None,
+        show_progress: bool = False
         ):
         
         ddim_scheduler = DDIMScheduler.from_config(
@@ -417,7 +418,8 @@ class ConditionalLatentGaussianDiffusion(BaseConditionalGaussianDiffusion):
             return_all_timesteps=return_all_timesteps,
             sample_scheduler=ddim_scheduler,
             num_sample_timesteps=num_sample_timesteps,
-            w_cfg=w_cfg
+            w_cfg=w_cfg,
+            show_progress=show_progress
         ) 
 
     @torch.inference_mode()
@@ -430,6 +432,7 @@ class ConditionalLatentGaussianDiffusion(BaseConditionalGaussianDiffusion):
         return_all_timesteps: bool = False,
         num_sample_timesteps: Optional[int] = None,
         w_cfg: Optional[float] = None,
+        show_progress: bool = False
     ) -> torch.Tensor | tuple[torch.Tensor, ...]:
         
         if isinstance(self._noise_scheduler, DDPMScheduler):
@@ -450,7 +453,8 @@ class ConditionalLatentGaussianDiffusion(BaseConditionalGaussianDiffusion):
             return_all_timesteps=return_all_timesteps,
             sample_scheduler=ddpm_scheduler,
             num_sample_timesteps=num_sample_timesteps,
-            w_cfg=w_cfg
+            w_cfg=w_cfg,
+            show_progress=show_progress
         )
 
     @torch.inference_mode()
@@ -463,6 +467,7 @@ class ConditionalLatentGaussianDiffusion(BaseConditionalGaussianDiffusion):
         sample_scheduler: Optional[SchedulerMixin] = None,
         num_sample_timesteps: Optional[int] = None,
         w_cfg: Optional[float] = None,
+        show_progress: bool = False
     ) -> torch.Tensor | tuple[torch.Tensor, ...]:
         
         if self._objective in ['pred_x0']:
@@ -505,7 +510,7 @@ class ConditionalLatentGaussianDiffusion(BaseConditionalGaussianDiffusion):
 
         # Sample the latents and apply denoising schedule or solver
         latent_history = []
-        for t in tqdm(timesteps):
+        for t in tqdm(timesteps, disable=not show_progress):
             # If using cfg, batch the forward pass for the conditional and unconditional prompts
             latents = latents.repeat(2, 1, 1, 1) if with_cfg else latents
             latents = noise_scheduler.scale_model_input(latents, t)

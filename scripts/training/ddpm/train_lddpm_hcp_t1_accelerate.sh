@@ -24,6 +24,8 @@ else
     echo "Python environment not activated. (env variable cluster: $CLUSTER)"
 fi
 
+export OMP_NUM_THREADS=4
+
 accelerate launch train_lcddpm.py \
     $REPO_DIR/config/datasets.yaml \
     $REPO_DIR/config/models.yaml \

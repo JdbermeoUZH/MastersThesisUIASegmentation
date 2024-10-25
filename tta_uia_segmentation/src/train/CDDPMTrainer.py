@@ -221,9 +221,12 @@ class CDDPMTrainer:
             torch.backends.cuda.matmul.allow_tf32 = True
 
         # optimizer
+        self._train_lr = train_lr
+
         if scale_lr:
             train_lr = train_lr * gradient_accumulate_every * train_batch_size
             train_lr *= accelerator.num_processes if not split_batches else 1
+            self._train_lr = train_lr
 
         if optimizer_type == 'adam':
             opt_class = Adam
@@ -412,7 +415,7 @@ class CDDPMTrainer:
         # Set the model to evaluation mode
         self.ema.ema_model.eval_mode()
 
-        for img_gt, seg_gt, _ in sample_dl:
+        for img_gt, seg_gt, _ in tqdm(sample_dl, desc=f'{prefix}-evaluation'):
             # Sample images from the model
             img_gt = img_gt.to(device, dtype=self.model.img_dtype)
             seg_gt = seg_gt.to(device, dtype=self.model.cond_img_dtype)
@@ -533,6 +536,10 @@ class CDDPMTrainer:
     def device(self):
         return self.accelerator.device
     
+    @property
+    def train_lr(self):
+        return self._train_lr
+
     def _setup_logging(self):
          # Make one log on every process with the configuration for debugging.
         logging.basicConfig(
