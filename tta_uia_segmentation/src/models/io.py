@@ -16,65 +16,8 @@ from tta_uia_segmentation.src.models import (
     ConditionalGaussianDiffusion,
     ConditionalLatentGaussianDiffusion
 )
-from tta_uia_segmentation.src.models.ddpm.UNetModelOAI import create_model_conditioned_on_seg_mask, model_defaults
-from tta_uia_segmentation.src.models.ddpm.ConditionalGaussianDiffusionOAI import ConditionalGaussianDiffusionOAI, diffusion_defaults
 from tta_uia_segmentation.src.models import DomainStatistics
-from improved_diffusion.script_util import create_gaussian_diffusion
-from improved_diffusion.resample import create_named_schedule_sampler
-from improved_diffusion.respace import SpacedDiffusion
 
-
-def load_icddpm_from_configs_and_cpt(
-    train_ddpm_cfg: dict,
-    model_ddpm_cfg: dict,
-    n_classes: int,
-    image_channels: int,
-    cpt_fp: str,
-    sampling_timesteps: str,
-    device: torch.device,
-) -> tuple[ConditionalUnet, SpacedDiffusion, nn.Module]:
-    
-    
-    
-    unet_model = create_model_conditioned_on_seg_mask(
-        image_size = train_ddpm_cfg['image_size'][-1],
-        image_channels = image_channels,
-        seg_cond = train_ddpm_cfg['seg_cond'],
-        num_channels = model_ddpm_cfg['num_channels'],
-        channel_mult = model_ddpm_cfg['channel_mult'],
-        learn_sigma = train_ddpm_cfg['learn_sigma'],
-        n_classes = n_classes,
-        num_res_blocks = model_ddpm_cfg['num_res_blocks'],
-        num_heads=model_ddpm_cfg['num_heads'],
-        dropout = train_ddpm_cfg['dropout'],
-        **model_defaults()
-    ).to(device)
-    # Load parameterers of the Unet model
-    unet_model.load_state_dict(torch.load(cpt_fp, map_location=device))
-
-    timestep_respacing = str(sampling_timesteps) if sampling_timesteps is not None\
-        else train_ddpm_cfg['timestep_respacing']
-
-    diffusion = create_gaussian_diffusion(
-        steps=train_ddpm_cfg['diffusion_steps'],
-        learn_sigma=train_ddpm_cfg['learn_sigma'],
-        noise_schedule=train_ddpm_cfg['noise_schedule'],
-        use_kl=train_ddpm_cfg['use_kl'],
-        timestep_respacing=timestep_respacing,
-        **diffusion_defaults()
-    )
-    
-    # Define a schedule sampler
-    schedule_sampler = train_ddpm_cfg['schedule_sampler']
-    schedule_sampler = create_named_schedule_sampler(schedule_sampler, diffusion)
-    
-    return ConditionalGaussianDiffusionOAI(
-        model=unet_model,
-        ddpm=diffusion,
-        schedule_sampler=schedule_sampler,
-        device=device
-    )
-    
     
 def load_cddpm_from_configs_and_cpt(
     train_ddpm_cfg: dict,

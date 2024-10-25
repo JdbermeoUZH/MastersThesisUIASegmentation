@@ -4,5 +4,5 @@ from tta_uia_segmentation.src.models.ddpm.BaseConditionalGaussianDiffusion impor
 from tta_uia_segmentation.src.models.ddpm.ConditionalGaussianDiffusion import ConditionalGaussianDiffusion
 from tta_uia_segmentation.src.models.ddpm.ConditionalLatentGaussianDiffusion import ConditionalLatentGaussianDiffusion
 from tta_uia_segmentation.src.models.ddpm.ConditionalUnet import ConditionalUnet
-from tta_uia_segmentation.src.models.ddpm.UNetModelOAI import UNetModelConditionedOnSegMask
+#from tta_uia_segmentation.src.models.ddpm.UNetModelOAI import UNetModelConditionedOnSegMask
 from tta_uia_segmentation.src.models.DomainStatistics import DomainStatistics
