@@ -20,7 +20,7 @@ from tta_uia_segmentation.src.utils.io import (
     load_config, dump_config, print_config, rewrite_config_arguments)
 from tta_uia_segmentation.src.utils.utils import (
     seed_everything, is_main_process, print_if_main_process, count_parameters, parse_bool)
-from tta_uia_segmentation.src.utils.logging import setup_wandb
+from tta_uia_segmentation.src.utils.logging import setup_wandb, update_dict, update_wandb_config
 
 
 logger = get_logger(__name__)
@@ -47,6 +47,8 @@ def preprocess_cmd_args() -> argparse.Namespace:
     parser.add_argument('--logdir', type=str, help='Path to directory where logs and checkpoints are saved. Default: logs')  
     parser.add_argument('--wandb_log', type=parse_bool, help='Log training to wandb. Default: False.')
     parser.add_argument('--start_new_exp', type=parse_bool, help='Start a new wandb experiment. Default: False')
+
+    parser.add_argument('--wandb_run_name', type=str, help='Name of wandb run. Default: None')
 
     # Model parameters
     # ----------------:
@@ -164,7 +166,8 @@ if __name__ == '__main__':
     seed            = train_config['seed']
     wandb_log       = train_config['wandb_log']
     start_new_exp   = train_config['start_new_exp']
-    
+    wandb_run_name  = train_config['wandb_run_name']
+
     logdir          = train_config[train_type]['logdir']
     wandb_project   = train_config[train_type]['wandb_project']
     
@@ -209,7 +212,7 @@ if __name__ == '__main__':
     # Setup wandb logging
     # :=========================================================================:
     if wandb_log and is_main_process():
-        wandb_dir = setup_wandb(params, logdir, wandb_project, start_new_exp)
+        wandb_dir = setup_wandb(params, logdir, wandb_project, start_new_exp, wandb_run_name)
     
     # Define the dataset that is to be used for training
     # :=========================================================================:
@@ -256,18 +259,20 @@ if __name__ == '__main__':
     )
     print_if_main_process('Datasets defined')
 
-    # Store in logdir the max and min, and class weights of the model (if any)
-    ddpm_additional_params = {
-        'max_intensity': train_dataset.images_max.item(),
-        'min_intensity': train_dataset.images_min.item(),
-    }
-    
-    if train_dataset.class_weights is not None:
-        ddpm_additional_params['class_weights'] = train_dataset.class_weights.tolist()
-    
+    # Update parameters that were dynamically set (min_max_intensity of normalized imgs)
     if is_main_process():
-        dump_config(os.path.join(logdir, 'ddpm_additional_params.yaml'), ddpm_additional_params)
-    
+        min_max_intensity = (train_dataset.images_min.item(),
+                             train_dataset.images_max.item())
+        print('min_max_intensity of images in trainset: ', min_max_intensity)
+ 
+        update_dict(
+            'training', 'lddpm', 'min_max_intensity',
+            value=min_max_intensity,
+            dict=params
+        )
+        dump_config(os.path.join(logdir, 'params.yaml'), params)
+        if wandb_log: update_wandb_config(params)
+
     # Define the diffusion pipeline
     # :=========================================================================:
     ddpm = define_and_possibly_load_lcddpm(
@@ -278,7 +283,6 @@ if __name__ == '__main__':
 
     # Define the trainer
     # :=========================================================================:
-    
     print_if_main_process('Defining trainer: training loop, optimizer and loss')
     train_num_steps             = train_config[train_type]['train_num_steps']
 
@@ -311,24 +315,22 @@ if __name__ == '__main__':
         scale_lr = scale_lr,
         num_workers=num_workers,
         train_num_steps = train_num_steps,
-        gradient_accumulate_every=gradient_accumulate_every,    # gradient accumulation steps
-        calculate_fid=calculate_fid,            # whether to calculate fid during training 
+        gradient_accumulate_every=gradient_accumulate_every,    
+        calculate_fid=calculate_fid,           
         log_val_loss_every=log_val_loss_every,
         save_and_sample_every=save_and_sample_every,
-        num_validation_samples=num_validation_samples,          # number of samples to generate for metric evaluation
+        num_validation_samples=num_validation_samples,         
         num_viz_samples=num_viz_samples,   
         results_folder=logdir,
         wandb_log=wandb_log,
-        amp=amp,                          # turn on mixed precision
-        mixed_precision_type=mixed_precision_type,              # mixed precision type
+        amp=amp,                         
+        mixed_precision_type=mixed_precision_type,              
         enable_xformers=enable_xformers,
         gradient_checkpointing=gradient_checkpointing,
         allow_tf32=allow_tf32,
     )
     
     if wandb_log and is_main_process():
-        #wandb.save(os.path.join(wandb_dir, trainer.get_last_checkpoint_name()), base_path=wandb_dir)
-        #wandb.watch([diffusion, model], trainer.get_loss_function(), log='all')
         wandb.watch([ddpm], log='all')
         
     # Resume previous point if necessary
@@ -339,7 +341,6 @@ if __name__ == '__main__':
         
     # Execute the training loop
     # :=========================================================================:
-    
     conditions_run = f"""
     Image size for DDPM: {ddpm.train_image_size} x {ddpm.train_image_size}
     Using Cross Attention layers: {ddpm.use_x_attention}

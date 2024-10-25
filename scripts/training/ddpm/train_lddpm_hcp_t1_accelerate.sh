@@ -14,7 +14,9 @@ elif [ "$CLUSTER" = "euler" ]; then
     # Copy data to compute node
     rsync -aq ./ ${TMPDIR}
 
-    rsync -aqr /cluster/work/cvl/jbermeo/data/hcp/ ${TMPDIR}/
+    rsync -aqr /cluster/work/cvl/jbermeo/data/hcp/ ${TMPDIR}/data
+
+    export $DATA_DIR=${TMPDIR}/data/hcp
 
     cd $TMPDIR
 

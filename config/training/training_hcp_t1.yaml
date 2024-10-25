@@ -1,4 +1,5 @@
 wandb_log:        True
+wandb_run_name:   null
 start_new_exp:    False
 seed:             0
 resume:           False
@@ -228,7 +229,7 @@ lddpm:
   num_validation_samples:       100      # Num of images to sample to check performance during training
   num_viz_samples:              50       # Must have an interger square root to store images in a square grid
   
-  calculate_fid:                True    # Whether to calculate FID during training
+  calculate_fid:                True     # Whether to calculate FID during training
   
   # Preprocessing Parameters
   clamp_after_norm:             True     # Whether to clamp images after normalization and unnormalization 
@@ -241,6 +242,7 @@ lddpm:
 
   normalize:                    min_max
   norm_q_range:                 [0.001, 0.999]
+  min_max_intensity:            null      # If null, it is calculated from the training set
   
   rescale_factor:               [1, 1, 1]
   image_size:                   [1, 256, 256]
