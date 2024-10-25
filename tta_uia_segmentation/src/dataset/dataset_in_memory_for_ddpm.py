@@ -57,7 +57,7 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
         normalize: str = 'min_max',
         norm_q_range: tuple[float, float] = (0., 1.),
         one_hot_encode: bool = True, 
-        intensity_value_range: Optional[tuple[float, float]] = None,
+        min_max_intensity: Optional[tuple[float, float]] = None,
         norm_device: str = 'cpu',
         norm_neg_one_to_one: bool = False,
         shard: int = 0,
@@ -124,8 +124,10 @@ class DatasetInMemoryForDDPM(DatasetInMemory):
         self.labels = self.labels[shard:][::num_shards]
         
         # Define the max and min values of the images
-        if intensity_value_range is not None:
-            self.images_min, self.images_max = intensity_value_range
+        if min_max_intensity is not None and \
+            all([val is not None for val in min_max_intensity]):
+            assert min_max_intensity[0] < min_max_intensity[1], 'Invalid intensity value range'
+            self.images_min, self.images_max = min_max_intensity
         elif use_original_imgs:
             self.images_min, self.images_max = self._find_min_max_in_original_imgs()
         else:

@@ -18,9 +18,12 @@ def env_var_constructor(loader, node):
     value = loader.construct_scalar(node)
     return os.path.expandvars(value)
 
+def tuple_constructor(loader, node):
+    return tuple(loader.construct_sequence(node))
 
 def load_config(path):
     yaml.add_constructor('tag:yaml.org,2002:str', env_var_constructor, Loader=yaml.SafeLoader)
+    yaml.add_constructor('tag:yaml.org,2002:python/tuple', tuple_constructor)
 
     # Register the constructor for any string value
     with open(path, 'r') as file:

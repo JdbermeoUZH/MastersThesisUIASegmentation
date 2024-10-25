@@ -74,7 +74,8 @@ def preprocess_cmd_args() -> argparse.Namespace:
     # -------------:
     parser.add_argument('--train_num_steps', type=int, help='Total number of training steps. Default: 50000') 
     
-    parser.add_argument('--learning_rate', type=float, help='Learning rate for optimizer. Default: 1e-4')
+    parser.add_argument('--learning_rate', type=float, help='Learning rate for optimizer. Default: 8e-5')
+    parser.add_argument('--scale_lr', type=parse_bool, help='Scale learning rate with batch size. Default: False')
     parser.add_argument('--batch_size', type=int, help='Batch size for training. Default: 4')
     parser.add_argument('--gradient_accumulate_every', type=int, help='Number of steps to accumulate gradients over. Default: 1')
     parser.add_argument('--num_workers', type=int, help='Number of workers for dataloader. Default: 0')
@@ -247,6 +248,7 @@ if __name__ == '__main__':
         one_hot_encode  = True,
         normalize       = train_config[train_type]['normalize'],
         norm_q_range    = train_config[train_type]['norm_q_range'],
+        min_max_intensity = train_config[train_type]['min_max_intensity'],
         paths_original  = dataset_config[dataset]['paths_original'],
         image_size      = image_size,
         resolution_proc = dataset_config[dataset]['resolution_proc'],
@@ -260,9 +262,12 @@ if __name__ == '__main__':
     print_if_main_process('Datasets defined')
 
     # Update parameters that were dynamically set (min_max_intensity of normalized imgs)
-    if is_main_process():
-        min_max_intensity = (train_dataset.images_min.item(),
-                             train_dataset.images_max.item())
+    find_min_max_intensity_norm_imgs = train_dataset.images_min.item() is None or \
+        train_dataset.images_max.item() is None
+    
+    if is_main_process() and find_min_max_intensity_norm_imgs:
+        min_max_intensity = [train_dataset.images_min.item(),
+                             train_dataset.images_max.item()]
         print('min_max_intensity of images in trainset: ', min_max_intensity)
  
         update_dict(
@@ -345,6 +350,7 @@ if __name__ == '__main__':
     Image size for DDPM: {ddpm.train_image_size} x {ddpm.train_image_size}
     Using Cross Attention layers: {ddpm.use_x_attention}
     Objective: {ddpm.objective}
+    Learning rate: {trainer.train_lr}
     Minibatch size: {batch_size}
     Effective batch size: {batch_size * gradient_accumulate_every}
     num_validation_samples: {num_validation_samples}
