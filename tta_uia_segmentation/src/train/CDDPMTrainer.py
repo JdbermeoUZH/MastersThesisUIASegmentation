@@ -334,7 +334,6 @@ class CDDPMTrainer:
 
                 with self.accelerator.autocast():
                     loss = self.model(img, cond_img)
-                    loss = loss / self.gradient_accumulate_every
                     total_loss += loss.item()
 
                 self.accelerator.backward(loss)

@@ -6,6 +6,7 @@
 #SBATCH --constraint='geforce_gtx_titan_x'
 
 
+# ------------------  Python Environment And Data ------------------
 if [ "$CLUSTER" = "bmic" ]; then
     source /scratch_net/biwidl319/jbermeo/conda/conda/etc/profile.d/conda.sh
     conda activate $ENV_DIR
@@ -39,14 +40,44 @@ else
     echo "Python environment not activated. (env variable cluster: $CLUSTER)"
 fi
 
-export OMP_NUM_THREADS=4
+# ------------------  Separate Command Line Arguments --------------------
 
-accelerate launch train_lcddpm.py \
+# Initialize empty arrays to hold arguments for each command
+accel_args=()
+train_args=()
+
+# Parse arguments
+while [[ "$#" -gt 0 ]]; do
+    case $1 in
+        --accel_*) 
+            # Strip the --accel_ prefix before adding to accel_args
+            stripped_arg="${1/--accel_/--}"  # Remove the prefix
+            accel_args+=("$stripped_arg" "$2") 
+            shift ;;  # Move to the next argument
+        *) 
+            train_args+=("$1") ;;  # All other arguments go to train_lcddpm.py
+    esac
+    shift
+done
+
+# Debugging: print parsed arguments (optional)
+echo "Accelerate args: ${accel_args[@]}"
+echo "Training args: ${train_args[@]}"
+
+# ------------------  Script ------------------------------------------------
+
+echo "Job ID: $SLURM_JOB_ID"
+#echo "CPUs per Task: $SLURM_CPUS_PER_TASK"
+export OMP_NUM_THREADS=2 
+
+accelerate launch "${accel_args[@]}" train_lcddpm.py \
     $REPO_DIR/config/datasets.yaml \
     $REPO_DIR/config/models.yaml \
     $REPO_DIR/config/training/training_hcp_t1.yaml \
-    "$@" 
+    "${train_args[@]}" 
 
+
+# ------------------  Copy Results From Compute Node --------------------
 if [ "$CLUSTER" = "euler" ]; then
     rsync -auq ${TMPDIR}/ $LS_SUBCWD
     rsync -auq ${RESULTS_DIR}/ $OLD_RESULTS_DIR
