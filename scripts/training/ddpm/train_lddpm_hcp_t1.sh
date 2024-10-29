@@ -18,18 +18,22 @@ elif [ "$CLUSTER" = "euler" ]; then
     source $ENV_DIR/bin/activate
 
     # Copy data to compute node
-    rsync -aqr $DATA_DIR/subcortical_structures/hcp/ ${TMPDIR}/data
+    rsync -aqr $DATA_DIR ${TMPDIR}
+    export DATA_DIR=${TMPDIR}/data
+    echo "Data dir: $DATA_DIR"
+    
+    # Copy models necessary for training
+    mkdir ${TMPDIR}/models
+    rsync -aqr ${MODEL_DIR}/segmentation ${TMPDIR}/models/
+    export MODEL_DIR=${TMPDIR}/models
+    echo "Model dir: $MODEL_DIR"
 
     # Copy repo to compute node
     rsync -aqr $REPO_DIR ${TMPDIR}
-    
-    # Reassign the necessary env variables
-    export DATA_DIR=${TMPDIR}/data/hcp
-    echo "Data dir: $DATA_DIR"
-
     export REPO_DIR=${TMPDIR}/${REPO_DIR##*/}
     echo "Repo dir: $REPO_DIR"
     
+    # Create new env variable in compute node for results
     export OLD_RESULTS_DIR=$RESULTS_DIR
     export RESULTS_DIR=${TMPDIR}/results
     echo "Results dir: $RESULTS_DIR"

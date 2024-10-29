@@ -102,6 +102,7 @@ def sample_t_noise_pairs(
         
         return t_values, noise
 
+
 class FIDEvaluation(FIDEvaluation):
     def fid_score_from_samples(self, samples):
         # Load statistics from the real images

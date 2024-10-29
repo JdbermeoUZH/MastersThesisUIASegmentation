@@ -109,7 +109,7 @@ def preprocess_cmd_args() -> argparse.Namespace:
     parser.add_argument('--norm_q_range', type=float, nargs=2, help='Quantile range for normalization model')
     
     parser.add_argument('--norm_with_nn_on_fly', type=parse_bool, help='Whether to normalize with nn on the fly. Default: False')
-    parser.add_argument('--norm_dir', type=str, nargs='*', help='Path to directory where normalization model is saved')
+    parser.add_argument('--norm_dir', type=str, help='Path to directory where normalization model is saved')
     
     args = parser.parse_args()
     
@@ -357,6 +357,7 @@ if __name__ == '__main__':
     num_viz_samples: {num_viz_samples}
     Number of parameters of the model: {count_parameters(ddpm):,}
     Using AMP: {amp}
+    Mixed precision type: {mixed_precision_type}
     device: {trainer.device}
     """
 
