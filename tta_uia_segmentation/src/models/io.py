@@ -1,5 +1,6 @@
 import os
 import json
+import math
 from typing import Optional, Union
 
 import torch
@@ -14,9 +15,12 @@ from tta_uia_segmentation.src.models import (
     ConditionalUnet,
     UNet,
     ConditionalGaussianDiffusion,
-    ConditionalLatentGaussianDiffusion
+    ConditionalLatentGaussianDiffusion,
+    DinoSeg
 )
 from tta_uia_segmentation.src.models import DomainStatistics
+from tta_uia_segmentation.src.models.dino.DinoV2FeatureExtractor import DinoV2FeatureExtractor
+from tta_uia_segmentation.src.models.dino.DinoSeg import DinoSeg, ResNetDecoder
 
     
 def load_cddpm_from_configs_and_cpt(
@@ -64,6 +68,38 @@ def load_cddpm_from_configs_and_cpt(
     
     return ddpm_ema.model
 
+
+def define_and_possibly_load_dino_seg(
+    train_dino_seg_cfg: dict,
+    n_classes: int,
+    cpt_fp: str,
+    device: torch.device,
+) -> DinoSeg:
+    # Define DinoFeatureExtractor
+    dino_fe = DinoV2FeatureExtractor(train_dino_seg_cfg['dino_model'])
+
+    # Define Decoder
+    num_upsampling = math.ceil(math.log2(dino_fe.patch_size)) + 1
+    num_channels = [int(dino_fe.emb_dim / (2 ** i)) for i in range(num_upsampling)]
+
+    decoder = ResNetDecoder(
+        output_size=train_dino_seg_cfg['image_size'][-2:],
+        n_classes=n_classes,
+        channels=num_channels,
+        n_dimensions=2)
+    
+    # Create wrapping DinoSeg model
+    dino_seg = DinoSeg(
+        decoder=decoder, dino_fe=dino_fe,
+        features_are_precalculated=train_dino_seg_cfg['features_are_precalculated']
+    ).to(device)
+
+    if cpt_fp is not None:
+        cpt = torch.load(cpt_fp, map_location=device)
+        dino_seg.load_state_dict(cpt)
+
+    return dino_seg
+ 
 
 def define_and_possibly_load_lcddpm(
     train_config: dict,

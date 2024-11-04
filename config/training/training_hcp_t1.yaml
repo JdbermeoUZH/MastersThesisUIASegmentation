@@ -96,6 +96,56 @@ segmentation:
     noise_std:          0.1
 
 
+segmentation_dino:
+  dino_model:                   "large"  # small, base, large, gigantic
+  svd_path:                     null
+  
+  features_precalculated:       False
+  
+  batch_size:                   16
+  num_workers:                  2
+  image_size:                   [1, 256, 256]
+  epochs:                       150  # 150 for subcortical_structures, 1000 for WMH (nuhs, umc)
+  validate_every:               3
+  learning_rate:                0.001
+  logdir:                       $RESULTS_DIR/subcortical_structures/segmentation/hcp_t1/dino_seg
+  wandb_project:                mt-segmentation_models
+  
+  with_bg_supression:           False
+
+  # Loss function parameters
+  epsilon:                      1e-10
+  smooth:                       0
+  debug_mode:                   False
+  fg_only:                      False  
+
+  bg_suppression_opts:
+    type:               none  # possible values: none, fixed_value, random_value, None means no background suppression
+    bg_value:           -0.5
+    bg_value_min:       -0.5
+    bg_value_max:       1
+    mask_source:        thresholding  # possible values: thresholding, ground_truth
+    thresholding:       otsu  # possible values: isodata, li, mean, minimum, otsu, triangle, yen
+    hole_filling:       True
+  
+  augmentation:
+    da_ratio:           0.25
+    sigma:              20
+    alpha:              1000
+    trans_min:          -10
+    trans_max:          10
+    rot_min:            -10
+    rot_max:            10
+    scale_min:          0.9
+    scale_max:          1.1
+    gamma_min:          0.5 #0.2     # Default 0.5
+    gamma_max:          2.0 #5.0     # Default 2.0
+    brightness_min:     0.0 #-0.2    # Default 0.0
+    brightness_max:     0.1 #0.2     # Default 0.1
+    noise_mean:         0.0
+    noise_std:          0.1
+
+
 ddpm_lucidrains:
   logdir:                       $RESULTS_DIR/subcortical_structures/ddpm/hcp_t1/normalized_imgs/3x3_norm_filters/4_15/batch_size_128_cond_by_concat
   wandb_project:                mt-ddpm

@@ -3,7 +3,6 @@ import torch.nn as nn
 from torch.nn import functional as F
 
 from tta_uia_segmentation.src.models.norm_seg.utils import get_conv, get_batch_norm, get_max_pool
-
 from tta_uia_segmentation.src.utils.utils import assert_in
 
 class DoubleConv(nn.Module):

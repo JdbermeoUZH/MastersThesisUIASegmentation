@@ -8,11 +8,10 @@ from torchvision import transforms
 
 from matplotlib import pyplot as plt
 
-import umap
 from sklearn.manifold import TSNE
 from sklearn.decomposition import PCA
 
-
+nn.Conv2d
 
 
 def resize_to_multiple_of_patch(image, patch_size):
@@ -85,6 +84,7 @@ class DinoV2FeatureExtractor(nn.Module):
         self.model_name = model
         super(DinoV2FeatureExtractor, self).__init__()
         self.model = self._initialize_dino(model, pretrained=True, **kwargs)
+        
         self.model.eval()
 
 
@@ -188,7 +188,17 @@ class DinoV2FeatureExtractor(nn.Module):
 
         else:
             raise ValueError(f"Model {model} not supported.")
-            
+        
+        return model
+
+    @property
+    def patch_size(self):
+        return self.model.patch_size
+    
+    @property   
+    def emb_dim(self):
+        return self.model.patch_embed.proj.out_channels
+    
 
 def patch2rgb(patch, maps=['umap', 'tsne', 'pca']):
 
@@ -200,13 +210,7 @@ def patch2rgb(patch, maps=['umap', 'tsne', 'pca']):
     embRGBs = {}
 
     for map_i in maps:
-        if map_i == 'umap':
-            mapper = umap.UMAP(n_components=3).fit(patch)
-            embedding = mapper.transform(patch)
-            normalized_embedding = (embedding - embedding.min()) / (embedding.max() - embedding.min())
-            embRGB = normalized_embedding.reshape(h, w, 3)
-            embRGBs['umap'] = embRGB
-        elif map_i == 'tsne':
+        if map_i == 'tsne':
             embedding = TSNE(n_components=3).fit_transform(patch)
             normalized_embedding = (embedding - embedding.min()) / (embedding.max() - embedding.min())
             embRGB = normalized_embedding.reshape(h, w, 3)
