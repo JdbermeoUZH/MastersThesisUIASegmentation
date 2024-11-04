@@ -9,7 +9,11 @@
 # ------------------  Python Environment And Data ------------------
 if [ "$CLUSTER" = "bmic" ]; then
     source /scratch_net/biwidl319/jbermeo/conda/conda/etc/profile.d/conda.sh
-    conda activate $ENV_DIR
+    conda activate /scratch_net/biwidl319/jbermeo/GNN-Domain-Generalization-main/net_scratch/conda_envs/tta_uia_seg
+    export CUDA_LAUNCH_BLOCKING=1
+
+    #conda activate $ENV_DIR
+    #echo "Python environment activated. (ENV_DIR: $ENV_DIR)"
 
 elif [ "$CLUSTER" = "euler" ]; then
     source /cluster/project/cvl/admin/cvl_settings_ubuntu
@@ -36,9 +40,13 @@ elif [ "$CLUSTER" = "euler" ]; then
     # Move to the dir where current script should be
     cd $REPO_DIR/scripts/training/ddpm
 
+    # Create a triton cache dir env variable
+    export TRITON_CACHE_DIR=${TMPDIR}/TRITON_CACHE_DIR
+
 else
     echo "Python environment not activated. (env variable cluster: $CLUSTER)"
 fi
+
 
 # ------------------  Separate Command Line Arguments --------------------
 
@@ -69,7 +77,6 @@ echo "Training args: ${train_args[@]}"
 echo "Job ID: $SLURM_JOB_ID"
 #echo "CPUs per Task: $SLURM_CPUS_PER_TASK"
 export OMP_NUM_THREADS=2 
-
 accelerate launch "${accel_args[@]}" train_lcddpm.py \
     $REPO_DIR/config/datasets.yaml \
     $REPO_DIR/config/models.yaml \

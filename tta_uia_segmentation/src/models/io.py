@@ -143,7 +143,7 @@ def define_and_possibly_load_lcddpm(
         fit_emb_for_cond_img=fit_emb_for_cond_img,
         cond_type=cond_type,
         snr_weighting_gamma=snr_weighting_gamma,
-        reset_betas_zero_snr=reset_betas_zero_snr,
+        rescale_betas_zero_snr=reset_betas_zero_snr,
     )
 
     if cpt_fp is not None:

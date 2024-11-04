@@ -60,7 +60,7 @@ class ConditionalLatentGaussianDiffusion(BaseConditionalGaussianDiffusion):
         cond_type: Literal['concat', 'sum'] = 'sum',
         clamp_after_norm: bool = True,
         snr_weighting_gamma: Optional[float] = None,
-        reset_betas_zero_snr: bool = False,
+        rescale_betas_zero_snr: bool = False,
         mixed_precision: Optional[Literal["fp16", "bf16"]] = None
         ):
  
@@ -139,7 +139,7 @@ class ConditionalLatentGaussianDiffusion(BaseConditionalGaussianDiffusion):
         self._w_cfg = w_cfg
         self._cfg_rescale = cfg_rescale
         
-        self._reset_betas_zero_snr = reset_betas_zero_snr 
+        self._rescale_betas_zero_snr = rescale_betas_zero_snr 
         self._snr_weighting_gamma = snr_weighting_gamma
 
         # Unconditional training rate parameters
@@ -403,12 +403,19 @@ class ConditionalLatentGaussianDiffusion(BaseConditionalGaussianDiffusion):
         return_all_timesteps: bool = False, 
         num_sample_timesteps: Optional[int] = None,
         w_cfg: Optional[float] = None,
-        show_progress: bool = False
+        show_progress: bool = False,
+        **kwargs
         ):
         
+        if 'rescale_betas_zero_snr' in kwargs:
+            rescale_betas_zero_snr = kwargs.pop('rescale_betas_zero_snr')
+        else:
+            rescale_betas_zero_snr = self._rescale_betas_zero_snr
+            
         ddim_scheduler = DDIMScheduler.from_config(
             self._noise_scheduler.config,
-            rescale_betas_zero_snr=self._reset_betas_zero_snr
+            rescale_betas_zero_snr=rescale_betas_zero_snr,
+            **kwargs
             )
 
         return self.sample(
@@ -432,7 +439,8 @@ class ConditionalLatentGaussianDiffusion(BaseConditionalGaussianDiffusion):
         return_all_timesteps: bool = False,
         num_sample_timesteps: Optional[int] = None,
         w_cfg: Optional[float] = None,
-        show_progress: bool = False
+        show_progress: bool = False,
+        **kwargs
     ) -> torch.Tensor | tuple[torch.Tensor, ...]:
         
         if isinstance(self._noise_scheduler, DDPMScheduler):
@@ -440,10 +448,16 @@ class ConditionalLatentGaussianDiffusion(BaseConditionalGaussianDiffusion):
         else:
             beta_schedule = default(beta_schedule, 'linear')
 
+        if 'rescale_betas_zero_snr' in kwargs:
+            rescale_betas_zero_snr = kwargs.pop('rescale_betas_zero_snr')
+        else:
+            rescale_betas_zero_snr = self._rescale_betas_zero_snr
+
         ddpm_scheduler = DDPMScheduler.from_config( 
             self._noise_scheduler.config,
             beta_schedule=beta_schedule,
-            rescale_betas_zero_snr=self._reset_betas_zero_snr,
+            rescale_betas_zero_snr=rescale_betas_zero_snr,
+            **kwargs
         )
 
         return self.sample(
