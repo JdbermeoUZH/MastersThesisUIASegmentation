@@ -329,12 +329,10 @@ class CDDPMTrainer:
         while self.step < self.train_num_steps:
             img, cond_img, _ = next(self.train_dl_cycle)               
             with self.accelerator.accumulate(*self.model.get_modules_to_train()):
-                img = img.to(device, dtype=self.model.img_dtype)
-                cond_img = cond_img.to(device, dtype=self.model.cond_img_dtype)
-
                 with self.accelerator.autocast():
+                    img = img.to(device, dtype=self.model.img_dtype)
+                    cond_img = cond_img.to(device, dtype=self.model.cond_img_dtype)
                     loss = self.model(img, cond_img)
-                    loss = loss / self.gradient_accumulate_every
                     total_loss += loss.item()
 
                 self.accelerator.backward(loss)

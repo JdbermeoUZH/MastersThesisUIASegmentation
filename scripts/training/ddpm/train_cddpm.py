@@ -5,20 +5,25 @@ import glob
 import argparse
 
 import wandb
-from accelerate import Accelerator
+from diffusers import AutoencoderKL, UNet2DConditionModel, UNet2DModel
+from accelerate.logging import get_logger
 
 sys.path.append(os.path.normpath(os.path.join(
     os.path.dirname(__file__), '..', '..', '..')))
 
 from tta_uia_segmentation.src.dataset.dataset_in_memory_for_ddpm import get_datasets
-from tta_uia_segmentation.src.models import ConditionalGaussianDiffusion, ConditionalUnet
-from tta_uia_segmentation.src.models.io import load_norm_from_configs_and_cpt
+from tta_uia_segmentation.src.models import ConditionalGaussianDiffusion
+from tta_uia_segmentation.src.models.io import (
+    load_norm_from_configs_and_cpt, define_and_possibly_load_cddpm)
 from tta_uia_segmentation.src.train import CDDPMTrainer
 from tta_uia_segmentation.src.utils.io import (
     load_config, dump_config, print_config, rewrite_config_arguments)
-from tta_uia_segmentation.src.utils.utils import seed_everything, define_device
-from tta_uia_segmentation.src.utils.logging import setup_wandb
+from tta_uia_segmentation.src.utils.utils import (
+    seed_everything, is_main_process, print_if_main_process, count_parameters, parse_bool)
+from tta_uia_segmentation.src.utils.logging import setup_wandb, update_dict, update_wandb_config
 
+
+logger = get_logger(__name__)
 
 
 def preprocess_cmd_args() -> argparse.Namespace:
@@ -29,11 +34,12 @@ def preprocess_cmd_args() -> argparse.Namespace:
     
     """
     parser = argparse.ArgumentParser(description="Train Segmentation Model (with shallow normalization module)")
-    parse_bool = lambda s: s.strip().lower() == 'true'
     
     parser.add_argument('dataset_config_file', type=str, help='Path to yaml config file with parameters that define the dataset.')
     parser.add_argument('model_config_file', type=str, help='Path to yaml config file with parameters that define the model.')
     parser.add_argument('train_config_file', type=str, help='Path to yaml config file with parameters for training.')
+    
+    parser.add_argument('--seed', type=int, help='Seed for random number generators. Default: 0')   
     
     # Training parameters. If provided, overrides default parameters from config file.
     # :================================================================================================:
@@ -42,51 +48,68 @@ def preprocess_cmd_args() -> argparse.Namespace:
     parser.add_argument('--wandb_log', type=parse_bool, help='Log training to wandb. Default: False.')
     parser.add_argument('--start_new_exp', type=parse_bool, help='Start a new wandb experiment. Default: False')
 
+    parser.add_argument('--wandb_run_name', type=str, help='Name of wandb run. Default: None')
+
     # Model parameters
     # ----------------:
     parser.add_argument('--dim', type=int, help='Number of feature maps in the first block. Default: 64')
-    parser.add_argument('--dim_mults', type=int, nargs='+', help='Multiplicative factors for the number of feature maps in each block. Default: [1, 2, 4, 8]')
-    parser.add_argument('--condition_by_mult', type=parse_bool, help='Whether to condition by multiplication or concatenation. Default: False')
-    
+    parser.add_argument('--dim_mults', type=int, nargs='+', help='Multiplicative factors for the number of feature maps in each block. Default: [1, 2, 2, 2]')
+    parser.add_argument('--channels', type=int, help='Number of channels in the input image. Default: 3')
+    parser.add_argument('--use_x_attention', type=parse_bool, help='Whether to use cross-attention. Default: False')
+
+    parser.add_argument('--fit_emb_for_cond_img', type=parse_bool, help='Whether to fit the embedding for the conditional image. Default: True')
+
     # Noising parameters
     # ------------------:
     parser.add_argument('--timesteps', type=int, help='Number of timesteps in diffusion process. Default: 1000')
+    parser.add_argument('--reset_betas_zero_snr', type=parse_bool, help='Whether to reset betas to zero snr. Default: False')
+
+    # Training Loss
+    # ------------:
+    parser.add_argument('--objective', type=str, help='Objective to use for training. Default: pred_v', choices=['pred_noise', 'pred_xt_m_1', 'pred_v', 'pred_x0'])
+    parser.add_argument('--snr_weighting_gamma', type=float, help='Gamma parameter for snr weighting. Default: None or 5.0')
+    parser.add_argument('--optimizer_type', type=str, help='Type of optimizer to use. Default: "adam"', choices=['adam', 'adamw', 'adamW8bit'])
+    
+    # Training loop
+    # -------------:
+    parser.add_argument('--train_num_steps', type=int, help='Total number of training steps. Default: 50000') 
+    
+    parser.add_argument('--learning_rate', type=float, help='Learning rate for optimizer. Default: 8e-5')
+    parser.add_argument('--scale_lr', type=parse_bool, help='Scale learning rate with batch size. Default: False')
+    parser.add_argument('--batch_size', type=int, help='Batch size for training. Default: 4')
+    parser.add_argument('--gradient_accumulate_every', type=int, help='Number of steps to accumulate gradients over. Default: 1')
+    parser.add_argument('--num_workers', type=int, help='Number of workers for dataloader. Default: 0')
+    
+    parser.add_argument('--unconditional_rate', type=float, help='Rate at which to forward pass unconditionally. Default: 0.2')
+    
+    parser.add_argument('--amp', type=parse_bool, help='Use automatic mixed precision. Default: True')
+    parser.add_argument('--mixed_precision_type', type=str, help='Type of mixed precision to use. Default "fp16"', choices=["fp16", "bf16", "fp8"])
+    parser.add_argument('--allow_tf32', type=parse_bool, help='Allow tf32. Use for Ampere GPUs. Default: False')
+    parser.add_argument('--enable_xformers', type=parse_bool, help='Enable xformers. Default: False')
+    parser.add_argument('--gradient_checkpointing', type=parse_bool, help='Use gradient checkpointing. Default: False')
+
+    # Evaluation Parameters
+    # ---------------------:
     parser.add_argument('--log_val_loss_every', type=int, help='Log validation loss every n steps. Default: 250')
     parser.add_argument('--save_and_sample_every', type=int, help='Save and sample every n steps. Default: 1000')
     parser.add_argument('--sampling_timesteps', type=int, help='Number of timesteps to sample from. Default: 1000')
     parser.add_argument('--num_validation_samples', type=int, help='Number of samples to generate for metric evaluation. Default: 1000')
     parser.add_argument('--num_viz_samples', type=int, help='Number of samples to generate for visualization. Default: 16')
-    
-    # Training loop
-    # -------------:
-    parser.add_argument('--objective', type=str, help='Objective to use for training. Default: gaussian')
-    parser.add_argument('--also_unconditional', type=parse_bool, help='Whether to also train an unconditional model. Default: False')
-    parser.add_argument('--only_unconditional', type=parse_bool, help='Whether to train only the unconditional model. Default: False')
-    parser.add_argument('--class_weighing', type=str, help='Which type of class weighing to use. Default: "none"')
-    parser.add_argument('--classes_of_interest', type=int, nargs='*', help='Classes to focus on when calculating class weights. Default: None')
-    parser.add_argument('--clip_classes_of_interest_at_factor', type=float, help='Factor by which to clip the class weights of the classes of interest. Default: 10.0')
-    parser.add_argument('--batch_size', type=int, help='Batch size for training. Default: 4')
-    parser.add_argument('--gradient_accumulate_every', type=int, help='Number of steps to accumulate gradients over. Default: 1')
-    parser.add_argument('--train_num_steps', type=int, help='Total number of training steps. Default: 50000') 
-    parser.add_argument('--learning_rate', type=float, help='Learning rate for optimizer. Default: 1e-4')
-    parser.add_argument('--unconditional_rate', type=float, help='Rate at which to forward pass unconditionally. Default: 0.2')
-    parser.add_argument('--num_workers', type=int, help='Number of workers for dataloader. Default: 0')
-    parser.add_argument('--seed', type=int, help='Seed for random number generators. Default: 0')   
-    parser.add_argument('--device', type=str, help='Device to use for training. Default cuda', )
-    parser.add_argument('--amp', type=parse_bool, help='Use automatic mixed precision. Default: True')
+
+    parser.add_argument('--calculate_fid', type=parse_bool, help='Whether to calculate FID during training. Default: False')
     
     # Dataset and its transformations to use for training
     # ---------------------------------------------------:
     parser.add_argument('--dataset', type=str, help='Name of dataset to use for training')
-    parser.add_argument('--n_classes', type=int, help='Number of classes in dataset')
-    parser.add_argument('--image_size', type=int, nargs='+', help='Size of images in dataset')
-    parser.add_argument('--resolution_proc', type=float, nargs='+', help='Resolution of images in dataset')
-    parser.add_argument('--rescale_factor', type=float, nargs='+', help='Rescale factor for images in dataset')
-    parser.add_argument('--use_original_imgs', type=parse_bool, help='Whether to use original images for training. Default: False')
-    parser.add_argument('--norm_with_nn_on_fly', type=parse_bool, help='Whether to normalize with nn on the fly. Default: False')
     
-    parser.add_argument('--norm_dir', type=str, nargs='*', help='Path to directory where normalization model is saved')
+    parser.add_argument('--use_original_imgs', type=parse_bool, help='Whether to use original images for training. Default: False')
+    
+    parser.add_argument('--image_size', type=int, nargs='+', help='Size of images in dataset')
+    parser.add_argument('--rescale_factor', type=float, nargs='+', help='Rescale factor for images in dataset')
     parser.add_argument('--norm_q_range', type=float, nargs=2, help='Quantile range for normalization model')
+    
+    parser.add_argument('--norm_with_nn_on_fly', type=parse_bool, help='Whether to normalize with nn on the fly. Default: False')
+    parser.add_argument('--norm_dir', type=str, help='Path to directory where normalization model is saved')
     
     args = parser.parse_args()
     
@@ -105,11 +128,11 @@ def get_configuration_arguments() -> tuple[dict, dict, dict]:
     train_config = load_config(args.train_config_file)
     train_config = rewrite_config_arguments(train_config, args, 'train')
     
-    model_config['ddpm_unet'] = rewrite_config_arguments(
-        model_config['ddpm_unet'], args, 'model, ddpm_unet')
+    model_config['lddpm_unet'] = rewrite_config_arguments(
+        model_config['lddpm_unet'], args, 'model, lddpm_unet')
     
-    train_config['ddpm'] = rewrite_config_arguments(
-        train_config['ddpm'], args, 'train, ddpm')
+    train_config['lddpm'] = rewrite_config_arguments(
+        train_config['lddpm'], args, 'train, lddpm')
     
     return dataset_config, model_config, train_config
 
@@ -134,29 +157,25 @@ def get_last_milestone(logdir: str) -> int:
 if __name__ == '__main__':
 
     print(f'Running {__file__}')
-    train_type = 'ddpm'
-    accelerator = Accelerator(
-            split_batches = True,
-            mixed_precision = 'no'
-        )
+    train_type = 'cddpm'
+    unet_type = 'ddpm_unet'
     
     # Loading general parameters
     # :=========================================================================:
     dataset_config, model_config, train_config = get_configuration_arguments()
-    
     resume          = train_config['resume']
     seed            = train_config['seed']
-    device          = train_config['device']
     wandb_log       = train_config['wandb_log']
     start_new_exp   = train_config['start_new_exp']
-    
+    wandb_run_name  = train_config['wandb_run_name']
+
     logdir          = train_config[train_type]['logdir']
     wandb_project   = train_config[train_type]['wandb_project']
     
-    # Write or load parameters to/from logdir, used if a run is resumed.
+    # Write or load parameters to/from logdir, if a run is resumed.
     # :=========================================================================:
     is_resumed = os.path.exists(os.path.join(logdir, 'params.yaml')) and resume
-    if accelerator.is_main_process: print(f'training resumed: {is_resumed}')
+    print_if_main_process(f'training resumed: {is_resumed}')
 
     if is_resumed:
         params = load_config(os.path.join(logdir, 'params.yaml'))
@@ -173,10 +192,11 @@ if __name__ == '__main__':
         
         params = {
             'dataset': dataset_config, 
-            'model': {**model_config,  'norm': dict()},
-            'training': {**train_config, 'norm': dict()}, 
+            'model': {**model_config},
+            'training': {**train_config}, 
         }
         
+        # If using images normalized with a network, load the normalization parameters
         if not train_config[train_type]['use_original_imgs']:
             params_norm = load_config(os.path.join(
                 train_config[train_type]['norm_dir'], 'params.yaml'))
@@ -186,22 +206,21 @@ if __name__ == '__main__':
             params['model']['norm'] = model_params_norm
             params['training']['norm'] = train_params_norm
 
+        if is_main_process(): dump_config(os.path.join(logdir, 'params.yaml'), params)
 
-        if accelerator.is_main_process: dump_config(os.path.join(logdir, 'params.yaml'), params)
-
-    if accelerator.is_main_process: print_config(params, keys=['training', 'model'])
+    if is_main_process(): print_config(params, keys=['training', 'model'])
 
     # Setup wandb logging
     # :=========================================================================:
-    if wandb_log and accelerator.is_main_process:
-        wandb_dir = setup_wandb(params, logdir, wandb_project, start_new_exp)
+    if wandb_log and is_main_process():
+        wandb_dir = setup_wandb(params, logdir, wandb_project, start_new_exp, wandb_run_name)
     
     # Define the dataset that is to be used for training
     # :=========================================================================:
-    if accelerator.is_main_process: print('Defining dataset')
+    print_if_main_process('Defining dataset')
+
     seed_everything(seed)
-    device              = define_device(device)
-    dataset             = train_config[train_type]['dataset']
+    dataset             = train_config['dataset']
     n_classes           = dataset_config[dataset]['n_classes']
     batch_size          = train_config[train_type]['batch_size']
     norm_dir            = train_config[train_type]['norm_dir']   
@@ -217,148 +236,132 @@ if __name__ == '__main__':
         norm = None
     
     # Dataset definition
+    image_size          = train_config[train_type]['image_size']
+
     train_dataset, val_dataset = get_datasets(
+        dataset_name    = dataset,
         splits          = ['train', 'val'],
         norm            = norm,
         paths           = dataset_config[dataset]['paths_processed'],
-        paths_normalized_h5 = None, # dataset_config[dataset]['paths_normalized_with_nn'],
         use_original_imgs = train_config[train_type]['use_original_imgs'],
-        one_hot_encode  = train_config[train_type]['one_hot_encode'],
+        one_hot_encode  = True,
         normalize       = train_config[train_type]['normalize'],
         norm_q_range    = train_config[train_type]['norm_q_range'],
+        min_max_intensity = train_config[train_type]['min_max_intensity'],
         paths_original  = dataset_config[dataset]['paths_original'],
-        image_size      = train_config[train_type]['image_size'],
+        image_size      = image_size,
         resolution_proc = dataset_config[dataset]['resolution_proc'],
         dim_proc        = dataset_config[dataset]['dim'],
         n_classes       = n_classes,
-        class_weighing  = train_config[train_type]['class_weighing'],
-        classes_of_interest = train_config[train_type]['classes_of_interest'],
-        clip_classes_of_interest_at_factor = train_config[train_type]['clip_classes_of_interest_at_factor'],
         aug_params      = train_config[train_type]['augmentation'],
         rescale_factor  = train_config[train_type]['rescale_factor'],
-        bg_suppression_opts = train_config[train_type]['bg_suppression_opts'],
-        deformation     = None,
         load_original   = False,
     )
-    if accelerator.is_main_process: print('Dataloaders defined')
-    
-    # Define the denoiser model diffusion pipeline
-    # :=========================================================================:
-    
-    dim                 = model_config['ddpm_unet']['dim']
-    dim_mults           = model_config['ddpm_unet']['dim_mults']
-    channels            = model_config['ddpm_unet']['channels']
-    
-    objective           = train_config[train_type]['objective']
-    timesteps           = train_config[train_type]['timesteps']
-    sampling_timesteps  = train_config[train_type]['sampling_timesteps']
-    condition_by_mult   = train_config[train_type]['condition_by_mult']
-    also_unconditional  = train_config[train_type]['also_unconditional']
-    unconditional_rate  = train_config[train_type]['unconditional_rate']
-    only_unconditional  = train_config[train_type]['only_unconditional']
-    
-    if accelerator.is_main_process: print(f'Using Device {device}')
-    
-    if only_unconditional:
-        n_classes = None
+    print_if_main_process('Datasets defined')
 
-    # Model definition
-    model = ConditionalUnet(
-        dim=dim,
-        dim_mults=dim_mults,
-        n_classes=n_classes,   
-        flash_attn=True,
-        image_channels=channels, 
-        condition_by_concat=not condition_by_mult,
-        also_unconditional=also_unconditional,
-    )
+    # Update parameters that were dynamically set (min_max_intensity of normalized imgs)
+    find_min_max_intensity_norm_imgs = train_dataset.images_min.item() is None or \
+        train_dataset.images_max.item() is None
     
-    image_size_ddpm = train_config[train_type]['image_size'][-1] * train_config[train_type]['rescale_factor'][-1]
-    print(f'Image size for DDPM: {image_size_ddpm} x {image_size_ddpm}')
-    diffusion = ConditionalGaussianDiffusion(
-        model=model,
-        image_size=image_size_ddpm,
-        objective=objective,
-        timesteps=timesteps,
-        sampling_timesteps=sampling_timesteps,
-        also_unconditional=also_unconditional,
-        unconditional_rate=unconditional_rate,
-        condition_by_concat=not condition_by_mult,
-        only_unconditional=only_unconditional,
-    )
-    
-    # Store in logdir the max and min, and class weights of the model (if any)
-    ddpm_additional_params = {
-        'max_intensity': train_dataset.images_max.item(),
-        'min_intensity': train_dataset.images_min.item(),
-    }
-    
-    if train_dataset.class_weights is not None:
-        ddpm_additional_params['class_weights'] = train_dataset.class_weights.tolist()
-    
-    if accelerator.is_main_process:
-        dump_config(os.path.join(logdir, 'ddpm_additional_params.yaml'), ddpm_additional_params)
-    
-    # Execute the training loop
+    if is_main_process() and find_min_max_intensity_norm_imgs:
+        min_max_intensity = [train_dataset.images_min.item(),
+                             train_dataset.images_max.item()]
+        print('min_max_intensity of images in trainset: ', min_max_intensity)
+ 
+        update_dict(
+            'training', 'lddpm', 'min_max_intensity',
+            value=min_max_intensity,
+            dict=params
+        )
+        dump_config(os.path.join(logdir, 'params.yaml'), params)
+        if wandb_log: update_wandb_config(params)
+
+    # Define the diffusion pipeline
     # :=========================================================================:
-    if accelerator.is_main_process: print('Defining trainer: training loop, optimizer and loss')
-    
+    ddpm = define_and_possibly_load_cddpm(
+        img_channels=image_size[0],
+        train_config=train_config[train_type],
+        model_config=model_config[unet_type],
+        n_classes=n_classes
+    )
+
+    # Define the trainer
+    # :=========================================================================:
+    print_if_main_process('Defining trainer: training loop, optimizer and loss')
+    train_num_steps             = train_config[train_type]['train_num_steps']
+
+    optimizer_type              = train_config[train_type]['optimizer_type']
+    train_lr                    = float(train_config[train_type]['learning_rate'])
+    scale_lr                    = train_config[train_type]['scale_lr']
     batch_size                  = train_config[train_type]['batch_size']
     gradient_accumulate_every   = train_config[train_type]['gradient_accumulate_every']
-    save_and_sample_every       = train_config[train_type]['save_and_sample_every']
-    train_lr                    = float(train_config[train_type]['learning_rate'])
     num_workers                 = train_config[train_type]['num_workers']
-    train_num_steps             = train_config[train_type]['train_num_steps']
+
+    amp                         = train_config[train_type]['amp']
+    mixed_precision_type        = train_config[train_type]['mixed_precision_type']
+    enable_xformers             = train_config[train_type]['enable_xformers']
+    gradient_checkpointing      = train_config[train_type]['gradient_checkpointing']
+    allow_tf32                  = train_config[train_type]['allow_tf32']
+
     save_and_sample_every       = train_config[train_type]['save_and_sample_every']
     log_val_loss_every          = train_config[train_type]['log_val_loss_every']
     num_validation_samples      = train_config[train_type]['num_validation_samples']
     num_viz_samples             = train_config[train_type]['num_viz_samples']
-    amp                         = train_config[train_type]['amp']
-    
-    if accelerator.is_main_process:
-        print(f'Objective: {objective}')
-        print(f'Minibatch size: {batch_size}')
-        print(f'Effective batch size: {batch_size * gradient_accumulate_every}')
-        print(f'num_validation_samples: {num_validation_samples}')
-        print(f'num_viz_samples: {num_viz_samples}')
-        print(f'Number of parameters of the model: {sum(p.numel() for p in diffusion.parameters()):,}')
-        print(f'Using AMP: {amp}')
-        print(f'Number of parameters of the model: {sum(p.numel() for p in diffusion.parameters()):,}')
-        
+    calculate_fid               = train_config[train_type]['calculate_fid']
+
     trainer = CDDPMTrainer(
-        diffusion,
+        ddpm,
         train_dataset=train_dataset,
         val_dataset=val_dataset,
+        optimizer_type=optimizer_type,
         train_batch_size = batch_size,
         train_lr = train_lr,
+        scale_lr = scale_lr,
         num_workers=num_workers,
-        train_num_steps = train_num_steps,# total training steps
-        num_validation_samples=num_validation_samples,          # number of samples to generate for metric evaluation
-        num_viz_samples=num_viz_samples,                        # number of samples to generate for visualization
-        gradient_accumulate_every=gradient_accumulate_every,    # gradient accumulation steps
-        ema_decay=0.995,                  # exponential moving average decay
-        amp=amp,                          # turn on mixed precision
-        calculate_fid=False,            # whether to calculate fid during training 
-        results_folder=logdir,
-        save_and_sample_every=save_and_sample_every,
+        train_num_steps = train_num_steps,
+        gradient_accumulate_every=gradient_accumulate_every,    
+        calculate_fid=calculate_fid,           
         log_val_loss_every=log_val_loss_every,
+        save_and_sample_every=save_and_sample_every,
+        num_validation_samples=num_validation_samples,         
+        num_viz_samples=num_viz_samples,   
+        results_folder=logdir,
         wandb_log=wandb_log,
-        accelerator=accelerator,
+        amp=amp,                         
+        mixed_precision_type=mixed_precision_type,              
+        enable_xformers=enable_xformers,
+        gradient_checkpointing=gradient_checkpointing,
+        allow_tf32=allow_tf32,
     )
     
-    if wandb_log and accelerator.is_main_process:
-        #wandb.save(os.path.join(wandb_dir, trainer.get_last_checkpoint_name()), base_path=wandb_dir)
-        #wandb.watch([diffusion, model], trainer.get_loss_function(), log='all')
-        wandb.watch([diffusion, model], log='all')
+    if wandb_log and is_main_process():
+        wandb.watch([ddpm], log='all')
         
     # Resume previous point if necessary
     if resume:
         last_milestone = get_last_milestone(logdir)
-        if accelerator.is_main_process: print(f'Resuming training from milestone {last_milestone}')
+        print_if_main_process(f'Resuming training from milestone {last_milestone}')
         trainer.load(last_milestone)
         
-    # Start training
+    # Execute the training loop
     # :=========================================================================:
+    conditions_run = f"""
+    Image size for DDPM: {ddpm.train_image_size} x {ddpm.train_image_size}
+    Using Cross Attention layers: {ddpm.use_x_attention}
+    Objective: {ddpm.objective}
+    Learning rate: {trainer.train_lr}
+    Minibatch size: {batch_size}
+    Effective batch size: {batch_size * gradient_accumulate_every}
+    num_validation_samples: {num_validation_samples}
+    num_viz_samples: {num_viz_samples}
+    Number of parameters of the model: {count_parameters(ddpm):,}
+    Using AMP: {amp}
+    Mixed precision type: {mixed_precision_type}
+    device: {trainer.device}
+    """
+
+    print_if_main_process(conditions_run)
+
     trainer.train()
     
     if wandb_log:

@@ -1,52 +1,58 @@
 #!/bin/bash
-#SBATCH --output=../../logs/%j_train_lcddpm_w_accelerate.out
+#SBATCH --output=../../../../slurm_logs/%j_train_lcddpm.out
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
-#SBATCH --gres=gpu:4
-#SBATCH --constraint='geforce_gtx_titan_x'
+#SBATCH --mem-per-cpu=4g 
+#SBATCH --gpus=4 --gres=gpumem:10g
 
 
-if [ "$CLUSTER" = "bmic" ]; then
-    source /scratch_net/biwidl319/jbermeo/conda/conda/etc/profile.d/conda.sh
-    conda activate $ENV_DIR
+# ------------------  Python Environment And Data ------------------
 
-elif [ "$CLUSTER" = "euler" ]; then
-    source /cluster/project/cvl/admin/cvl_settings_ubuntu
-    
-    source $ENV_DIR/bin/activate
+source $REPO_DIR/scripts/utils/start_env_and_data.sh
 
-    # Copy data to compute node
-    rsync -aqr $DATA_DIR/subcortical_structures/hcp/ ${TMPDIR}/data
 
-    # Copy repo to compute node
-    rsync -aqr $REPO_DIR ${TMPDIR}
-    
-    # Reassign the necessary env variables
-    export DATA_DIR=${TMPDIR}/data/hcp
-    echo "Data dir: $DATA_DIR"
+# ------------------  Separate Command Line Arguments --------------------
 
-    export REPO_DIR=${TMPDIR}/${REPO_DIR##*/}
-    echo "Repo dir: $REPO_DIR"
-    
-    export OLD_RESULTS_DIR=$RESULTS_DIR
-    export RESULTS_DIR=${TMPDIR}/results
-    echo "Results dir: $RESULTS_DIR"
+source $REPO_DIR/scripts/utils/separate_accelerate_cmd_line_args.sh
 
-    # Move to the dir where current script should be
-    cd $REPO_DIR/scripts/training/ddpm
+eval "$(parse_args "$@")"
 
-else
-    echo "Python environment not activated. (env variable cluster: $CLUSTER)"
+echo "Accelerate args: ${accel_args[@]}"
+echo "Training args: ${train_args[@]}"
+
+
+# ------------------  Script ------------------------------------------------
+
+# UNCOMMENT IF IT STARTS COMPLANING ABOUT THIS:
+# Set Master address and port for parallel training
+# if [ -z "${MASTER_ADDR}" ]; then
+#     export MASTER_ADDR=$(scontrol show hostname ${SLURM_NODELIST} | head -n1)
+#     # basic form export MASTER_ADDR=$(hostname)
+#     # Or for FQDN: export MASTER_ADDR=$(hostname -f)
+#     # Or for SLURM: export MASTER_ADDR=$(scontrol show hostname ${SLURM_NODELIST} | head -n1)
+# fi
+
+# # Similarly for MASTER_PORT
+# if [ -z "${MASTER_PORT}" ]; then
+#     export MASTER_PORT=29500
+# fi
+if [ "$CLUSTER" = "euler" ]; then
+    # Create a triton cache dir env variable
+    export TRITON_CACHE_DIR=${TMPDIR}/TRITON_CACHE_DIR
+    mkdir -p $TRITON_CACHE_DIR
 fi
 
-export OMP_NUM_THREADS=4
+echo "Job ID: $SLURM_JOB_ID"
 
-accelerate launch train_lcddpm.py \
+export OMP_NUM_THREADS=2
+
+accelerate launch "${accel_args[@]}" train_lcddpm.py \
     $REPO_DIR/config/datasets.yaml \
     $REPO_DIR/config/models.yaml \
     $REPO_DIR/config/training/training_hcp_t1.yaml \
-    "$@" 
+    "${train_args[@]}" 
 
+# ------------------  Copy Results From Compute Node --------------------
 if [ "$CLUSTER" = "euler" ]; then
     rsync -auq ${TMPDIR}/ $LS_SUBCWD
     rsync -auq ${RESULTS_DIR}/ $OLD_RESULTS_DIR

@@ -486,7 +486,7 @@ class ConditionalLatentGaussianDiffusion(BaseConditionalGaussianDiffusion):
         timesteps = noise_scheduler.timesteps
 
         # Get the latent noise at step T 
-        latents = self._prepare_latents(
+        latents = self._prepare_latent_noise(
             batch_size=img_shape[0], height=img_shape[2], width=img_shape[3],
             device=self.device)
 
@@ -542,7 +542,7 @@ class ConditionalLatentGaussianDiffusion(BaseConditionalGaussianDiffusion):
 
         return self._decode_latents(latents)            
     
-    def _prepare_latents(self, batch_size, height, width, device, latents=None):
+    def _prepare_latent_noise(self, batch_size, height, width, device, latents=None):
         shape = (
             batch_size,
             self._vae.config.latent_channels,

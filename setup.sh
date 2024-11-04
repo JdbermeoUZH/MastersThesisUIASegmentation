@@ -2,8 +2,7 @@
 # :------------------
 module load stack/2024-06 python_cuda/3.11.6 2>/dev/null
 
-python -m venv --system-site-packages myenv
-mv myenv tta_ddpm
+python -m venv --system-site-packages tta_ddpm
 source tta_ddpm/bin/activate
 
 pip install accelerate
@@ -45,3 +44,6 @@ pip install nibabel matplotlib pandas scikit-learn tdigest scikit-image wandb ko
 
 #pip install xformers
 #pip install bitsandbytes
+
+# Copy envs
+virtualenv-clone venv1/ venv2/

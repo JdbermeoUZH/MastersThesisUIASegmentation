@@ -52,8 +52,10 @@ lddpm_unet:
 ddpm_unet:
   dim:                              64            # Number of filters in the first layer. Default 64
   dim_mults:                        [1, 2, 4, 8]  # Multipliers for the number of filters in each layer. Default: [1, 2, 4, 8]
+  use_x_attention:                  True          # Use cross-attention. 
   channels:                         1             # Number of input channels
-  cond_type:                        'sum'         # 'sum', 'concat'
+  time_embedding_dim:               512           # Dimension of the time embedding. Default 512, Only used if use_x_attention is True
+  cond_type:                        'concat'      # 'sum', 'concat'
 
 ddpm_unet_oai:
   num_channels:                     128            # Number of filters in the first layer. Default 64

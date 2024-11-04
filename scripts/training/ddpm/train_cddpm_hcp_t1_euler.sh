@@ -22,7 +22,7 @@ echo "Job ID: $SLURM_JOB_ID"
 
 export OMP_NUM_THREADS=2
 
-python train_lcddpm.py \
+python train_cddpm.py \
     $REPO_DIR/config/datasets.yaml \
     $REPO_DIR/config/models.yaml \
     $REPO_DIR/config/training/training_hcp_t1.yaml \
