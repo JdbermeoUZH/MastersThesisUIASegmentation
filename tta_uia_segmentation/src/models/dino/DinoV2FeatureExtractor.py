@@ -104,6 +104,7 @@ class DinoV2FeatureExtractor(nn.Module):
         output = {}
         nph, npw = image.size(2) // patch_size, image.size(3) // patch_size
         dino_out = self.model.forward_features(image, mask)
+
         output['cls'] = dino_out["x_norm_clstoken"]
         output['reg'] = dino_out["x_norm_regtokens"]
         patch = dino_out["x_norm_patchtokens"]
@@ -182,9 +183,9 @@ class DinoV2FeatureExtractor(nn.Module):
             model = torch.hub.load(repo_or_dir, 'dinov2_vitl14_reg')
 
         elif model == "giant":
-            model = torch.hub.load(repo_or_dir, 'dinov2_vitb24')
+            model = torch.hub.load(repo_or_dir, 'dinov2_vitg14')
         elif model == "giant_reg":
-            model = torch.hub.load(repo_or_dir, 'dinov2_vitb24_reg')
+            model = torch.hub.load(repo_or_dir, 'dinov2_vitg14_reg')
 
         else:
             raise ValueError(f"Model {model} not supported.")

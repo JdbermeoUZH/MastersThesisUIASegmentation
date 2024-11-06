@@ -168,3 +168,4 @@ scripts/*/wandb/
 *.nii.gz
 /wandb/
 scripts/tta/run_multiple_no_tta.py
+notebooks/dino/get_a_feel.py

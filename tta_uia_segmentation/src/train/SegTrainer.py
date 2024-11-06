@@ -1,23 +1,20 @@
 import os
 import json
 from tqdm import tqdm
-from typing import Union, Optional
+from typing import Union, Optional, Literal
 
 import wandb
 import torch
 import numpy as np
 from torch.utils.data import DataLoader
+from torch.optim.lr_scheduler import LinearLR
 
 from tta_uia_segmentation.src.models import DinoSeg
 from tta_uia_segmentation.src.utils.loss import DiceLoss, dice_score
 from tta_uia_segmentation.src.utils.io import save_checkpoint
+from tta_uia_segmentation.src.train.utils import LinearWarmupScheduler
 
-
-class DinoSegTrainer:
-    """
-
-        
-    """
+class SegTrainer:
     
     def __init__(
         self,
@@ -25,8 +22,9 @@ class DinoSegTrainer:
         learning_rate: float,
         device: torch.device,
         bg_suppression_opts: Optional[dict] = None,
-        with_bg_supression: Optional[bool] = None,
+        with_bg_supression: bool = False,
         loss_func: torch.nn.Module = DiceLoss(),
+        optimizer_type: Literal['adam', 'adamW'] = 'adam',
         is_resumed: bool = False,
         checkpoint_last: str = 'checkpoint_last.pth',
         checkpoint_best: str = 'checkpoint_best.pth',
@@ -41,10 +39,17 @@ class DinoSegTrainer:
         self.with_bg_supression = with_bg_supression if with_bg_supression is not None \
             else bg_suppression_opts['type'] != 'none'
         
-        self.optimizer = torch.optim.Adam(
-            list(self.norm.parameters()) + list(self.seg.parameters()),
-            lr=learning_rate
-        )    
+        if optimizer_type == 'adam':
+            self.optimizer = torch.optim.Adam(
+                self.seg.parameters(),
+                lr=learning_rate
+            )
+        elif optimizer_type == 'adamW':
+            self.optimizer = torch.optim.AdamW(
+                self.seg.parameters(),
+                lr=learning_rate,
+                weight_decay=1e-5
+            )    
         
         if is_resumed:
             self._load_checkpoint(os.path.join(logdir, checkpoint_last))
@@ -74,6 +79,7 @@ class DinoSegTrainer:
         train_dataloader: DataLoader,
         epochs: int,
         validate_every: int,
+        warmup_steps: Optional[int] = None,
         checkpoint_best: Optional[str] = None,
         checkpoint_last: Optional[str] = None,
         logdir: Optional[str] = None,
@@ -82,6 +88,20 @@ class DinoSegTrainer:
         wandb_log: Optional[bool] = None,
         wandb_dir: Optional[str] = None,
         ):
+
+        # Define warmup scheduler
+        if warmup_steps is not None:
+            if 0.0 < warmup_steps < 1.0:
+                total_steps = len(train_dataloader) * epochs
+                warmup_steps = int(warmup_steps * total_steps)
+            warmup_scheduler = LinearLR(
+                self.optimizer,
+                start_factor=0.01,
+                end_factor=1.0,
+                total_iters=warmup_steps
+                )
+        else:
+            warmup_scheduler = None
         
         wandb_log = wandb_log or self.wandb_log
         device = device or self.device
@@ -99,7 +119,6 @@ class DinoSegTrainer:
             training_loss = 0
             n_samples_train = 0
 
-            self.norm.train()
             self.seg.train()
             
             print(f'Training for epoch {epoch}')
@@ -116,6 +135,10 @@ class DinoSegTrainer:
                 loss.backward()
 
                 self.optimizer.step()
+
+                # Update learning rate
+                if warmup_scheduler is not None: 
+                    warmup_scheduler.step()
 
                 with torch.no_grad():
                     training_loss += loss.detach() * x.shape[0]
@@ -185,7 +208,6 @@ class DinoSegTrainer:
         validation_scores = 0
         n_samples_val = 0
         
-        self.norm.eval()
         self.seg.eval()
 
         for x, y, *_, in val_dataloader:
@@ -193,8 +215,7 @@ class DinoSegTrainer:
             x = x.to(device).float()
             y = y.to(device).float()
             
-            x_norm = self.norm(x)
-            y_pred, _ = self.seg(x_norm)
+            y_pred, _ = self.seg(x)
             
             loss = self.loss_func(y_pred, y)
             

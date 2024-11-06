@@ -9,6 +9,7 @@ from torch.utils.data import DataLoader
 sys.path.append(os.path.normpath(os.path.join(
     os.path.dirname(__file__), '..', '..', '..')))
 
+from tta_uia_segmentation.src.train import SegTrainer
 from tta_uia_segmentation.src.dataset.dataset_in_memory import get_datasets
 from tta_uia_segmentation.src.models.io import define_and_possibly_load_dino_seg
 from tta_uia_segmentation.src.utils.loss import DiceLoss
@@ -48,13 +49,15 @@ def preprocess_cmd_args() -> argparse.Namespace:
     # ----------------:
     parser.add_argument('--dino_model', type=str, help='Name of DINO model to use. Default: "large"')
     parser.add_argument('--svd_path', type=str, help='Path to SVD model. Default: None')
+    parser.add_argument('--precalculated_fts', type=parse_bool, help='Whether to use precalculated features. Default: False')
 
     # Training loop
     # -------------:
     parser.add_argument('--epochs', type=int, help='Number of epochs to train. Default: 100')
     parser.add_argument('--learning_rate', type=float, help='Learning rate for optimizer. Default: 1e-4')
     parser.add_argument('--batch_size', type=int, help='Batch size for training. Default: 4')
-    parser.add_argument('--gradient_accumulation', type=int, help='Number of batches to accumulate gradients over. Default: 1')
+    parser.add_argument('--optimizer_type', type=str, help='Type of optimizer to use. Default: "adam"')
+    parser.add_argument('--warmup_steps', type=float, help='Number of warmup steps for scheduler. Default: None')
     parser.add_argument('--num_workers', type=int, help='Number of workers for dataloader. Default: 0')
     parser.add_argument('--validate_every', type=int, help='Validate every n epochs. Default: 1')
     parser.add_argument('--seed', type=int, help='Seed for random number generators. Default: 0')   
@@ -63,9 +66,9 @@ def preprocess_cmd_args() -> argparse.Namespace:
     parser.add_argument('--checkpoint_best', type=str, help='Name of best checkpoint file. Default: checkpoint_best.pth')
     
     # Loss function
-    parser.add_argument('--smooth', type=float, help='Smoothing factor for dice loss. Default: 1e-5')
+    parser.add_argument('--smooth', type=float, help='Smoothing factor for dice loss. Default: 0')
     parser.add_argument('--epsilon', type=float, help='Epsilon factor for dice loss. Default: 1e-10')
-    parser.add_argument('--fg_only', type=parse_bool, help='Whether to calculate dice loss only on foreground. Default: True')
+    parser.add_argument('--fg_only', type=parse_bool, help='Whether to calculate dice loss only on foreground. Default: False')
     parser.add_argument('--debug_mode', type=parse_bool, help='Whether to run in debug mode. Default: False')
 
     # Dataset and its transformations to use for training
@@ -148,10 +151,13 @@ if __name__ == '__main__':
 
     if is_resumed:
         params = load_config(os.path.join(logdir, 'params.yaml'))
-        
+        cpt_fp = os.path.join(logdir, train_config['checkpoint_last'])
+        assert os.path.exists(cpt_fp), f'Checkpoint file {cpt_fp} does not exist'
+    
     else:
         os.makedirs(logdir, exist_ok=True)
         dump_config(os.path.join(logdir, 'params.yaml'), params)
+        cpt_fp = None
 
     print_config(params, keys=['training', 'model'])
 
@@ -164,7 +170,7 @@ if __name__ == '__main__':
     print('Defining dataset')
     seed_everything(seed)
     device              = define_device(device)
-    dataset_name        = train_config[train_type]['dataset']
+    dataset_name        = train_config['dataset']
     n_classes           = dataset_config[dataset_name]['n_classes']
     batch_size          = train_config[train_type]['batch_size']
     num_workers         = train_config[train_type]['num_workers']
@@ -198,7 +204,7 @@ if __name__ == '__main__':
     dino_seg = define_and_possibly_load_dino_seg(
         train_dino_seg_cfg = train_config[train_type],
         n_classes       = n_classes,
-        cpt_fp          = train_config[train_type]['cpt_fp'],
+        cpt_fp          = cpt_fp,
         device          = device,
     )
 
@@ -213,12 +219,12 @@ if __name__ == '__main__':
         fg_only=train_config[train_type]['fg_only']
     )
 
-    trainer = NormSegTrainer(
-        norm                = norm,
-        seg                 = seg,
+    trainer = SegTrainer(
+        seg                 = dino_seg,
         learning_rate       = train_config[train_type]['learning_rate'],
         loss_func           = dice_loss,
         is_resumed          = is_resumed,
+        optimizer_type      = train_config[train_type]['optimizer_type'],
         checkpoint_best     = train_config['checkpoint_best'],
         checkpoint_last     = train_config['checkpoint_last'],
         device              = device,
@@ -235,17 +241,17 @@ if __name__ == '__main__':
         
     # Start training
     # :=========================================================================:
-    epochs                  = train_config[train_type]['epochs']
-    validate_every          = train_config[train_type]['validate_every']
-
     if trainer.with_bg_supression:
         print(f'Using background suppression with {trainer.bg_suppression_opts["type"]} type')
-    
+
+    validate_every          = train_config[train_type]['validate_every']    
+
     trainer.train(
-        train_dataloader = train_dataloader,
-        val_dataloader = val_dataloader,
-        epochs = epochs,
-        validate_every = validate_every,
+        train_dataloader    = train_dataloader,
+        val_dataloader      = val_dataloader,
+        epochs              = train_config[train_type]['epochs'],
+        validate_every      = validate_every,
+        warmup_steps        = train_config[train_type]['warmup_steps'],
     )
     
     write_to_csv(

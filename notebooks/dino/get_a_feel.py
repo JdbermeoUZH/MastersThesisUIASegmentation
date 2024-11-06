@@ -69,7 +69,7 @@ decoder = decoder.to('cuda')
 breakpoint()
 decoder(img_enc)
 
-dino_seg = DinoSeg(decoder, dino_fe, features_are_precalculated=True)
+dino_seg = DinoSeg(decoder, dino_fe, precalculated_fts=False)
 
 breakpoint()
 print("Done")

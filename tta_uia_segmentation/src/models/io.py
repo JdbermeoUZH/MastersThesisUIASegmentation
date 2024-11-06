@@ -72,8 +72,8 @@ def load_cddpm_from_configs_and_cpt(
 def define_and_possibly_load_dino_seg(
     train_dino_seg_cfg: dict,
     n_classes: int,
-    cpt_fp: str,
     device: torch.device,
+    cpt_fp: Optional[str] = None,
 ) -> DinoSeg:
     # Define DinoFeatureExtractor
     dino_fe = DinoV2FeatureExtractor(train_dino_seg_cfg['dino_model'])
@@ -87,11 +87,12 @@ def define_and_possibly_load_dino_seg(
         n_classes=n_classes,
         channels=num_channels,
         n_dimensions=2)
-    
+
     # Create wrapping DinoSeg model
     dino_seg = DinoSeg(
-        decoder=decoder, dino_fe=dino_fe,
-        features_are_precalculated=train_dino_seg_cfg['features_are_precalculated']
+        decoder=decoder,
+        dino_fe=dino_fe,
+        precalculated_fts=train_dino_seg_cfg['precalculated_fts']
     ).to(device)
 
     if cpt_fp is not None:

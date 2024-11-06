@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from .DinoV2FeatureExtractor import DinoV2FeatureExtractor
-from ..norm_seg.UNet import Decoder, get_conv, DoubleConv
+from ..norm_seg.UNet import get_conv, DoubleConv
 from ...utils.utils import assert_in, default
 
 
@@ -14,23 +14,35 @@ class DinoSeg(nn.Module):
             self,
             decoder: nn.Module,
             dino_fe: Optional[DinoV2FeatureExtractor] = None,
-            features_are_precalculated: bool = False,
+            precalculated_fts: bool = False,
             ):
         super().__init__()
 
         self._decoder = decoder
         self._dino_fe = dino_fe
         
-        self._features_are_precalculated = features_are_precalculated
+        self._precalculated_fts = precalculated_fts
 
-    def forward(self, image: torch.Tensor, mask: Optional[torch.Tensor] = None, pre: bool = True, hierarchy: list[int] = [0]) -> torch.Tensor:
-        if not self._features_are_precalculated:
+    def forward(
+            self,
+            image: torch.Tensor,
+            mask: Optional[torch.Tensor] = None, 
+            pre: bool = False,
+            hierarchy: list[int] = [0]
+        ) -> torch.Tensor:
+        
+        # Calculate dino features if necessary
+        if not self.precalculated_fts:
+            # Convert grayscale to RGB, required by DINO
+            if image.shape[1] == 1:
+                image = image.repeat(1, 3, 1, 1)
+                
             assert self._dino_fe is not None, "Dino feature extractor is required when features are not precalculated"
             dino_out = self._dino_fe(image, mask, pre, hierarchy)
-            image = ... # Get the dino features
+            image = dino_out['patch'].permute(0, 3, 1, 2)  # N x np x np x df -> N x df x np x np 
 
         # Decode features
-        self._decoder(image)
+        return self._decoder(image)        
     
     @property
     def decoder(self):
@@ -39,6 +51,14 @@ class DinoSeg(nn.Module):
     @property
     def dino_fe(self):
         return self._dino_fe
+    
+    @property
+    def precalculated_fts(self):
+        return self._precalculated_fts
+    
+    @precalculated_fts.setter
+    def precalculated_fts(self, value: bool):
+        self._precalculated_fts = value
 
 
 class ResNetDecoderBlock(nn.Module):
@@ -62,11 +82,11 @@ class ResNetDecoderBlock(nn.Module):
 
         self.scale_factor = scale_factor
 
-        self.residual_conv = get_conv(
-            in_channels, out_channels, 1, n_dimensions=n_dimensions)
-
         self.double_conv = DoubleConv(
             in_channels, out_channels, n_dimensions=n_dimensions)
+        
+        self.residual_conv = get_conv(
+            in_channels, out_channels, 1, n_dimensions=n_dimensions)
 
     def forward(self, x, scale_factor=None):
         scale_factor = default(scale_factor, self.scale_factor)
@@ -107,6 +127,7 @@ class ResNetDecoder(nn.Module):
             n_dimensions=n_dimensions)
 
         self.output_conv = get_conv(channels[-1], n_classes, 1, n_dimensions=n_dimensions)
+        self.softmax = nn.Softmax(dim=1)
 
     def forward(self, x):
         # Pass trough decoder blocks
@@ -124,4 +145,4 @@ class ResNetDecoder(nn.Module):
         # Output to n_classes
         x = self.output_conv(x)
 
-        return x
+        return self.softmax(x), x

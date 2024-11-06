@@ -105,13 +105,13 @@ abide_stanford:
   resolution_proc: [0.7, 0.7, 0.7]  # voxel size of processed dataset in [mm] (xyz)
   dim: [132, 256, 256]  # DHW (= zxy)
   paths_processed:
-    train: ~/datasets/subcortical_structures/abide/stanford/data_T1_2d_size_256_256_depth_132_res_0.7_0.7_from_0_to_10.hdf5
-    test: ~/datasets/subcortical_structures/abide/stanford/data_T1_2d_size_256_256_depth_132_res_0.7_0.7_from_16_to_36.hdf5
-    val: ~/datasets/subcortical_structures/abide/stanford/data_T1_2d_size_256_256_depth_132_res_0.7_0.7_from_10_to_15.hdf5
+    train: $DATA_DIR/subcortical_structures/abide/stanford/data_T1_2d_size_256_256_depth_132_res_0.7_0.7_from_0_to_10.hdf5
+    test: $DATA_DIR/subcortical_structures/abide/stanford/data_T1_2d_size_256_256_depth_132_res_0.7_0.7_from_16_to_36.hdf5
+    val: $DATA_DIR/subcortical_structures/abide/stanford/data_T1_2d_size_256_256_depth_132_res_0.7_0.7_from_10_to_15.hdf5
   paths_original:
-    train: ~/datasets/subcortical_structures/abide/stanford/data_T1_original_depth_132_from_0_to_10.hdf5
-    test: ~/datasets/subcortical_structures/abide/stanford/data_T1_original_depth_132_from_16_to_36.hdf5
-    val: ~/datasets/subcortical_structures/abide/stanford/data_T1_original_depth_132_from_10_to_15.hdf5
+    train: $DATA_DIR/subcortical_structures/abide/stanford/data_T1_original_depth_132_from_0_to_10.hdf5
+    test: $DATA_DIR/subcortical_structures/abide/stanford/data_T1_original_depth_132_from_16_to_36.hdf5
+    val: $DATA_DIR/subcortical_structures/abide/stanford/data_T1_original_depth_132_from_10_to_15.hdf5
 
 nuhs:
   image_channels: 1

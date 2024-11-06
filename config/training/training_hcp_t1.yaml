@@ -97,20 +97,23 @@ segmentation:
 
 
 segmentation_dino:
-  dino_model:                   "large"  # small, base, large, gigantic
+  dino_model:                   large  # small, base, large, gigantic
   svd_path:                     null
   
-  features_precalculated:       False
+  precalculated_fts:            False
+
+  optimizer_type:               adam # adam, adamW
   
+  epochs:                       150  # 150 for subcortical_structures, 1000 for WMH (nuhs, umc)
   batch_size:                   16
   num_workers:                  2
-  image_size:                   [1, 256, 256]
-  epochs:                       150  # 150 for subcortical_structures, 1000 for WMH (nuhs, umc)
   validate_every:               3
   learning_rate:                0.001
-  logdir:                       $RESULTS_DIR/subcortical_structures/segmentation/hcp_t1/dino_seg
+  warmup_steps:                 null # 0.05 for 5% of the total number of steps
+  logdir:                       $RESULTS_DIR/subcortical_structures/segmentation/hcp_t1/dino_seg/debug
   wandb_project:                mt-segmentation_models
-  
+
+  image_size:                   [1, 256, 256]
   with_bg_supression:           False
 
   # Loss function parameters

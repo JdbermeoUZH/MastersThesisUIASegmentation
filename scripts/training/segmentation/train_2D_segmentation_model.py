@@ -20,6 +20,8 @@ from tta_uia_segmentation.src.utils.utils import seed_everything, define_device,
 from tta_uia_segmentation.src.utils.logging import setup_wandb
 
 
+train_type = 'segmentation'
+
 
 def preprocess_cmd_args() -> argparse.Namespace:
     """_
@@ -126,14 +128,14 @@ def get_configuration_arguments() -> tuple[dict, dict, dict]:
     train_config = load_config(args.train_config_file)
     train_config = rewrite_config_arguments(train_config, args, 'train')
     
-    train_config['segmentation'] = rewrite_config_arguments(
-        train_config['segmentation'], args, 'train, segmentation')
+    train_config[train_type] = rewrite_config_arguments(
+        train_config[train_type], args, f'train, {train_type}')
     
-    train_config['segmentation']['augmentation'] = rewrite_config_arguments(
-        train_config['segmentation']['augmentation'], args, 'train, segmentation, augmentation')
+    train_config[train_type]['augmentation'] = rewrite_config_arguments(
+        train_config[train_type]['augmentation'], args, f'train, {train_type}, augmentation')
     
-    train_config['segmentation']['bg_suppression_opts'] = rewrite_config_arguments(
-        train_config['segmentation']['bg_suppression_opts'], args, 'train, segmentation, bg_suppression_opts',
+    train_config[train_type]['bg_suppression_opts'] = rewrite_config_arguments(
+        train_config[train_type]['bg_suppression_opts'], args, f'train, {train_type}, bg_suppression_opts',
         prefix_to_remove='bg_supression_')
     
     return dataset_config, model_config, train_config
@@ -154,8 +156,8 @@ if __name__ == '__main__':
     seed            = train_config['seed']
     device          = train_config['device']
     wandb_log       = train_config['wandb_log']
-    logdir          = train_config['segmentation']['logdir']
-    wandb_project   = train_config['segmentation']['wandb_project']
+    logdir          = train_config[train_type]['logdir']
+    wandb_project   = train_config[train_type]['wandb_project']
     
     # Write or load parameters to/from logdir, used if a run is resumed.
     # :=========================================================================:
@@ -180,11 +182,11 @@ if __name__ == '__main__':
     print('Defining dataset')
     seed_everything(seed)
     device              = define_device(device)
-    dataset_name        = train_config['segmentation']['dataset']
+    dataset_name        = train_config['dataset']
     n_classes           = dataset_config[dataset_name]['n_classes']
-    batch_size          = train_config['segmentation']['batch_size']
-    num_workers         = train_config['segmentation']['num_workers']
-    bg_suppression_opts = train_config['segmentation']['bg_suppression_opts']
+    batch_size          = train_config[train_type]['batch_size']
+    num_workers         = train_config[train_type]['num_workers']
+    bg_suppression_opts = train_config[train_type]['bg_suppression_opts']
 
     # Dataset definition
     train_dataset, val_dataset = get_datasets(
@@ -192,11 +194,11 @@ if __name__ == '__main__':
         paths           = dataset_config[dataset_name]['paths_processed'],
         paths_original  = dataset_config[dataset_name]['paths_original'],
         splits          = ['train', 'val'],
-        image_size      = train_config['segmentation']['image_size'],
+        image_size      = train_config[train_type]['image_size'],
         resolution_proc = dataset_config[dataset_name]['resolution_proc'],
         dim_proc        = dataset_config[dataset_name]['dim'],
         n_classes       = n_classes,
-        aug_params      = train_config['segmentation']['augmentation'],
+        aug_params      = train_config[train_type]['augmentation'],
         deformation     = None,
         load_original   = False,
         bg_suppression_opts = bg_suppression_opts
@@ -237,16 +239,16 @@ if __name__ == '__main__':
     print('Defining trainer: training loop, optimizer and loss')
 
     dice_loss = DiceLoss(
-        smooth=train_config['segmentation']['smooth'],
-        epsilon=train_config['segmentation']['epsilon'],
-        debug_mode=train_config['segmentation']['debug_mode'],
-        fg_only=train_config['segmentation']['fg_only']
+        smooth=train_config[train_type]['smooth'],
+        epsilon=train_config[train_type]['epsilon'],
+        debug_mode=train_config[train_type]['debug_mode'],
+        fg_only=train_config[train_type]['fg_only']
     )
 
     trainer = NormSegTrainer(
         norm                = norm,
         seg                 = seg,
-        learning_rate       = train_config['segmentation']['learning_rate'],
+        learning_rate       = train_config[train_type]['learning_rate'],
         loss_func           = dice_loss,
         is_resumed          = is_resumed,
         checkpoint_best     = train_config['checkpoint_best'],
@@ -256,7 +258,7 @@ if __name__ == '__main__':
         wandb_log           = wandb_log,
         wandb_dir           = wandb_dir,
         bg_suppression_opts = bg_suppression_opts,
-        with_bg_supression  = train_config['segmentation']['with_bg_supression']
+        with_bg_supression  = train_config[train_type]['with_bg_supression']
     )
 
     if wandb_log:
@@ -265,8 +267,8 @@ if __name__ == '__main__':
         
     # Start training
     # :=========================================================================:
-    epochs                  = train_config['segmentation']['epochs']
-    validate_every          = train_config['segmentation']['validate_every']
+    epochs                  = train_config[train_type]['epochs']
+    validate_every          = train_config[train_type]['validate_every']
 
     if trainer.with_bg_supression:
         print(f'Using background suppression with {trainer.bg_suppression_opts["type"]} type')
