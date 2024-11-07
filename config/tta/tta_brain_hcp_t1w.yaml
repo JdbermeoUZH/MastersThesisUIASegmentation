@@ -18,11 +18,15 @@ num_workers: 0
 device: cuda
 seed: 0
 
+viz_interm_outs: ['Normalized Image']
+
 no_tta:
   wandb_project: baseline_performance 
   logdir: $RESULTS_DIR/subcortical_structures/tta/debugging/no_tta/9_06/reproduce_previous_results
 
   batch_size: 64
+
+  model_type: norm_seg           # normseg, dino 
   
   # Supress background x_norm 
   bg_supp_x_norm_eval: False

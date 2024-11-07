@@ -25,7 +25,7 @@ from tta_uia_segmentation.src.tta import TTADAEandDDPM
 from tta_uia_segmentation.src.dataset.dataset_in_memory import get_datasets
 from tta_uia_segmentation.src.models.io import (
     load_icddpm_from_configs_and_cpt,
-    load_norm_and_seg_from_configs_and_cpt,
+    define_and_possibly_load_norm_seg,
     load_dae_and_atlas_from_configs_and_cpt
 )
 from tta_uia_segmentation.src.utils.io import load_config, dump_config, print_config, write_to_csv, rewrite_config_arguments
@@ -232,7 +232,7 @@ if __name__ == '__main__':
     cpt_type = 'checkpoint_best' if tta_config['load_best_cpt'] \
         else 'checkpoint_last'
     
-    norm, seg, norm_state_source_domain = load_norm_and_seg_from_configs_and_cpt(
+    norm, seg, norm_state_source_domain = define_and_possibly_load_norm_seg(
         n_classes = n_classes,
         model_params_norm = model_params_norm,
         model_params_seg = model_params_seg,

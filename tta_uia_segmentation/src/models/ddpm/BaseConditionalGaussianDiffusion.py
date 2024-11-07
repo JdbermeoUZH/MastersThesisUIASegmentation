@@ -2,6 +2,7 @@ from typing import Optional, Literal
 
 import torch
 
+
 class BaseConditionalGaussianDiffusion(torch.nn.Module):
     """
     Abstract base class for conditional Gaussian diffusion models.
@@ -9,6 +10,7 @@ class BaseConditionalGaussianDiffusion(torch.nn.Module):
     Based on the interface from https://github.com/lucidrains/denoising-diffusion-pytorch
 
     """
+
     def __init__(self):
         super(BaseConditionalGaussianDiffusion, self).__init__()
 
@@ -51,7 +53,7 @@ class BaseConditionalGaussianDiffusion(torch.nn.Module):
         x: torch.Tensor,
         x_cond: torch.Tensor,
         t: torch.Tensor,
-        predict: Literal['noise', 'x_start', 'v', 'pred_xt_m_1']
+        predict: Literal["noise", "x_start", "v", "pred_xt_m_1"],
     ) -> torch.Tensor:
         """
         Predicts one of ['noise', 'x_start', 'v', 'pred_xt_m_1'] specified.
@@ -64,10 +66,10 @@ class BaseConditionalGaussianDiffusion(torch.nn.Module):
         raise NotImplementedError("Subclasses should implement this method")
 
     def ddpm_sample(
-        self, 
+        self,
         img_shape: tuple[int, int, int, int],
         x_cond: torch.Tensor,
-        return_all_timesteps: bool
+        return_all_timesteps: bool,
     ) -> torch.Tensor:
         """
         Generate a batch of samples from the model using ancestral sampling.
@@ -80,10 +82,10 @@ class BaseConditionalGaussianDiffusion(torch.nn.Module):
         raise NotImplementedError("Subclasses should implement this method")
 
     def ddim_sample(
-        self, 
+        self,
         img_shape: tuple[int, int, int, int],
         x_cond: torch.Tensor,
-        return_all_timesteps: bool
+        return_all_timesteps: bool,
     ) -> torch.Tensor:
         """
         Generate a batch of samples from the model using DDIM sampling.
@@ -96,11 +98,11 @@ class BaseConditionalGaussianDiffusion(torch.nn.Module):
         raise NotImplementedError("Subclasses should implement this method")
 
     def sample(
-        self, 
+        self,
         img_shape: tuple[int, int, int, int],
         x_cond: torch.Tensor,
-        return_all_timesteps: bool, 
-        unconditional_sampling: bool
+        return_all_timesteps: bool,
+        unconditional_sampling: bool,
     ) -> torch.Tensor:
         """
         Generate a batch of samples from the model using the desired sampling method of the class.
@@ -186,7 +188,7 @@ class BaseConditionalGaussianDiffusion(torch.nn.Module):
             This method should be implemented by subclasses.
         """
         raise NotImplementedError("Subclasses should implement this method")
-    
+
     @property
     def img_dtype(self) -> torch.dtype:
         """
@@ -198,7 +200,6 @@ class BaseConditionalGaussianDiffusion(torch.nn.Module):
             This method should be implemented by subclasses.
         """
         raise NotImplementedError("Subclasses should implement this method")
-        
 
     @property
     def cond_img_dtype(self) -> torch.dtype:
@@ -218,7 +219,7 @@ class BaseConditionalGaussianDiffusion(torch.nn.Module):
         num_imgs_per_volume: Optional[int],
         num_groups_stratified_sampling: Optional[int],
         **data_loader_kwargs
-   ) -> torch.utils.data.DataLoader:
+    ) -> torch.utils.data.DataLoader:
         """
         Create a dataloader with num_samples t_noise pairs.
 
@@ -305,8 +306,10 @@ class BaseConditionalGaussianDiffusion(torch.nn.Module):
             This method should be implemented by subclasses.
         """
         raise NotImplementedError("Subclasses should implement this method")
-    
-    def set_mixed_precision_attributes(self, mixed_precision_type: Literal["fp16", "bf16"]):
+
+    def set_mixed_precision_attributes(
+        self, mixed_precision_type: Literal["fp16", "bf16"]
+    ):
         """
         Set the mixed precision attributes of the model.
 

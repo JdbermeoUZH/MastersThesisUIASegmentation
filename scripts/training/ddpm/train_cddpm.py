@@ -14,7 +14,7 @@ sys.path.append(os.path.normpath(os.path.join(
 from tta_uia_segmentation.src.dataset.dataset_in_memory_for_ddpm import get_datasets
 from tta_uia_segmentation.src.models import ConditionalGaussianDiffusion
 from tta_uia_segmentation.src.models.io import (
-    load_norm_from_configs_and_cpt, define_and_possibly_load_cddpm)
+    define_and_possibly_load_norm, define_and_possibly_load_cddpm)
 from tta_uia_segmentation.src.train import CDDPMTrainer
 from tta_uia_segmentation.src.utils.io import (
     load_config, dump_config, print_config, rewrite_config_arguments)
@@ -227,7 +227,7 @@ if __name__ == '__main__':
                             
     # Load normalization model used in the segmentation network
     if train_config[train_type]['norm_with_nn_on_fly']:
-        norm = load_norm_from_configs_and_cpt(
+        norm = define_and_possibly_load_norm(
             model_params_norm=model_params_norm,
             cpt_fp=os.path.join(norm_dir, train_params_norm['checkpoint_best']),
             device='cpu'

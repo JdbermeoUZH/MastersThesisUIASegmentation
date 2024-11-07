@@ -15,7 +15,7 @@ sys.path.append(os.path.normpath(os.path.join(
 from tta_uia_segmentation.src.tta import DiffusionTTA
 from tta_uia_segmentation.src.dataset.dataset_in_memory import get_datasets
 from tta_uia_segmentation.src.models import Normalization, UNet
-from tta_uia_segmentation.src.models.io import load_cddpm_from_configs_and_cpt, load_norm_and_seg_from_configs_and_cpt
+from tta_uia_segmentation.src.models.io import load_cddpm_from_configs_and_cpt, define_and_possibly_load_norm_seg
 from tta_uia_segmentation.src.utils.io import load_config, dump_config, print_config, write_to_csv, rewrite_config_arguments
 from tta_uia_segmentation.src.utils.utils import seed_everything, define_device
 from tta_uia_segmentation.src.utils.logging import setup_wandb

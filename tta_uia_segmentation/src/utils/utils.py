@@ -424,6 +424,9 @@ def generate_2D_dl_for_vol(*vols: torch.Tensor, batch_size: int, num_workers: in
         **dl_kwargs
     )
 
+def from_DCHW_to_1CDHW(x: torch.Tensor) -> torch.Tensor:
+    return x.permute(1, 0, 2, 3).unsqueeze(0)
+
 def parse_bool(value: str) -> bool:
     """
     Parse a string value to a boolean.

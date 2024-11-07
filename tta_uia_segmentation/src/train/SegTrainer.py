@@ -9,7 +9,7 @@ import numpy as np
 from torch.utils.data import DataLoader
 from torch.optim.lr_scheduler import LinearLR
 
-from tta_uia_segmentation.src.models import DinoSeg
+from tta_uia_segmentation.src.models import BaseSeg
 from tta_uia_segmentation.src.utils.loss import DiceLoss, dice_score
 from tta_uia_segmentation.src.utils.io import save_checkpoint
 from tta_uia_segmentation.src.train.utils import LinearWarmupScheduler
@@ -18,7 +18,7 @@ class SegTrainer:
     
     def __init__(
         self,
-        seg: Union[DinoSeg, torch.nn.Module],
+        seg: BaseSeg,
         learning_rate: float,
         device: torch.device,
         bg_suppression_opts: Optional[dict] = None,
@@ -126,7 +126,7 @@ class SegTrainer:
                 x = x.to(device).float()
                 y = y.to(device).float()
 
-                y_pred, _ = self.seg(x)
+                y_pred, *_ = self.seg(x)
 
                 loss = self.loss_func(y_pred, y)
 
@@ -158,13 +158,13 @@ class SegTrainer:
                 self.validation_scores.append(validation_score_fg)
 
                 # Checkpoint last state
-                self._save_checkpoint(os.path.join(logdir, checkpoint_last))
+                self._save_checkpoint(os.path.join(logdir, checkpoint_last), epoch=epoch)
                 
                 if validation_loss < self.best_validation_loss:
                     self.best_validation_loss = validation_loss
 
                     # Checkpoint best state
-                    self._save_checkpoint(os.path.join(logdir, checkpoint_best))
+                    self._save_checkpoint(os.path.join(logdir, checkpoint_best), epoch=epoch)
 
                     best_epoch = epoch
             
@@ -215,7 +215,7 @@ class SegTrainer:
             x = x.to(device).float()
             y = y.to(device).float()
             
-            y_pred, _ = self.seg(x)
+            y_pred, *_ = self.seg(x)
             
             loss = self.loss_func(y_pred, y)
             
@@ -231,7 +231,7 @@ class SegTrainer:
         validation_loss /= n_samples_val
         validation_scores /= n_samples_val
 
-        validation_score_fg = validation_scores[1:].nanmean()
+        validation_score_fg = validation_scores[:, 1:].nanmean()
 
         return validation_loss, validation_score_fg, validation_scores
         
@@ -240,19 +240,21 @@ class SegTrainer:
 
         print(f'Resuming training at epoch {checkpoint["epoch"] + 1}.')
         
+        # Load trainer specific attributes
         self.continue_from_epoch = checkpoint['epoch'] + 1
-        self.seg.load_state_dict(checkpoint['seg_state_dict'])
         self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         self.best_validation_loss = checkpoint['best_validation_loss']
 
+        # Load model specific attributes
+        self.seg.load_checkpoint(checkpoint_path)
+
         del checkpoint
         
-    def _save_checkpoint(self, checkpoint_path: str):
+    def _save_checkpoint(self, checkpoint_path: str, epoch: int):
         
-        save_checkpoint(
+        self.seg.save_checkpoint(
             path=checkpoint_path,
-            epoch=-1,
-            seg_state_dict=self.seg.state_dict(),
+            epoch=epoch,
             optimizer_state_dict=self.optimizer.state_dict(),
             best_validation_loss=self.best_validation_loss,
         )

@@ -15,7 +15,7 @@ def model_defaults():
         use_checkpoint=False,
         use_scale_shift_norm=True,
     )
-    
+
 
 def create_model_conditioned_on_seg_mask(
     image_size,
@@ -31,14 +31,14 @@ def create_model_conditioned_on_seg_mask(
     num_heads_upsample,
     use_scale_shift_norm,
     dropout,
-    n_classes: Optional[int] = None,   
+    n_classes: Optional[int] = None,
 ):
     if seg_cond and n_classes is None:
         raise ValueError("num_classes must be specified if seg_cond is True.")
-    
+
     in_channels = image_channels + (n_classes if seg_cond else 0)
     out_channels = image_channels * (1 if not learn_sigma else 2)
-    
+
     attention_ds = []
     for res in attention_resolutions.split(","):
         attention_ds.append(image_size // int(res))
@@ -55,16 +55,15 @@ def create_model_conditioned_on_seg_mask(
         num_heads=num_heads,
         num_heads_upsample=num_heads_upsample,
         use_scale_shift_norm=use_scale_shift_norm,
-        num_classes = None # To not use class conditioning
+        num_classes=None,  # To not use class conditioning
     )
-    
-    
+
+
 class UNetModelConditionedOnSegMask(UNetModel):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        
+
     def forward(self, x, timesteps, x_cond=None, y=None):
         if x_cond is not None:
             x = torch.cat([x, x_cond], dim=1)
         return super().forward(x, timesteps, y)
-

@@ -15,7 +15,7 @@ sys.path.append(os.path.normpath(os.path.join(
     os.path.dirname(__file__), '..', '..')))
 
 from tta_uia_segmentation.src.dataset.dataset_in_memory import get_datasets, DatasetInMemory
-from tta_uia_segmentation.src.models.io import load_norm_and_seg_from_configs_and_cpt
+from tta_uia_segmentation.src.models.io import define_and_possibly_load_norm_seg
 from tta_uia_segmentation.src.models.normalization import background_suppression
 from tta_uia_segmentation.src.utils.io import (
     load_config, dump_config, print_config, save_nii_image,
@@ -304,7 +304,7 @@ if __name__ == '__main__':
                                        else 'checkpoint_last']
     cpt_fp = os.path.join(seg_dir, checkpoint_name) 
     
-    norm, seg = load_norm_and_seg_from_configs_and_cpt(
+    norm, seg = define_and_possibly_load_norm_seg(
         n_classes = n_classes,
         model_params_norm = model_params_norm,
         model_params_seg = model_params_seg,

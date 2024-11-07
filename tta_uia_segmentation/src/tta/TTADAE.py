@@ -16,7 +16,7 @@ from tta_uia_segmentation.src.utils.utils import (
 from tta_uia_segmentation.src.dataset import DatasetInMemory
 from tta_uia_segmentation.src.dataset.utils import normalize
 from tta_uia_segmentation.src.models import DomainStatistics
-from tta_uia_segmentation.src.tta import BaseTTAState, BaseTTA, NoTTA
+from tta_uia_segmentation.src.tta.BaseTTASeg import BaseTTAState, BaseTTASeg, EVAL_METRICS
 
 
 @dataclass
@@ -170,7 +170,7 @@ class TTADAEState(BaseTTAState):
         return onehot_to_class(self.y_pl) if self.y_pl is not None else None
 
 
-class TTADAE(NoTTA):
+class TTADAE(BaseTTASeg):
     """
     Class to perform Test-Time Adaptation (TTA) using a DAE model to generate pseudo labels.
 
@@ -249,7 +249,7 @@ class TTADAE(NoTTA):
         learning_rate: float = 1e-3,
         alpha: float = 1.0,
         beta: float = 0.25,
-        eval_metrics: OrderedDict[str, callable] = NoTTA.EVAL_METRICS,
+        eval_metrics: OrderedDict[str, callable] = EVAL_METRICS,
         classes_of_interest: Optional[list[int]] = None,
         use_only_dae_pl: bool = False,
         use_only_atlas: bool = False,
@@ -590,7 +590,7 @@ class TTADAE(NoTTA):
                 'manually_norm_img_before_seg': norm_value
             }
 
-            eval_metrics = BaseTTA.evaluate(
+            eval_metrics = BaseTTASeg.evaluate(
                 self,
                 x_preprocessed=vol_preproc,
                 x_original=vol_orig,
@@ -832,12 +832,6 @@ class TTADAE(NoTTA):
     def get_current_pseudo_label(self) -> Optional[torch.Tensor]:
         return self._state.y_pl
     
-    def get_loss(self, loss_name: str) -> OrderedDict[int, float]:
-        return self._state.get_loss(loss_name)
-    
-    def get_score(self, metric_name: str) -> OrderedDict[int, float]:
-        return self._state.get_score(metric_name)
-    
     def get_best_state(
         self,
         as_dict: bool = True,
@@ -896,13 +890,6 @@ class TTADAE(NoTTA):
             
             return current_state
                 
-
-    def get_model_selection_score(self) -> float:
-        return self._state.model_selection_score
-
-    def get_current_iteration(self) -> int:
-        return self._state.iteration
-
     def load_state(self, path: str) -> None:
         raise NotImplementedError('Method not implemented for TTADAE')
     

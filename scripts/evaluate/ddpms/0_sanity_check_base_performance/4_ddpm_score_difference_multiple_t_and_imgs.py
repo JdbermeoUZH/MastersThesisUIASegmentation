@@ -18,7 +18,7 @@ sys.path.append(os.path.normpath(os.path.join(
     os.path.dirname(__file__), '..', '..', '..', '..')))
 
 from tta_uia_segmentation.src.dataset.dataset_in_memory_for_ddpm import get_datasets
-from tta_uia_segmentation.src.models.io import load_norm_from_configs_and_cpt, load_cddpm_from_configs_and_cpt
+from tta_uia_segmentation.src.models.io import define_and_possibly_load_norm, load_cddpm_from_configs_and_cpt
 from tta_uia_segmentation.src.utils.io import load_config, dump_config
 
 
@@ -200,7 +200,7 @@ if __name__ == '__main__':
     model_params_norm = params_norm['model']['normalization_2D']
     train_params_norm = params_norm['training']
     
-    norm = load_norm_from_configs_and_cpt(
+    norm = define_and_possibly_load_norm(
         model_params_norm=model_params_norm,
         cpt_fp=os.path.join(norm_dir, train_params_norm['checkpoint_best']),
         device=device    

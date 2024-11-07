@@ -16,7 +16,7 @@ from tta_uia_segmentation.src.tta.DiffusionTTA_and_DAE_indp import DiffusionTTA_
 from tta_uia_segmentation.src.dataset.dataset_in_memory import get_datasets
 from tta_uia_segmentation.src.models.io import (
     load_cddpm_from_configs_and_cpt,
-    load_norm_and_seg_from_configs_and_cpt,
+    define_and_possibly_load_norm_seg,
     load_dae_and_atlas_from_configs_and_cpt
     )
 from tta_uia_segmentation.src.utils.io import (
@@ -210,7 +210,7 @@ if __name__ == '__main__':
         else 'checkpoint_last'
     cpt_seg_fp = os.path.join(seg_dir, train_params_seg[cpt_type])
     
-    norm, seg = load_norm_and_seg_from_configs_and_cpt(
+    norm, seg = define_and_possibly_load_norm_seg(
         n_classes = n_classes,
         model_params_norm = model_params_norm,
         model_params_seg = model_params_seg,

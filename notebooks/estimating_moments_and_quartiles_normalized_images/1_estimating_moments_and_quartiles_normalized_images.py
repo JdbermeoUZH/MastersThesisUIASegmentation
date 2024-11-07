@@ -8,7 +8,7 @@ from torch.utils.data import DataLoader
 sys.path.append(os.path.join('..', '..', 'tta_uia_segmentation', 'src'))
 
 from tta_uia_segmentation.src.dataset.dataset_in_memory import get_datasets
-from tta_uia_segmentation.src.models.io import load_norm_and_seg_from_configs_and_cpt
+from tta_uia_segmentation.src.models.io import define_and_possibly_load_norm_seg
 from tta_uia_segmentation.src.utils.io import load_config
 from tta_uia_segmentation.src.train.NormSegTrainer import NormSegTrainer
 
@@ -68,7 +68,7 @@ if __name__ == '__main__':
     for cpt_fn in cpts:
         # Load model
         print(f'Loading model from checkpoint {cpt_fn}')
-        norm, seg = load_norm_and_seg_from_configs_and_cpt(
+        norm, seg = define_and_possibly_load_norm_seg(
             n_classes=dataset_params['n_classes'],
             model_params_norm=model_params['normalization_2D'],
             model_params_seg=model_params['segmentation_2D'],

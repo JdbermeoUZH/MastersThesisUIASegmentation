@@ -4,7 +4,7 @@ from tta_uia_segmentation.src.utils.utils import assert_in
 
 
 def get_conv(in_channels, out_channels, kernel_size, n_dimensions=3, *args, **kwargs):
-    assert_in(n_dimensions, 'n_dimensions', [1, 2, 3])
+    assert_in(n_dimensions, "n_dimensions", [1, 2, 3])
 
     if n_dimensions == 1:
         conv = nn.Conv1d
@@ -17,7 +17,7 @@ def get_conv(in_channels, out_channels, kernel_size, n_dimensions=3, *args, **kw
 
 
 def get_batch_norm(num_features, n_dimensions=3, *args, **kwargs):
-    assert_in(n_dimensions, 'n_dimensions', [1, 2, 3])
+    assert_in(n_dimensions, "n_dimensions", [1, 2, 3])
 
     if n_dimensions == 1:
         batch_norm = nn.BatchNorm1d
@@ -30,7 +30,7 @@ def get_batch_norm(num_features, n_dimensions=3, *args, **kwargs):
 
 
 def get_max_pool(kernel_size, n_dimensions=3, *args, **kwargs):
-    assert_in(n_dimensions, 'n_dimensions', [1, 2, 3])
+    assert_in(n_dimensions, "n_dimensions", [1, 2, 3])
 
     if n_dimensions == 1:
         max_pool = nn.MaxPool1d
@@ -40,4 +40,3 @@ def get_max_pool(kernel_size, n_dimensions=3, *args, **kwargs):
         max_pool = nn.MaxPool3d
 
     return max_pool(kernel_size, *args, **kwargs)
-

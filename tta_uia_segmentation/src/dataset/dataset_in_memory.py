@@ -14,7 +14,7 @@ from torch.utils import data
 from tta_uia_segmentation.src.dataset.augmentation import apply_data_augmentation
 from tta_uia_segmentation.src.dataset.deformation import make_noise_masks_3d
 from tta_uia_segmentation.src.dataset.utils import transform_orientation
-from tta_uia_segmentation.src.models.norm_seg.normalization import RBF
+from tta_uia_segmentation.src.models.seg.norm_seg.normalization import RBF
 from tta_uia_segmentation.src.utils.io import deep_get
 from tta_uia_segmentation.src.utils.loss import class_to_onehot
 from tta_uia_segmentation.src.utils.utils import crop_or_pad_to_size, get_seed, assert_in, resize_volume
