@@ -92,8 +92,8 @@ abide_caltech:
   dim: [256, 256, 256]  # DHW (= zxy)
   paths_processed:
     train: $DATA_DIR/subcortical_structures/abide/caltech/data_T1_2d_size_256_256_depth_256_res_0.7_0.7_0.7_from_0_to_10.hdf5
-    test: $DATA_DIR/abide/caltech/data_T1_2d_size_256_256_depth_256_res_0.7_0.7_0.7_from_16_to_36.hdf5
-    val: $DATA_DIR/abide/caltech/data_T1_2d_size_256_256_depth_256_res_0.7_0.7_0.7_from_10_to_15.hdf5
+    test: $DATA_DIR/subcortical_structures/abide/caltech/data_T1_2d_size_256_256_depth_256_res_0.7_0.7_0.7_from_16_to_36.hdf5
+    val: $DATA_DIR/subcortical_structures/abide/caltech/data_T1_2d_size_256_256_depth_256_res_0.7_0.7_0.7_from_10_to_15.hdf5
   paths_original:
     train: $DATA_DIR/subcortical_structures/abide/caltech/data_T1_original_depth_256_from_0_to_10.hdf5
     test: $DATA_DIR/subcortical_structures/abide/caltech/data_T1_original_depth_256_from_16_to_36.hdf5

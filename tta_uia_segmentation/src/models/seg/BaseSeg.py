@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Iterator
 
 import torch
 
@@ -87,6 +87,22 @@ class BaseSeg(torch.nn.Module, ABC):
         -----------
         path : str
             Path to load the model.
+        """
+        pass
+
+    @property
+    @abstractmethod
+    def trainable_params(self) -> Iterator[torch.nn.Parameter]:
+        """
+        Returns the trainable parameters of the model.
+        """
+        pass
+
+    @property
+    @abstractmethod
+    def trainable_modules(self) -> Iterator[torch.nn.Module]:
+        """
+        Returns the trainable parameters of the model.
         """
         pass
 

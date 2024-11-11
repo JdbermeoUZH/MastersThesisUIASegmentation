@@ -102,3 +102,14 @@ class NormSeg(BaseSeg):
         self.train()
         self._seg.train()
         self._norm.train()
+
+    @property
+    def trainable_params(self) -> list[nn.Parameter]:
+        return list(self._norm.parameters()) + list(self._seg.parameters())
+    
+    @property
+    def trainable_modules(self) -> list[torch.nn.Module]:
+        """
+        Returns the trainable parameters of the model.
+        """
+        return [self._norm, self._seg]

@@ -509,3 +509,21 @@ def count_parameters(model: torch.nn.Module) -> int:
 def garbage_collection():
     gc.collect()
     torch.cuda.empty_cache() 
+
+
+def nan_sum(*tensors):
+    # Step 1: Replace NaNs with zero in each tensor
+    tensors_with_nan_as_zero = [torch.nan_to_num(t, nan=0.0) for t in tensors]
+    
+    # Step 2: Element-wise sum of the tensors with NaNs replaced by zero
+    result = sum(tensors_with_nan_as_zero)
+    
+    # Step 3: Create a mask for positions where all tensors have NaN
+    all_nan_mask = torch.ones_like(tensors[0], dtype=bool)
+    for t in tensors:
+        all_nan_mask &= torch.isnan(t)
+    
+    # Set result to NaN where all tensors had NaN
+    result[all_nan_mask] = float('nan')
+    
+    return result

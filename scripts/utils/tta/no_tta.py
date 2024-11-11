@@ -153,7 +153,7 @@ def preprocess_cmd_args() -> argparse.Namespace:
     # TTA loop
     # -------------:
     # Optimization parameters
-    parser.add_argument("--batch_size", type=int, help="Batch size for tta. Default: 64")
+    parser.add_argument("--batch_size", type=int, help="Batch size for tta. Default: 4")
     parser.add_argument(
         "--num_workers", type=int, help="Number of workers for dataloader. Default: 0"
     )
@@ -316,7 +316,7 @@ if __name__ == "__main__":
         )
     elif model_type == "dino":
         seg = define_and_possibly_load_dino_seg(
-            train_dino_cfg=train_params_seg['segmentation_dino'],
+            train_dino_cfg=train_params_seg,
             n_classes=n_classes,
             cpt_fp=cpt_seg_fp,
             device=device,

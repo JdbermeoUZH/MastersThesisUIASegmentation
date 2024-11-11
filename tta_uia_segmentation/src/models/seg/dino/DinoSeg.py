@@ -5,16 +5,15 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from .DinoV2FeatureExtractor import DinoV2FeatureExtractor
-from ..norm_seg.UNet import get_conv, DoubleConv
+from .ResNetDecoder import ResNetDecoder
 from ..BaseSeg import BaseSeg
-from tta_uia_segmentation.src.utils.utils import assert_in, default
 from tta_uia_segmentation.src.utils.io import save_checkpoint
 
 
 class DinoSeg(BaseSeg):
     def __init__(
         self,
-        decoder: nn.Module,
+        decoder: ResNetDecoder,
         dino_fe: Optional[DinoV2FeatureExtractor] = None,
         precalculated_fts: bool = False,
     ):
@@ -25,6 +24,29 @@ class DinoSeg(BaseSeg):
 
         self._precalculated_fts = precalculated_fts
 
+    def forward(
+        self, x: torch.Tensor, **preprocess_kwargs
+    ) -> tuple[torch.Tensor, torch.Tensor, dict[str, torch.Tensor]]:
+        """
+        Forward pass of the model
+
+        Returns:
+        --------
+        y_mask : torch.Tensor
+            Predicted segmentation mask.
+
+        y_logits : torch.Tensor
+            Predicted logits.
+
+        intermediate_outputs : dict[str, torch.Tensor]
+            Dictionary containing intermediate outputs of preprocessing.
+        """
+        # Make output size of the decoder match the input's size if necessary
+        if self._decoder.output_size != x.shape[-2:]:
+            self._decoder.output_size = tuple(x.shape[-2:])
+
+        return super().forward(x, **preprocess_kwargs)
+        
     def _forward(
         self,
         x: torch.Tensor,
@@ -43,6 +65,7 @@ class DinoSeg(BaseSeg):
 
         return self.decoder(x)
 
+    @torch.inference_mode()
     def _preprocess_x(
         self,
         x,
@@ -82,13 +105,19 @@ class DinoSeg(BaseSeg):
     ) -> None:
 
         checkpoint = torch.load(path, map_location=device)
-        decoder_state_dict = checkpoint["decoder_state_dict"]
-        self._decoder.load_state_dict(decoder_state_dict)
-        
+
+        # Load Model weights
+        if "decoder_state_dict" in checkpoint:
+            self._decoder.load_state_dict(checkpoint["decoder_state_dict"])
+        elif "seg_state_dict" in checkpoint:
+            self.load_state_dict(checkpoint["seg_state_dict"])
+        else:
+            raise ValueError("No decoder state dict found in the checkpoint")
+
         # Load Dino feature extractor if specified in the checkpoint
         if "dino_model_name" in checkpoint:
             dino_model_name = checkpoint["dino_model_name"]
-            self._dino_fe = DinoV2FeatureExtractor(model=dino_model_name)   
+            self._dino_fe = DinoV2FeatureExtractor(model=dino_model_name)
 
     @property
     def decoder(self):
@@ -106,99 +135,30 @@ class DinoSeg(BaseSeg):
     def precalculated_fts(self, value: bool):
         self._precalculated_fts = value
 
-
-class ResNetDecoderBlock(nn.Module):
-    def __init__(
+    def eval_mode(
         self,
-        in_channels,
-        out_channels,
-        scale_factor: Optional[float] = 2.0,
-        n_dimensions=2,
-    ):
-        super().__init__()
+    ) -> None:
+        """
+        Sets the model to evaluation mode.
+        """
+        self.eval()
+        self._decoder.eval_mode()
 
-        assert_in(n_dimensions, "n_dimensions", [1, 2, 3])
+    def train_mode(self):
+        """
+        Sets the model to training mode.
 
-        if n_dimensions == 1:
-            self.interpolation_mode = "linear"
-        elif n_dimensions == 2:
-            self.interpolation_mode = "bilinear"
-        else:
-            self.interpolation_mode = "trilinear"
+        We keep the Dino encoder always frozen
+        """
+        self._decoder.train_mode()
 
-        self.scale_factor = scale_factor
-
-        self.double_conv = DoubleConv(
-            in_channels, out_channels, n_dimensions=n_dimensions
-        )
-
-        self.residual_conv = get_conv(
-            in_channels, out_channels, 1, n_dimensions=n_dimensions
-        )
-
-    def forward(self, x, scale_factor=None):
-        scale_factor = default(scale_factor, self.scale_factor)
-
-        if isinstance(scale_factor, torch.Tensor):
-            scale_factor = scale_factor.cpu().numpy().tolist()
-
-        x = F.interpolate(
-            x,
-            scale_factor=scale_factor,
-            mode=self.interpolation_mode,
-            align_corners=True,
-        )
-
-        x = self.double_conv(x) + self.residual_conv(x)
-
-        return x
-
-
-class ResNetDecoder(nn.Module):
-    def __init__(
-        self,
-        n_classes: int,
-        output_size: tuple[int, int],
-        channels=[128, 64, 32, 16],
-        n_dimensions=2,
-    ):
-
-        super().__init__()
-
-        self.blocks = nn.ModuleList(
-            [
-                ResNetDecoderBlock(
-                    channels[i], channels[i + 1], 2, n_dimensions=n_dimensions
-                )
-                for i in range(len(channels) - 2)
-            ]
-        )
-
-        self.output_size = output_size
-        self.last_block = ResNetDecoderBlock(
-            channels[-2], channels[-1], None, n_dimensions=n_dimensions
-        )
-
-        self.output_conv = get_conv(
-            channels[-1], n_classes, 1, n_dimensions=n_dimensions
-        )
-        self.softmax = nn.Softmax(dim=1)
-
-    def forward(self, x):
-        # Pass trough decoder blocks
-        for block in self.blocks:
-            x = block(x)
-
-        # Upsample to original size
-        scale_factor = torch.tensor(self.output_size) / torch.tensor(x.shape[-2:])
-        assert (scale_factor < 2.0).any(), (
-            f"upsampling is too large: {scale_factor}, "
-            + "add another block to the decoder instead"
-        )
-
-        x = self.last_block(x, scale_factor=scale_factor)
-
-        # Output to n_classes
-        x = self.output_conv(x)
-
-        return self.softmax(x), x
+    @property
+    def trainable_params(self) -> list[nn.Parameter]:
+        return list(self._decoder.parameters())
+    
+    @property
+    def trainable_modules(self) -> list[torch.nn.Module]:
+        """
+        Returns the trainable parameters of the model.
+        """
+        return (self._decoder,)

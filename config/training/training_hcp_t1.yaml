@@ -102,19 +102,20 @@ segmentation_dino:
   
   precalculated_fts:            False
 
+  learning_rate:                0.001
   optimizer_type:               adam # adam, adamW
-  
+  weight_decay:                 1e-5
+
   epochs:                       150  # 150 for subcortical_structures, 1000 for WMH (nuhs, umc)
   batch_size:                   16
+  grad_acc_steps:               1
   num_workers:                  2
   validate_every:               3
-  learning_rate:                0.001
-  warmup_steps:                 null # 0.05 for 5% of the total number of steps
+  warmup_steps:                 0.05 # 0.05 for 5% of the total number of steps
   logdir:                       $RESULTS_DIR/subcortical_structures/segmentation/hcp_t1/dino_seg/debug
   wandb_project:                mt-segmentation_models
 
   image_size:                   [1, 256, 256]
-  with_bg_supression:           False
 
   # Loss function parameters
   epsilon:                      1e-10
@@ -122,15 +123,8 @@ segmentation_dino:
   debug_mode:                   False
   fg_only:                      False  
 
-  bg_suppression_opts:
-    type:               none  # possible values: none, fixed_value, random_value, None means no background suppression
-    bg_value:           -0.5
-    bg_value_min:       -0.5
-    bg_value_max:       1
-    mask_source:        thresholding  # possible values: thresholding, ground_truth
-    thresholding:       otsu  # possible values: isodata, li, mean, minimum, otsu, triangle, yen
-    hole_filling:       True
-  
+  max_grad_norm:                1.0
+
   augmentation:
     da_ratio:           0.25
     sigma:              20

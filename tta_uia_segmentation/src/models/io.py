@@ -56,7 +56,7 @@ def define_and_possibly_load_norm_seg(
     cpt_fp: Optional[str] = None,
     device: Optional[torch.device | str] = None,
 ) -> NormSeg:
-    
+
     norm = Normalization(
         n_layers=model_params_norm["n_layers"],
         image_channels=model_params_norm["image_channels"],
@@ -86,34 +86,38 @@ def define_and_possibly_load_norm_seg(
 
 
 def define_and_possibly_load_dino_seg(
-    train_dino_seg_cfg: dict,
+    train_dino_cfg: dict,
     n_classes: int,
     device: torch.device,
     cpt_fp: Optional[str] = None,
 ) -> DinoSeg:
+
     # Define DinoFeatureExtractor
-    dino_fe = DinoV2FeatureExtractor(train_dino_seg_cfg["dino_model"])
+    dino_fe = DinoV2FeatureExtractor(train_dino_cfg["dino_model"]).to(device)
 
     # Define Decoder
     num_upsampling = math.ceil(math.log2(dino_fe.patch_size)) + 1
     num_channels = [int(dino_fe.emb_dim / (2**i)) for i in range(num_upsampling)]
 
     decoder = ResNetDecoder(
-        output_size=train_dino_seg_cfg["image_size"][-2:],
+        output_size=train_dino_cfg["image_size"][-2:],
         n_classes=n_classes,
         channels=num_channels,
         n_dimensions=2,
-    )
+    ).to(device)
 
     # Create wrapping DinoSeg model
     dino_seg = DinoSeg(
         decoder=decoder,
         dino_fe=dino_fe,
-        precalculated_fts=train_dino_seg_cfg["precalculated_fts"],
-    ).to(device)
+        precalculated_fts=train_dino_cfg["precalculated_fts"],
+    )
 
     if cpt_fp is not None:
         dino_seg.load_checkpoint(cpt_fp)
+    
+    # Move to device
+    dino_seg = dino_seg.to(device)
 
     return dino_seg
 
