@@ -71,7 +71,7 @@ class DinoSeg(BaseSeg):
         x,
         mask: Optional[torch.Tensor] = None,
         pre: bool = False,
-        hierarchy: list[int] = [0],
+        hierarchy: int = 0,
     ):
 
         # Calculate dino features if necessary

@@ -11,7 +11,6 @@ from tta_uia_segmentation.src.utils.utils import uniform_interval_sampling
 #
 def elastic_transform(image,  # 3d
                       label,
-                      background_mask,
                       sigma,
                       alpha,
                       rng):
@@ -47,14 +46,7 @@ def elastic_transform(image,  # 3d
             mode='reflect',
         ).reshape(H, W)
 
-        background_mask[i, :, :] = map_coordinates(
-            background_mask[i, :, :],
-            indices,
-            order=0,
-            mode='reflect',
-        ).reshape(H, W)
-
-    return image, label, background_mask
+    return image, label
 
 
 #
@@ -96,7 +88,6 @@ def crop_or_pad_slice_to_size(slice, nx, ny):
 def apply_data_augmentation(
     images,
     labels,
-    background_mask,
     n_dimensions   = 2,
     da_ratio       = 0.25,
     p_inversion    = 0.0,
@@ -119,11 +110,9 @@ def apply_data_augmentation(
     rng            = None,
     intensity_range = (0, 1),
 ):
-    assert(images.shape == labels.shape == background_mask.shape)
 
     images_ = np.copy(images)
     labels_ = np.copy(labels)
-    background_mask_ = np.copy(background_mask)
 
     if rng is None:
         rng = np.random.default_rng()
@@ -134,15 +123,14 @@ def apply_data_augmentation(
     if rng.random() < deep_get(tf_probs, 'image_inversion', default=p_inversion, suppress_warning=True):
 
         images_ = 1 - inv_strength * images_
-        images_[background_mask_ == 1] = 0
 
     # ========
     # elastic deformation
     # ========
     if rng.random() < deep_get(tf_probs, 'elastic_deformation', default=da_ratio, suppress_warning=True):
 
-        images_, labels_, background_mask_ = elastic_transform(
-            images_, labels_, background_mask_, sigma=sigma, alpha=alpha, rng=rng)
+        images_, labels_ = elastic_transform(
+            images_, labels_, sigma=sigma, alpha=alpha, rng=rng)
 
     # ========
     # translation
@@ -159,7 +147,6 @@ def apply_data_augmentation(
             
         images_ = shift(images_, shift=(0, *random_shifts), order=1, mode='reflect')
         labels_ = shift(labels_, shift=(0, *random_shifts), order=0, mode='reflect')
-        background_mask_ = shift(background_mask_, shift=(0, *random_shifts), order=0, mode='reflect')
 
     # ========
     # rotation
@@ -170,7 +157,6 @@ def apply_data_augmentation(
 
         images_ = rotate(images_, reshape=False, angle=random_angle, axes=(2, 1), order=1, mode='reflect')
         labels_ = rotate(labels_, reshape=False, angle=random_angle, axes=(2, 1), order=0, mode='reflect')
-        background_mask_ = rotate(background_mask_, reshape=False, angle=random_angle, axes=(2, 1), order=0, mode='reflect')
 
     # ========
     # scaling
@@ -198,18 +184,8 @@ def apply_data_augmentation(
             channel_axis=0,
         )
 
-        background_mask_i_tmp = transform.rescale(
-            background_mask_,
-            scale_val,
-            order=0,
-            preserve_range=True,
-            mode='reflect',
-            channel_axis=0,
-        )
-
         images_ = crop_or_pad_slice_to_size(images_i_tmp, n_x, n_y)
         labels_ = crop_or_pad_slice_to_size(labels_i_tmp, n_x, n_y)
-        background_mask_ = crop_or_pad_slice_to_size(background_mask_i_tmp, n_x, n_y)
 
     # ========
     # contrast
@@ -247,4 +223,4 @@ def apply_data_augmentation(
         n = np.random.normal(noise_mean, noise_std, size=images_.shape)
         images_ = images_ + n.astype(images_.dtype)
 
-    return images_, labels_, background_mask_
+    return images_, labels_

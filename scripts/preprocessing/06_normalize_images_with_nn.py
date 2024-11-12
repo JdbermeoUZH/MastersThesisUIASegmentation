@@ -94,7 +94,6 @@ def get_configuration_arguments() -> tuple[dict, dict]:
     return dataset_config, preproc_config
 
 
-
 if __name__ == '__main__':
 
     print(f'Running {__file__}')

@@ -188,7 +188,11 @@ class SegTrainer:
                 )
 
                 if validation_loss < self._best_validation_loss:
-                    print(f"New best validation loss: {validation_loss.item()}")
+                    print(
+                        f"New best validation loss: {validation_loss.item()}"
+                        + f" at epoch {epoch}."
+                    )
+
                     self._best_epoch = epoch
                     self._best_validation_loss = validation_loss
 

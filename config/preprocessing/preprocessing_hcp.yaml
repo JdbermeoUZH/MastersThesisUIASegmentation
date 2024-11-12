@@ -4,22 +4,14 @@ device:           cuda
 dataset:          hcp_t2
 splits:           [train, val, test] 
 
-normalize_with_model:             True
-normalization_params:   
-  logdir: $RESULTS_DIR/brain/preprocessing/hcp_t2
-  batch_size: 16
-  num_workers: 3
-  image_size: [1, 256, 256]
-  augmentation: null
+batch_size: 16
+num_workers: 3
+image_size: [1, 256, 256]
 
-  bg_suppression_opts:
-    bg_value: -0.5
-    bg_value_max: 1
-    bg_value_min: -0.5
-    hole_filling: true
-    mask_source: thresholding
-    thresholding: otsu
-    type: fixed_value
+logdir: $RESULTS_DIR/brain/preprocessing/hcp_t2
+
+normalize_with_nn:   
+  augmentation: null
 
   model:
     checkpoint: $RESULTS_DIR/brain/hcp_t1/bg_supp/checkpoint_best.pth
@@ -32,4 +24,28 @@ normalization_params:
     residual: true
     n_dimensions: 2
 
+
+precalculate_dino_features:
+
+  dino_model: large
   
+  hierarchy_level: 2
+
+  augmentation:
+    num_epochs: 20
+
+    sigma:              20
+    alpha:              1000
+    trans_min:          -10
+    trans_max:          10
+    rot_min:            -10
+    rot_max:            10
+    scale_min:          0.9
+    scale_max:          1.1
+    gamma_min:          0.5 #0.2     # Default 0.5
+    gamma_max:          2.0 #5.0     # Default 2.0
+    brightness_min:     0.0 #-0.2    # Default 0.0
+    brightness_max:     0.1 #0.2     # Default 0.1
+    noise_mean:         0.0
+    noise_std:          0.1
+

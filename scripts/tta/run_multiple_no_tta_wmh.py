@@ -48,11 +48,10 @@ log_dir_base_path = os.path.join(
 
 
 seg_models_path = {
-    "small/dice_loss_smoothing_den_1em10_opt_param_kerem": "$RESULTS_DIR/wmh/segmentation/umc/dino/small/dice_loss_smoothing_den_1em10_opt_param_kerem_bs_48",
-    "base/dice_loss_smoothing_den_1em10_opt_param_kerem": "$RESULTS_DIR/wmh/segmentation/umc/dino/base/dice_loss_smoothing_den_1em10_opt_param_kerem_bs_16",
-    #"base/dice_loss_no_smoothing_den_1em10_bs_16": "$RESULTS_DIR/subcortical_structures/segmentation/abide_stanford/dino/base/dice_loss_no_smoothing_den_1em10_bs_16",
-    #"base/dice_loss_no_smoothing_den_1em10_bs_32": "$RESULTS_DIR/subcortical_structures/segmentation/abide_stanford/dino/base/dice_loss_no_smoothing_den_1em10_bs_32",
-    #"small/dice_loss_no_smoothing_den_1em10_bs_64": "$RESULTS_DIR/subcortical_structures/segmentation/abide_stanford/dino/small/dice_loss_no_smoothing_den_1em10_bs_64"
+    #"small/dice_loss_smoothing_den_1em10_opt_param_kerem": "$RESULTS_DIR/wmh/segmentation/umc/dino/small/dice_loss_smoothing_den_1em10_opt_param_kerem_bs_48",
+    #"base/dice_loss_smoothing_den_1em10_opt_param_kerem": "$RESULTS_DIR/wmh/segmentation/umc/dino/base/dice_loss_smoothing_den_1em10_opt_param_kerem_bs_16",
+    "large/dice_loss_smoothing_den_1em10_opt_param_kerem_bs_16_grad_acc_2_lr_0.001": "$RESULTS_DIR/wmh/segmentation/umc/dino/large/dice_loss_smoothing_den_1em10_opt_param_kerem_bs_16_grad_acc_2_lr_0.001",
+    "large/dice_loss_smoothing_den_1em10_opt_param_kerem_bs_16_grad_acc_2_lr_0.0001": "$RESULTS_DIR/wmh/segmentation/umc/dino/large/dice_loss_smoothing_den_1em10_opt_param_kerem_bs_16_grad_acc_2_lr_0.0001",
 }
 
 # Run the commands

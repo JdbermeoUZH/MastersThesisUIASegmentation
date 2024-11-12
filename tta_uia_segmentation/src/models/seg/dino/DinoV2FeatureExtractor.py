@@ -98,10 +98,15 @@ class DinoV2FeatureExtractor(nn.Module):
         self.model.eval()
 
     @torch.inference_mode()
-    def forward(self, image, mask=None, pre=True, hierarchy=[0]):
-
-        if not set(hierarchy) == set([0]):
-            return self.forward_hierarchically(image, mask, pre, hierarchy)
+    def forward(self, image, mask=None, pre=True, hierarchy: int = 0):
+        
+        if hierarchy > 0:
+            image = F.interpolate(
+                image, 
+                scale_factor=2**hierarchy,
+                mode="bicubic",
+                align_corners=False
+            )
 
         patch_size = self.model.patch_size
         image = resize_to_multiple_of_patch(image, patch_size)
