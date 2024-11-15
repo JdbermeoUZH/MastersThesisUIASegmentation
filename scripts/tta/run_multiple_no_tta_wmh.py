@@ -10,18 +10,29 @@ batch_size = 16
 # Datasets
 # :====================================:
 dataset_type = "wmh"
-source_dataset = "umc"
-exclude_sd = False
 split = "test"
+target_datasets = ["umc", "nuhs", "vu"]
+classes_of_interest = []
+classes_of_interest = [str(c) for c in classes_of_interest]
 
-datasets = ["umc", "nuhs", "vu"]
-target_datasets = (
-    datasets if not exclude_sd else [ds for ds in datasets if ds != source_dataset]
-)
-
-# Model type
+# Trained Models
 # :====================================:
 model_type = "dino"  # 'dino' or 'norm_seg'
+
+seg_models_path = {
+    "umc": (
+        "$RESULTS_DIR/wmh/segmentation/umc/dino/large/dice_loss_smoothing_den_1em10_opt_param_kerem_bs_16_grad_acc_2_lr_0.001",
+        "$RESULTS_DIR/wmh/segmentation/umc/dino/large/dice_loss_smoothing_den_1em10_opt_param_kerem_bs_16_grad_acc_2_lr_0.0001",
+    ),
+    "nuhs": (
+        "$RESULTS_DIR/wmh/segmentation/nuhs/dino/large/dice_loss_smoothing_den_1em10_opt_param_kerem_bs_16",
+        "$RESULTS_DIR/wmh/segmentation/nuhs/dino/large/dice_loss_smoothing_den_1em10_opt_param_kerem_bs_16_grad_acc_2_lr_0.0001",
+    ),
+    "vu": (
+        "$RESULTS_DIR/wmh/segmentation/vu/dino/large/dice_loss_smoothing_den_1em10_opt_param_kerem_bs_16",
+        "$RESULTS_DIR/wmh/segmentation/vu/dino/large/dice_loss_smoothing_den_1em10_opt_param_kerem_bs_16_grad_acc_2_lr_0.0001",
+    ),
+}
 
 # Command format
 # :====================================:
@@ -34,6 +45,12 @@ base_command = (
     + " --viz_interm_outs "
 )
 
+base_command += (
+    f" --classes_of_interest {' '.join(classes_of_interest)}"
+    if len(classes_of_interest) > 0
+    else ""
+)
+
 log_dir_base_path = "trained_on_{source_dataset}/tta_on_{target_dataset}"
 log_dir_base_path = os.path.join(
     os.environ["RESULTS_DIR"],
@@ -41,30 +58,28 @@ log_dir_base_path = os.path.join(
     "tta",
     log_dir_base_path,
     split,
-    'noTTA',
+    "noTTA",
     model_type,
     "{seg_model_exp}",
 )
 
 
-seg_models_path = {
-    #"small/dice_loss_smoothing_den_1em10_opt_param_kerem": "$RESULTS_DIR/wmh/segmentation/umc/dino/small/dice_loss_smoothing_den_1em10_opt_param_kerem_bs_48",
-    #"base/dice_loss_smoothing_den_1em10_opt_param_kerem": "$RESULTS_DIR/wmh/segmentation/umc/dino/base/dice_loss_smoothing_den_1em10_opt_param_kerem_bs_16",
-    "large/dice_loss_smoothing_den_1em10_opt_param_kerem_bs_16_grad_acc_2_lr_0.001": "$RESULTS_DIR/wmh/segmentation/umc/dino/large/dice_loss_smoothing_den_1em10_opt_param_kerem_bs_16_grad_acc_2_lr_0.001",
-    "large/dice_loss_smoothing_den_1em10_opt_param_kerem_bs_16_grad_acc_2_lr_0.0001": "$RESULTS_DIR/wmh/segmentation/umc/dino/large/dice_loss_smoothing_den_1em10_opt_param_kerem_bs_16_grad_acc_2_lr_0.0001",
-}
-
 # Run the commands
 # :====================================:
 
-for seg_model_exp, seg_model_dir in seg_models_path.items():
-    for target_dataset in target_datasets:
-        log_dir = log_dir_base_path.format(
-            source_dataset=source_dataset,
-            target_dataset=target_dataset,
-            seg_model_exp=seg_model_exp,
-        )
+for source_dataset, seg_model_paths in seg_models_path.items():
 
-        os.system(
-            f"{base_command} --seg_dir {seg_model_dir} --dataset {target_dataset} --logdir {log_dir}"
-        )
+    for seg_model_path in seg_model_paths:
+        # use the last to elements in the path as seg_model_exp
+        seg_model_exp = os.path.join(*seg_model_path.split(os.path.sep)[-2:])
+
+        for target_dataset in target_datasets:
+            log_dir = log_dir_base_path.format(
+                source_dataset=source_dataset,
+                target_dataset=target_dataset,
+                seg_model_exp=seg_model_exp,
+            )
+
+            os.system(
+                f"{base_command} --seg_dir {seg_model_path} --dataset {target_dataset} --logdir {log_dir}"
+            )

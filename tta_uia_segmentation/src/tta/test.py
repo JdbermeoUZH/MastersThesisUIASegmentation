@@ -734,7 +734,7 @@ def main():
         bg_suppression_opts=bg_suppression_opts,
     )
 
-    indices_per_volume = test_dataset.get_volume_indices()
+    indices_per_volume = test_dataset.get_z_idxs_for_volumes()
 
     args = parser.parse_args()
     start_idx = 0

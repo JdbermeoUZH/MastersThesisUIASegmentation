@@ -58,10 +58,10 @@ class NoTTASeg(BaseTTASeg):
 
         # Get the preprocessed vol for that has the same position as
         # the original vol (preprocessed vol may have a translation in xy)
-        x_preprocessed, _, _ = dataset.get_preprocessed_images(
+        x_preprocessed, *_ = dataset.get_preprocessed_images(
             vol_idx, same_position_as_original=True)
 
-        x_original, y_original_gt, _ = dataset.get_original_images(vol_idx) 
+        x_original, y_original_gt = dataset.get_original_images(vol_idx) 
 
         file_name = f'{dataset.dataset_name}_vol_{vol_idx:03d}' \
             if file_name is None else file_name

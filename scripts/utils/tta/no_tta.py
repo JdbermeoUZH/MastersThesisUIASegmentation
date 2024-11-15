@@ -352,7 +352,7 @@ if __name__ == "__main__":
     # :=========================================================================:
     start_idx = 0 if tta_config["start"] is None else tta_config["start"]
     stop_idx = (
-        len(test_dataset.get_volume_indices())
+        len(test_dataset.get_z_idxs_for_volumes())
         if tta_config["stop"] is None
         else tta_config["stop"]
     )

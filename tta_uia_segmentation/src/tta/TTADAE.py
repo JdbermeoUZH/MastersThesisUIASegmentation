@@ -394,7 +394,7 @@ class TTADAE(BaseTTASeg):
 
         # Create dataloader for the volume on which we wish to adapt
         volume_dataloader = DataLoader(
-            Subset(dataset, dataset.get_idxs_for_volume(vol_idx)),
+            Subset(dataset, dataset.get_z_idxs_for_volume(vol_idx)),
             batch_size=batch_size,
             shuffle=False,
             num_workers=num_workers,
@@ -471,7 +471,7 @@ class TTADAE(BaseTTASeg):
                         target_pix_size=[1., 1., 1.],
                         current_pix_size=self._rescale_factor,
                         only_inplane_resample=False,
-                        vol_format='DCHW',
+                        input_format='DCHW',
                         output_format='DCHW')
                     
                 loss = self._loss_func(mask, y_pl)

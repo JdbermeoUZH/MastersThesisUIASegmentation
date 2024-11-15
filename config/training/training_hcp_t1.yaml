@@ -14,8 +14,7 @@ dae:
   wandb_project:                mt-dae_training
   batch_size:                   1
   num_workers:                  3
-  image_size:                   [256, 256, 256]       # [256, 256, 256] for subcortical_structures, [48, 256, 256] for wmh
-  rescale_factor:               [0.25, 1, 1]          # [0.25, 1, 1] for subcortical_structures, [1, 1, 1] for wmh
+  rescale_factor:               [1, 1, 0.25]          # [0.25, 1, 1] for subcortical_structures, [1, 1, 1] for wmh
   epochs:                       2500                  # 2500 for subcortical_structures (hcp_t1, hcp_t2), 5000 for subcortical_structures (abide_caltech) and WMH (nuhs, umc, vu)
   validate_every:               50                    # 50 for subcortical_structures (hcp_t1, hcp_t2), 100 for subcortical_structures (abide_caltech) and WMH (nuhs, umc, vu)
   learning_rate:                1.0e-3

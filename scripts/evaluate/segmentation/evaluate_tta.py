@@ -283,7 +283,7 @@ if __name__ == '__main__':
     also_bg_supp = evaluation_config['evaluate_also_bg_supp']
     classes_of_interest = evaluation_config['classes_of_interest']
     
-    indices_per_volume = eval_dataset.get_volume_indices() 
+    indices_per_volume = eval_dataset.get_z_idxs_for_volumes() 
     indices_per_volume = {i: indices for i, indices in enumerate(indices_per_volume)}
     
     metrics_dict = {}

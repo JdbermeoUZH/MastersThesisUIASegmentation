@@ -290,7 +290,7 @@ if __name__ == '__main__':
     if wandb_log:
         wandb.watch([norm, seg, ddpm], log='all', log_freq=1)
         
-    indices_per_volume = test_dataset.get_volume_indices()
+    indices_per_volume = test_dataset.get_z_idxs_for_volumes()
     
     start_idx = 0
     stop_idx = len(indices_per_volume)  # == number of volumes

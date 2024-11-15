@@ -87,7 +87,7 @@ def transform_orientation(x, y, z, orientation: str) -> tuple[float, float, floa
     elif orientation == 'DWH':
         return x, z, y
     elif orientation == 'HDW':
-        return z, y, x
+        return x, z, y
     elif orientation == 'WDH':
         return y, z, x
     else:
@@ -161,3 +161,20 @@ def rgb_to_grayscale(img, is_originally_gray_scale: bool = False) -> torch.Tenso
     grayscale_img = grayscale_img.unsqueeze(0)
     
     return grayscale_img
+
+
+def ensure_4d(array):
+    array = array.squeeze()
+    if len(array.shape) == 2:
+        return array[None, None, ...]
+    elif len(array.shape) == 3:
+        return array[None, ...]
+    return array
+
+def ensure_5d(array):
+    array = array.squeeze()
+    if len(array.shape) == 3:
+        return array[None, None, ...]
+    elif len(array.shape) == 4:
+        return array[None, ...]
+    return array

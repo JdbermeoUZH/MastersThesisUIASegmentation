@@ -195,7 +195,7 @@ class DatasetInMemory(data.Dataset):
             # Number of pixels for original images.
             self.n_pix_original = np.stack([data["nx"], data["ny"], data["nz"]])
 
-    def get_volume_indices(self) -> list[np.ndarray]:
+    def get_z_idxs_for_volumes(self) -> list[np.ndarray]:
         """
         Get the indices for each volume in the dataset.
 
@@ -215,7 +215,7 @@ class DatasetInMemory(data.Dataset):
 
         return indices_per_volume
 
-    def get_idxs_for_volume(self, vol_idx: int) -> np.ndarray:
+    def get_z_idxs_for_volume(self, vol_idx: int) -> np.ndarray:
         """
         Get the indices for the specified volume.
 
@@ -230,7 +230,7 @@ class DatasetInMemory(data.Dataset):
             The indices for the specified volume.
         """
         if self.mode == "2D":
-            return self.get_volume_indices()[vol_idx]
+            return self.get_z_idxs_for_volumes()[vol_idx]
         else:
             return np.array([vol_idx])
 

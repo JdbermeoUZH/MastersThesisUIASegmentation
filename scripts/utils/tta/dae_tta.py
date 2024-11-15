@@ -326,7 +326,7 @@ if __name__ == '__main__':
         else None
 
     start_idx = 0
-    stop_idx = len(test_dataset.get_volume_indices())  # == number of volumes
+    stop_idx = len(test_dataset.get_z_idxs_for_volumes())  # == number of volumes
     if tta_config['start'] is not None:
         start_idx = tta_config['start']
     if tta_config['stop'] is not None:

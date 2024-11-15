@@ -125,11 +125,11 @@ def resize_volume(
     target_pix_size: tuple[float, float, float] | torch.Tensor,
     current_pix_size: tuple[float, float, float] | torch.Tensor,
     target_img_size: Optional[tuple[int, int, int]] = None,
-    vol_format: Literal['1CDHW', 'DCHW', 'CDHW'] = '1CDHW',
-    output_format: Literal['1CDHW', 'DCHW'] = '1CDHW',
-    mode: Literal['trilinear', 'nearest'] = 'trilinear',
+    input_format: Literal['NCDHW', 'DCHW', 'CDHW'] = 'NCDHW',
+    output_format: Literal['NCDHW', 'DCHW'] = 'NCDHW',
+    mode: Literal['trilinear', 'bilinear', 'nearest'] = 'trilinear',
     only_inplane_resample: bool = True,
-    order_operations: Literal['crop_then_resize', 'resize_then_crop'] = 'resize_then_crop'
+    target_size_before_resample: Optional[tuple[int, int, int]] = None,
 ) -> torch.Tensor:
     """
     Resize a volume tensor to a target pixel size.
@@ -144,10 +144,10 @@ def resize_volume(
         Current pixel size in (D, H, W) format.
     target_img_size : tuple[int, int, int]
         Target image size in (D, H, W) format.
-    vol_format : Literal['1CDHW', 'DCHW', 'CDHW'], optional
-        Input volume format, by default '1CDHW'.
-    output_format : Literal['1CDHW', 'DCHW'], optional
-        Desired output format, by default '1CDHW'.
+    vol_format : Literal['NCDHW', 'DCHW', 'CDHW'], optional
+        Input volume format, by default 'NCDHW'.
+    output_format : Literal['NCDHW', 'DCHW'], optional
+        Desired output format, by default 'NCDHW'.
     mode : Literal['trilinear', 'nearest'], optional
         Interpolation mode, by default 'trilinear'.
 
@@ -157,79 +157,154 @@ def resize_volume(
         Resized volume tensor in the specified output format.
     """
     
-    # Convert tensor 1CDHW format
-    # ---------------------------
-    assert len(vol_format) == len(x.shape), f"x has {len(x.shape)} dimensions ({x.shape}) " + \
-        f"while format has {len(vol_format)} ({vol_format})"
+    # Convert tensor NCDHW format
+    # :===============================================:
+    assert len(input_format) == len(x.shape), f"x has {len(x.shape)} dimensions ({x.shape}) " + \
+        f"while format has {len(input_format)} ({input_format})"
     
-    if vol_format == 'DCHW':
-        # Convert to 1CDHW
-        assert len(x.shape) == 4, f"x does not have 4 dimensions (format specified is {vol_format})"
+    if input_format == 'DCHW':
+        # Convert to NCDHW
         x = x.permute(1, 0, 2, 3).unsqueeze(0)
             
-    elif vol_format == 'CDHW':
-        # Convert to 1CDHW
-        assert len(x.shape) == 4, f"x does not have 4 dimensions (format specified is {vol_format})"
+    elif input_format == 'CDHW':
+        # Convert to NCDHW
         x = x.unsqueeze(0)
 
-    elif vol_format == '1CDHW':
-        assert len(x.shape) == 5, f"x does not have 5 dimensions (format specified is {vol_format})"
+    elif input_format == 'NCDHW':
         pass
     
     else:
-        raise ValueError(f"Unsupported volume format: {vol_format}")
+        raise ValueError(f"Unsupported volume format: {input_format}")
+    
+    # Crop or pad to intermediate size (if specified)
+    # :===============================================:
+    if target_size_before_resample is not None:
+        crop_or_pad_necessary = tuple(x.shape[-3:]) != tuple(target_size_before_resample)
+        x = crop_or_pad_to_size(x, target_size_before_resample)
     
 
     # Resample/resize volume
-    # ----------------------
+    # :===============================================:
     scale_factor = torch.Tensor(current_pix_size) / torch.Tensor(target_pix_size)       # (D, H, W)
     resampled_size = (torch.tensor(x.shape[-3:]) * scale_factor).round().int().tolist() # (D, H, W)
+
 
     if only_inplane_resample:
         scale_factor[0] = 1.0
         resampled_size[0] = x.shape[-3]
+        
         if target_img_size is not None:
             assert resampled_size[0] == target_img_size[0], \
                 "Target depth must match depth of 'x' for only_inplane_resize=True"
         n_spatial_dims = 2
+        assert mode in ['bilinear', 'nearest'], "Only 'bilinear' and 'nearest' modes are supported for only_inplane_resample=True" 
+    
     else:
         n_spatial_dims = 3
     
     resample_necessary = (scale_factor != 1).any()
-    crop_or_pad_necessary = target_img_size is not None and \
-        tuple(x.shape[-n_spatial_dims:]) != tuple(target_img_size[-n_spatial_dims:])
-
-    if order_operations == 'crop_then_resize':
-        # Crop or pad to target size
-        if crop_or_pad_necessary:
-            x = crop_or_pad_to_size(x, target_img_size)
     
-        # Resample volume 
-        if resample_necessary:
-            x = F.interpolate(x, size=resampled_size, mode=mode)
+    if resample_necessary:
+        x = F.interpolate(x, size=resampled_size, mode=mode)
 
-    elif order_operations == 'resize_then_crop':
-        # Resample volume 
-        if resample_necessary:
-            x = F.interpolate(x, size=resampled_size, mode=mode)
-
-        # Crop or pad to target size
+    # Crop or pad to target size
+    # :===============================================:
+    if target_img_size is not None:
+        crop_or_pad_necessary = tuple(x.shape[-n_spatial_dims:]) != tuple(target_img_size[-n_spatial_dims:])
+        
         if crop_or_pad_necessary:
             x = crop_or_pad_to_size(x, target_img_size)
-
-    else:
-        raise ValueError(f"Unsupported order of operations: {order_operations}")
 
 
     # Convert tensor to output format
-    # -------------------------------
+    # :===============================================:
     if output_format == 'DCHW':
         x = x.squeeze(0).permute(1, 0, 2, 3)
-    elif output_format == '1CDHW':
+    elif output_format == 'NCDHW':
         pass
     else:
         raise ValueError(f"Unsupported output format: {output_format}")
     
+    return x
+
+
+def resize_image(
+    x: torch.Tensor,
+    target_pix_size: tuple[float, float] | torch.Tensor,
+    current_pix_size: tuple[float, float] | torch.Tensor,
+    img_format: Literal['CHW', 'NCHW'] = 'NCHW',
+    output_format: Literal['CHW', 'NCHW'] = 'NCHW',
+    target_img_size: Optional[tuple[int, int]] = None,
+    mode: Literal['bilinear', 'nearest'] = 'bilinear',
+    target_size_before_resample: Optional[tuple[int, int]] = None,
+) -> torch.Tensor:
+    """
+    Resize an image tensor to a target pixel size.
+
+    Parameters
+    ----------
+    x : torch.Tensor
+        Input image tensor.
+    target_pix_size : tuple[float, float] | torch.Tensor
+        Target pixel size in (H, W) format.
+    current_pix_size : tuple[float, float] | torch.Tensor
+        Current pixel size in (H, W) format.
+    target_img_size : tuple[int, int]
+        Target image size in (H, W) format.
+    mode : Literal['bilinear', 'nearest'], optional
+        Interpolation mode, by default 'bilinear'.
+
+    Returns
+    -------
+    torch.Tensor
+        Resized image tensor.
+    """
+
+
+    # Convert tensor to NCHW format
+    # :===============================================:
+    assert len(img_format) == len(x.shape), f"x has {len(x.shape)} dimensions ({x.shape}) " + \
+        f"while format has {len(img_format)} ({img_format})"
+    
+    if img_format == 'CHW':
+        # Convert to NCHW
+        x = x.unsqueeze(0)
+
+    elif img_format == 'NCHW':
+        pass
+    
+
+    # Crop or pad to intermediate size (if specified)
+    # :===============================================:
+    if target_size_before_resample is not None:
+        crop_or_pad_necessary = tuple(x.shape[-2:]) != tuple(target_size_before_resample)
+        x = crop_or_pad_to_size(x, target_size_before_resample)
+
+    # Resample/resize volume
+    # :===============================================:
+    scale_factor = torch.Tensor(current_pix_size) / torch.Tensor(target_pix_size)       
+    resampled_size = (torch.tensor(x.shape[-2:]) * scale_factor).round().int().tolist() 
+
+    resample_necessary = (scale_factor != 1).any()
+
+    if resample_necessary:
+        x = F.interpolate(x, size=resampled_size, mode=mode)
+
+    # Crop or pad to target size
+    # :===============================================:
+    if target_img_size is not None:
+        crop_or_pad_necessary = tuple(x.shape[-2:]) != tuple(target_img_size)
+        
+        if crop_or_pad_necessary:
+            x = crop_or_pad_to_size(x, target_img_size)
+
+    # Convert tensor to output format
+    # :===============================================:
+    if output_format == 'CHW':
+        x = x.squeeze(0)
+    elif output_format == 'NCHW':
+        pass
+
     return x
 
 
@@ -424,7 +499,7 @@ def generate_2D_dl_for_vol(*vols: torch.Tensor, batch_size: int, num_workers: in
         **dl_kwargs
     )
 
-def from_DCHW_to_1CDHW(x: torch.Tensor) -> torch.Tensor:
+def from_DCHW_to_NCDHW(x: torch.Tensor) -> torch.Tensor:
     return x.permute(1, 0, 2, 3).unsqueeze(0)
 
 def parse_bool(value: str) -> bool:
