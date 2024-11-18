@@ -2,7 +2,7 @@ from typing import Optional
 
 import numpy as np
 
-from tta_uia_segmentation.src.dataset import DatasetInMemory
+from tta_uia_segmentation.src.dataset import Dataset
 from tta_uia_segmentation.src.tta.BaseTTASeg import BaseTTASeg, EVAL_METRICS
 from tta_uia_segmentation.src.models import BaseSeg
 
@@ -38,7 +38,7 @@ class NoTTASeg(BaseTTASeg):
 
     def tta(
         self,
-        dataset: DatasetInMemory,
+        dataset: Dataset,
         vol_idx: int,
         batch_size: int,
         num_workers: int,
@@ -52,27 +52,29 @@ class NoTTASeg(BaseTTASeg):
         store_visualization: bool = True,
         save_predicted_vol_as_nifti: bool = True,
     ) -> None:
-        
+
         self._evaluation_mode()
-        dataset.set_augmentation(False)
+        dataset.augment = False
 
         # Get the preprocessed vol for that has the same position as
         # the original vol (preprocessed vol may have a translation in xy)
-        x_preprocessed, *_ = dataset.get_preprocessed_images(
-            vol_idx, same_position_as_original=True)
+        x_preprocessed, *_ = dataset.get_preprocessed_original_volume(vol_idx)
 
-        x_original, y_original_gt = dataset.get_original_images(vol_idx) 
+        x_original, y_original_gt = dataset.get_original_volume(vol_idx)
 
-        file_name = f'{dataset.dataset_name}_vol_{vol_idx:03d}' \
-            if file_name is None else file_name
-        
+        file_name = (
+            f"{dataset.dataset_name}_vol_{vol_idx:03d}"
+            if file_name is None
+            else file_name
+        )
+
         # Evaluate the model on the volume
         eval_metrics = self.evaluate(
             x_preprocessed=x_preprocessed,
             x_original=x_original,
             y_original_gt=y_original_gt.float(),
-            preprocessed_pix_size=dataset.get_processed_pixel_size(),
-            gt_pix_size=dataset.get_original_pixel_size(vol_idx),
+            preprocessed_pix_size=dataset.get_processed_pixel_size_w_orientation(),
+            gt_pix_size=dataset.get_original_pixel_size_w_orientation(vol_idx),
             metrics=metrics,
             batch_size=batch_size,
             num_workers=num_workers,

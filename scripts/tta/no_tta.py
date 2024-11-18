@@ -9,7 +9,7 @@ import numpy as np
 sys.path.append(os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
 from tta_uia_segmentation.src.tta import NoTTASeg
-from tta_uia_segmentation.src.dataset.dataset_in_memory import get_datasets
+from tta_uia_segmentation.src.dataset.dataset import get_datasets
 from tta_uia_segmentation.src.models.io import (
     define_and_possibly_load_norm_seg,
     define_and_possibly_load_dino_seg,
@@ -24,7 +24,8 @@ from tta_uia_segmentation.src.utils.utils import (
     seed_everything,
     define_device,
     parse_bool,
-    default
+    assert_in,
+    default,
 )
 from tta_uia_segmentation.src.utils.logging import setup_wandb
 
@@ -153,50 +154,24 @@ def preprocess_cmd_args() -> argparse.Namespace:
     # TTA loop
     # -------------:
     # Optimization parameters
-    parser.add_argument("--batch_size", type=int, help="Batch size for tta. Default: 64")
     parser.add_argument(
-        "--num_workers", type=int, help="Number of workers for dataloader. Default: 0"
+        "--batch_size", type=int, help="Batch size for tta. Default: 64"
+    )
+    parser.add_argument(
+        "--num_workers", type=int, help="Number of workers for dataloader. Default: 2"
     )
 
     # Dataset and its transformations to use for TTA
     # ---------------------------------------------------:
-    parser.add_argument(
-        "--dataset", type=str, help="Name of dataset to use for tta. Default: USZ"
-    )
+    parser.add_argument("--dataset", type=str, help="Name of dataset to use for tta")
     parser.add_argument(
         "--split", type=str, help="Name of split to use for tta. Default: test"
     )
-    parser.add_argument(
-        "--n_classes", type=int, help="Number of classes in dataset. Default: 21"
-    )
-    parser.add_argument(
-        "--image_size",
-        type=int,
-        nargs="+",
-        help="Size of images in dataset. Default: [560, 640, 160]",
-    )
-    parser.add_argument(
-        "--resolution_proc",
-        type=float,
-        nargs="+",
-        help="Resolution of images in dataset. Default: [0.3, 0.3, 0.6]",
-    )
+    parser.add_argument("--n_classes", type=int, help="Number of classes in dataset")
     parser.add_argument(
         "--rescale_factor",
         type=float,
         help="Rescale factor for images in dataset. Default: None",
-    )
-
-    # Backround suppression for normalized images
-    parser.add_argument(
-        "--bg_supp_x_norm_eval",
-        type=parse_bool,
-        help="Whether to suppress background for normalized images during evaluation. Default: True",
-    )
-    parser.add_argument(
-        "--bg_supression_type",
-        choices=["fixed_value", "random_value", "none", None],
-        help="Type of background suppression to use. Default: fixed_value",
     )
 
     args = parser.parse_args()
@@ -282,19 +257,29 @@ if __name__ == "__main__":
     dataset_name = tta_config["dataset"]
     split = tta_config["split"]
     n_classes = dataset_config[dataset_name]["n_classes"]
+    mode = (
+        train_params_seg["seg_model_mode"]
+        if "seg_model_mode" in train_params_seg
+        else "2D"
+    )
+    orientation = tta_config["eval_orientation"]
+
+    # So far only depth orientation is used
+    assert_in(orientation, "orientation", ["depth", "height", "width"])
 
     (test_dataset,) = get_datasets(
         dataset_name=dataset_name,
-        paths=dataset_config[dataset_name]["paths_processed"],
+        paths_preprocessed=dataset_config[dataset_name]["paths_preprocessed"],
         paths_original=dataset_config[dataset_name]["paths_original"],
         splits=[split],
-        image_size=tta_config["image_size"],
         resolution_proc=dataset_config[dataset_name]["resolution_proc"],
         dim_proc=dataset_config[dataset_name]["dim"],
         n_classes=n_classes,
+        mode=mode,
+        orientation=orientation,
         aug_params=None,
-        deformation=None,
         load_original=True,
+        load_in_memory=tta_config["load_in_memory"],
     )
 
     print("Datasets loaded")
@@ -316,7 +301,7 @@ if __name__ == "__main__":
         )
     elif model_type == "dino":
         seg = define_and_possibly_load_dino_seg(
-            train_dino_cfg=train_params_seg['segmentation_dino'],
+            train_dino_cfg=train_params_seg["segmentation_dino"],
             n_classes=n_classes,
             cpt_fp=cpt_seg_fp,
             device=device,
@@ -352,7 +337,7 @@ if __name__ == "__main__":
     # :=========================================================================:
     start_idx = 0 if tta_config["start"] is None else tta_config["start"]
     stop_idx = (
-        len(test_dataset.get_z_idxs_for_volumes())
+        test_dataset.get_num_volumes()
         if tta_config["stop"] is None
         else tta_config["stop"]
     )

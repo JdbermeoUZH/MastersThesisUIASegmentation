@@ -164,7 +164,7 @@ def resize_volume(
     
     if input_format == 'DCHW':
         # Convert to NCDHW
-        x = x.permute(1, 0, 2, 3).unsqueeze(0)
+        x = from_DCHW_to_NCDHW(x, N=1)
             
     elif input_format == 'CDHW':
         # Convert to NCDHW
@@ -188,24 +188,27 @@ def resize_volume(
     scale_factor = torch.Tensor(current_pix_size) / torch.Tensor(target_pix_size)       # (D, H, W)
     resampled_size = (torch.tensor(x.shape[-3:]) * scale_factor).round().int().tolist() # (D, H, W)
 
-
     if only_inplane_resample:
-        scale_factor[0] = 1.0
-        resampled_size[0] = x.shape[-3]
-        
         if target_img_size is not None:
-            assert resampled_size[0] == target_img_size[0], \
+            assert x.shape[-3] == target_img_size[0], \
                 "Target depth must match depth of 'x' for only_inplane_resize=True"
-        n_spatial_dims = 2
         assert mode in ['bilinear', 'nearest'], "Only 'bilinear' and 'nearest' modes are supported for only_inplane_resample=True" 
     
+        n_spatial_dims = 2
+        scale_factor = scale_factor[-n_spatial_dims:]
+        resampled_size = resampled_size[-n_spatial_dims:]
+        resample_necessary = (scale_factor != 1).any()
+        
+        if resample_necessary:
+            x = from_NCDHW_to_DCHW(x)
+            x = F.interpolate(x, size=resampled_size, mode=mode)
+            x = from_DCHW_to_NCDHW(x, N=1)
     else:
         n_spatial_dims = 3
-    
-    resample_necessary = (scale_factor != 1).any()
-    
-    if resample_necessary:
-        x = F.interpolate(x, size=resampled_size, mode=mode)
+        resample_necessary = (scale_factor != 1).any()
+        
+        if resample_necessary:
+            x = F.interpolate(x, size=resampled_size, mode=mode)
 
     # Crop or pad to target size
     # :===============================================:
@@ -215,11 +218,10 @@ def resize_volume(
         if crop_or_pad_necessary:
             x = crop_or_pad_to_size(x, target_img_size)
 
-
     # Convert tensor to output format
     # :===============================================:
     if output_format == 'DCHW':
-        x = x.squeeze(0).permute(1, 0, 2, 3)
+        x = from_NCDHW_to_DCHW(x)
     elif output_format == 'NCDHW':
         pass
     else:
@@ -483,11 +485,10 @@ def generate_2D_dl_for_vol(*vols: torch.Tensor, batch_size: int, num_workers: in
 
     processed_vols = []
     for x in vols:
-        assert x.dim() == 5, f"Input tensor must be 5D but is {len(x.shape)}D"
-        x = x.squeeze(0)  # Remove batch dimension
-        x = x.permute(1, 0, 2, 3)  # Permute to DCHW format
-        processed_vols.append(x)
-
+        processed_vols.append(
+            from_NCDHW_to_DCHW(x)
+        )
+    
     # Ensure all tensors have the same number of slices
     assert all(t.size(0) == processed_vols[0].size(0) for t in processed_vols), \
         "All input tensors must have the same number of slices"
@@ -499,8 +500,15 @@ def generate_2D_dl_for_vol(*vols: torch.Tensor, batch_size: int, num_workers: in
         **dl_kwargs
     )
 
-def from_DCHW_to_NCDHW(x: torch.Tensor) -> torch.Tensor:
-    return x.permute(1, 0, 2, 3).unsqueeze(0)
+def from_DCHW_to_NCDHW(x: torch.Tensor, N: int = 1) -> torch.Tensor:
+    assert x.dim() == 4, f"Input tensor must be 4D but is {len(x.shape)}D"
+    return x.reshape(N, -1, *x.shape[-3:]).permute(0, 2, 1, 3, 4)
+
+def from_NCDHW_to_DCHW(x: torch.Tensor) -> torch.Tensor:
+    assert x.dim() == 5, f"Input tensor must be 5D but is {len(x.shape)}D"
+    x = x.permute(0, 2, 1, 3, 4)
+    return x.reshape(-1, *x.shape[-3:])
+
 
 def parse_bool(value: str) -> bool:
     """

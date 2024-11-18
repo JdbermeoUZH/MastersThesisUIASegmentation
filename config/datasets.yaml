@@ -4,7 +4,7 @@ hcp_t1:
   resolution_proc: [0.7, 0.7, 0.7]  # voxel size of processed dataset in [mm] (xyz)
   dim: [256, 256, 256]  # DHW
   orientation: sagittal
-  paths_processed:
+  paths_preprocessed:
     train: $DATA_DIR/subcortical_structures/hcp/data_T1_2d_size_256_256_depth_256_res_0.7_0.7_from_0_to_20.hdf5
     test: $DATA_DIR/subcortical_structures/hcp/data_T1_2d_size_256_256_depth_256_res_0.7_0.7_from_50_to_70.hdf5
     val: $DATA_DIR/subcortical_structures/hcp/data_T1_2d_size_256_256_depth_256_res_0.7_0.7_from_20_to_25.hdf5
@@ -20,7 +20,7 @@ hcp_t2:
   resolution_proc: [0.7, 0.7, 0.7]  # voxel size of processed dataset in [mm] (xyz)
   dim: [256, 256, 256]  # DHW 
   orientation: sagittal
-  paths_processed:
+  paths_preprocessed:
     train: $DATA_DIR/subcortical_structures/hcp/data_T2_2d_size_256_256_depth_256_res_0.7_0.7_from_0_to_20.hdf5
     test: $DATA_DIR/subcortical_structures/hcp/data_T2_2d_size_256_256_depth_256_res_0.7_0.7_from_50_to_70.hdf5
     val: $DATA_DIR/subcortical_structures/hcp/data_T2_2d_size_256_256_depth_256_res_0.7_0.7_from_20_to_25.hdf5
@@ -36,7 +36,7 @@ abide_caltech:
   resolution_proc: [0.7, 0.7, 0.7]  # voxel size of processed dataset in [mm] (xyz)
   dim: [256, 256, 256]  # DHW 
   orientation: sagittal
-  paths_processed:
+  paths_preprocessed:
     train: $DATA_DIR/subcortical_structures/abide/caltech/data_T1_2d_size_256_256_depth_256_res_0.7_0.7_0.7_from_0_to_10.hdf5
     test: $DATA_DIR/subcortical_structures/abide/caltech/data_T1_2d_size_256_256_depth_256_res_0.7_0.7_0.7_from_16_to_36.hdf5
     val: $DATA_DIR/subcortical_structures/abide/caltech/data_T1_2d_size_256_256_depth_256_res_0.7_0.7_0.7_from_10_to_15.hdf5
@@ -51,7 +51,7 @@ abide_stanford:
   resolution_proc: [0.7, 0.7, 0.7]  # voxel size of processed dataset in [mm] (xyz)
   dim: [256, 256, 132]  # HWD
   orientation: sagittal
-  paths_processed:
+  paths_preprocessed:
     train: $DATA_DIR/subcortical_structures/abide/stanford/data_T1_2d_size_256_256_depth_132_res_0.7_0.7_from_0_to_10.hdf5
     test: $DATA_DIR/subcortical_structures/abide/stanford/data_T1_2d_size_256_256_depth_132_res_0.7_0.7_from_16_to_36.hdf5
     val: $DATA_DIR/subcortical_structures/abide/stanford/data_T1_2d_size_256_256_depth_132_res_0.7_0.7_from_10_to_15.hdf5
@@ -66,7 +66,7 @@ nuhs:
   resolution_proc: [1, 1, 3]  # in-plane resolution of processed dataset
   dim: [256, 256, 48]  # HWD 
   orientation: axial
-  paths_processed:
+  paths_preprocessed:
     train: $DATA_DIR/wmh/nuhs/data_nuhs_2d_size_256_256_depth_48_res_1_1_3_from_0_to_10.hdf5
     test: $DATA_DIR/wmh/nuhs/data_nuhs_2d_size_256_256_depth_48_res_1_1_3_from_10_to_15.hdf5
     val: $DATA_DIR/wmh/nuhs/data_nuhs_2d_size_256_256_depth_48_res_1_1_3_from_15_to_20.hdf5
@@ -81,7 +81,7 @@ nuhs_w_synthseg_labels:
   resolution_proc: [1, 1, 3]  # in-plane resolution of processed dataset
   dim: [256, 256, 48]  # HWD 
   orientation: axial
-  paths_processed:
+  paths_preprocessed:
     train: $DATA_DIR/wmh/nuhs/data_nuhs_2d_size_256_256_depth_48_res_1_1_3_from_0_to_10_w_synthseg_labels.hdf5
     test: $DATA_DIR/wmh/nuhs/data_nuhs_2d_size_256_256_depth_48_res_1_1_3_from_10_to_15_w_synthseg_labels.hdf5
     val: $DATA_DIR/wmh/nuhs/data_nuhs_2d_size_256_256_depth_48_res_1_1_3_from_15_to_20_w_synthseg_labels.hdf5
@@ -96,7 +96,7 @@ umc:
   resolution_proc: [1, 1, 3]  # in-plane resolution of processed dataset
   dim: [256, 256, 48]  # HWD 
   orientation: axial
-  paths_processed:
+  paths_preprocessed:
     train: $DATA_DIR/wmh/umc/data_umc_2d_size_256_256_depth_48_res_1_1_3_from_0_to_10.hdf5
     test: $DATA_DIR/wmh/umc/data_umc_2d_size_256_256_depth_48_res_1_1_3_from_10_to_15.hdf5
     val: $DATA_DIR/wmh/umc/data_umc_2d_size_256_256_depth_48_res_1_1_3_from_15_to_20.hdf5
@@ -111,7 +111,7 @@ umc_w_synthseg_labels:
   resolution_proc: [1, 1, 3]  # in-plane resolution of processed dataset
   dim: [256, 256, 48]  # HWD 
   orientation: axial
-  paths_processed:
+  paths_preprocessed:
     train: $DATA_DIR/wmh/umc/data_umc_2d_size_256_256_depth_48_res_1_1_3_from_0_to_10_w_synthseg_labels.hdf5
     test: $DATA_DIR/wmh/umc/data_umc_2d_size_256_256_depth_48_res_1_1_3_from_10_to_15_w_synthseg_labels.hdf5
     val: $DATA_DIR/wmh/umc/data_umc_2d_size_256_256_depth_48_res_1_1_3_from_15_to_20_w_synthseg_labels.hdf5
@@ -126,7 +126,7 @@ vu:
   resolution_proc: [1, 1, 3]  # in-plane resolution of processed dataset
   dim: [256, 256, 48]  # HWD 
   orientation: axial
-  paths_processed:
+  paths_preprocessed:
     train: $DATA_DIR/wmh/vu/data_vu_2d_size_256_256_depth_48_res_1_1_3_from_0_to_10.hdf5
     test: $DATA_DIR/wmh/vu/data_vu_2d_size_256_256_depth_48_res_1_1_3_from_10_to_15.hdf5
     val: $DATA_DIR/wmh/vu/data_vu_2d_size_256_256_depth_48_res_1_1_3_from_15_to_20.hdf5
@@ -141,7 +141,7 @@ vu_w_synthseg_labels:
   resolution_proc: [1, 1, 3]  # in-plane resolution of processed dataset
   dim: [256, 256, 48]  # HWD 
   orientation: axial
-  paths_processed:
+  paths_preprocessed:
     train: $DATA_DIR/wmh/vu/data_vu_2d_size_256_256_depth_48_res_1_1_3_from_0_to_10_w_synthseg_labels.hdf5
     test: $DATA_DIR/wmh/vu/data_vu_2d_size_256_256_depth_48_res_1_1_3_from_10_to_15_w_synthseg_labels.hdf5
     val: $DATA_DIR/wmh/vu/data_vu_2d_size_256_256_depth_48_res_1_1_3_from_15_to_20_w_synthseg_labels.hdf5

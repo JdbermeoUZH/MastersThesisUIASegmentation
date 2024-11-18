@@ -43,7 +43,7 @@ base_command = (
     + f" --classes_of_interest {' '.join(classes_of_interest)}"
 )
 
-log_dir_base_path = "trained_on_{source_dataset}/tta_on_{target_dataset}"
+log_dir_base_path = "trained_on_{source_dataset}_TEST/tta_on_{target_dataset}"
 log_dir_base_path = os.path.join(
     os.environ["RESULTS_DIR"],
     dataset_type,
@@ -73,7 +73,7 @@ for source_dataset, seg_model_paths in seg_models_path.items():
                 target_dataset=target_dataset,
                 seg_model_exp=seg_model_exp,
             )
-
+            
             os.system(
                 f"{base_command} --seg_dir {seg_model_path} --dataset {target_dataset} --logdir {log_dir}"
             )

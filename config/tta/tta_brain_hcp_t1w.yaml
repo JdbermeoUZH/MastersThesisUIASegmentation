@@ -6,7 +6,9 @@ debug_mode: True
 
 dataset: hcp_t2   # subcortical_structures: hcp_t1, hcp_t2, abide_caltech, abide_stanford; wmh: nuhs, umc, vu
 split:   test     # val, test
-image_size: [1, 256, 256]
+eval_orientation: depth # depth, width, or height
+load_in_memory: True # If True, it will load the entire dataset in memory
+
 start: null       # Index of the test dataset to start at
 stop:  null       # Index of the test dataset to stop at
 

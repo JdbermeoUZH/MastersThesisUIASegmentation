@@ -14,7 +14,11 @@ import torch.nn.functional as F
 
 from tta_uia_segmentation.src.dataset.augmentation import apply_data_augmentation
 from tta_uia_segmentation.src.dataset.deformation import make_noise_masks_3d
-from tta_uia_segmentation.src.dataset.utils import transform_orientation, ensure_4d, ensure_5d
+from tta_uia_segmentation.src.dataset.utils import (
+    transform_orientation,
+    ensure_4d,
+    ensure_5d,
+)
 from tta_uia_segmentation.src.utils.loss import class_to_onehot
 from tta_uia_segmentation.src.utils.utils import (
     default,
@@ -61,7 +65,7 @@ class ExtraInputsEmpty(ExtraInputs):
 
     def __len__(self) -> int:
         return 0
-    
+
     def to_dict(self):
         return dict()
 
@@ -75,7 +79,7 @@ class Dataset(data.Dataset):
     def __init__(
         self,
         dataset_name: str,
-        paths: str,
+        paths_preprocessed: str,
         paths_original: str,
         split: str,
         resolution_proc: tuple[float, float, float],
@@ -86,7 +90,6 @@ class Dataset(data.Dataset):
         rescale_factor: Optional[tuple[float, float, float]] = None,
         rescale_mode: Literal["trilinear", "bilinear", "nearest"] = "bilinear",
         rescale_only_inplane: bool = False,
-        reshape_to_dim_proc: bool = True,
         aug_params: Optional[dict] = None,
         deformation_params: Optional[dict] = None,
         load_original: bool = False,
@@ -98,12 +101,11 @@ class Dataset(data.Dataset):
 
         assert_in(split, "split", ["train", "val", "test"])
         self._dataset_name = dataset_name
-        self._path_preprocessed = os.path.expanduser(paths[split])
+        self._path_preprocessed = os.path.expanduser(paths_preprocessed[split])
         self._path_original = os.path.expanduser(paths_original[split])
         self._split = split
         self._load_in_memory = load_in_memory
         self._resolution_proc = resolution_proc
-        self._reshape_to_dim_proc = reshape_to_dim_proc
         self._dim_proc = dim_proc
         self._n_classes = n_classes
         self._mode = mode
@@ -126,22 +128,42 @@ class Dataset(data.Dataset):
         self._images_preprocessed = None
         self._labels_preprocessed = None
 
+        if self._load_in_memory:
+            self._load_all_preprocessed_images_to_memory()
+
         self._h5f_original = None
         self._labels_original = None
         self._images_original = None
         self._n_pix_original = None
 
-        if self._load_in_memory:
-            self.load_all_images_to_memory()
-
+        if load_original:
+            self._load_original_images(load_in_memory=load_in_memory)
+        
         # Define dataset length
         # :=========================================================================:
+        self._define_dataset_length(check_dims_proc_and_orig_match)
+
+        # Define output names of output classes
+        # :=========================================================================:
+        if label_names is None:
+            num_zeros_pad = math.ceil(math.log10(n_classes + 1))
+            label_names = {i: str(i).zfill(num_zeros_pad) for i in range(n_classes)}
+        else:
+            assert len(label_names) == n_classes, "len(label_names) != n_classes"
+
+        self.label_names = label_names
+
+    def _define_dataset_length(
+        self, check_dims_proc_and_orig_match: bool = False
+    ) -> None:
         if self._mode == "2D":
             with h5py.File(self._path_preprocessed, "r") as data:
                 self._length = data["images"].shape[0]
-                self._length *= self._rescale_factor[-1] if self._rescale_factor is not None else 1
+                self._length *= (
+                    self._rescale_factor[-1] if self._rescale_factor is not None else 1
+                )
 
-            if load_original and check_dims_proc_and_orig_match:
+            if self._load_original and check_dims_proc_and_orig_match:
                 with h5py.File(self._path_original, "r") as data:
                     original_length = data["images"].shape[0] * data["images"].shape[1]
 
@@ -153,23 +175,13 @@ class Dataset(data.Dataset):
             with h5py.File(self._path_preprocessed, "r") as data:
                 self._length = data["images"].shape[0] // self._dim_proc[2]
 
-            if load_original and check_dims_proc_and_orig_match:
+            if self._load_original and check_dims_proc_and_orig_match:
                 with h5py.File(self._path_original, "r") as data:
                     original_length = data["images"].shape[0]
 
                 assert (
                     self._length == original_length
                 ), "Length of preprocessed and original data do not match"
-
-        # Define output names of output classes
-        # :=========================================================================:
-        if label_names is None:
-            num_zeros_pad = math.ceil(math.log10(n_classes + 1))
-            label_names = {i: str(i).zfill(num_zeros_pad) for i in range(n_classes)}
-        else:
-            assert len(label_names) == n_classes, "len(label_names) != n_classes"
-
-        self.label_names = label_names
 
     def _get_images_and_labels(
         self,
@@ -212,10 +224,12 @@ class Dataset(data.Dataset):
                 vol_idx, orientation="HWD"
             )
             slice_index = [Ellipsis, slice(0, nz), slice(0, nx), slice(0, ny)]
-            slice_index = tuple([
-                slice_index[i] if dim_i > 1 else slice(None)
-                for i, dim_i in enumerate(images.shape)
-            ])
+            slice_index = tuple(
+                [
+                    slice_index[i] if dim_i > 1 else slice(None)
+                    for i, dim_i in enumerate(images.shape)
+                ]
+            )
 
             images = images[slice_index]
             labels = labels[slice_index]
@@ -233,16 +247,16 @@ class Dataset(data.Dataset):
         # :=========================================================================:
         elif self._mode == "3D":
             images = ensure_5d(images)
-            labels = ensure_5d(labels) 
+            labels = ensure_5d(labels)
 
             if orientation in ["height", "width"]:
                 if orientation == "height":
-                    source = 2 # D
-                    destination = 3 # H
+                    source = 2  # D
+                    destination = 3  # H
 
                 elif orientation == "width":
-                    source = 2 # D
-                    destination = 4 # W
+                    source = 2  # D
+                    destination = 4  # W
 
                 images = np.moveaxis(images, source, destination)
                 labels = np.moveaxis(labels, source, destination)
@@ -334,12 +348,14 @@ class Dataset(data.Dataset):
         self, index: int, images: torch.Tensor, labels: torch.Tensor
     ) -> ExtraInputs:
         return ExtraInputsEmpty()
-    
-    def _get_vol_idx_for_img_idx(self, index: int, orientation: Literal["depth", "height", "width"] = "depth") -> int:
+
+    def _get_vol_idx_for_img_idx(
+        self, index: int, orientation: Literal["depth", "height", "width"] = "depth"
+    ) -> int:
         # Open connection to h5 file of original images if necessary
         if not self._load_in_memory and self._h5f_original is None:
             self._open_connection_to_original_h5_file()
-        
+
         _, dim_z, dim_x, dim_y = self._images_original.shape
 
         if orientation == "depth":
@@ -349,7 +365,7 @@ class Dataset(data.Dataset):
             return index // dim_x
 
         elif orientation == "width":
-            return index // dim_y   
+            return index // dim_y
 
     def _get_slice_indexes(
         self,
@@ -548,7 +564,7 @@ class Dataset(data.Dataset):
 
         images = torch.from_numpy(images)
         labels = torch.from_numpy(labels)
-        
+
         # Format the tensors to the correct output shape
         # :=========================================================================:
         if as_onehot:
@@ -585,7 +601,8 @@ class Dataset(data.Dataset):
         if self._h5f_original is not None:
             self._h5f_original.close()
 
-    def _load_original_images(self):
+    def _load_original_images(self, load_in_memory: bool = False):
+
         # Number of pixels for original images.
         with h5py.File(self._path_original, "r") as h5f:
             self._n_pix_original = np.stack([h5f["nx"], h5f["ny"], h5f["nz"]])
@@ -594,7 +611,7 @@ class Dataset(data.Dataset):
         with h5py.File(self._path_preprocessed, "r") as data:
             self._pix_size_original = np.stack([data["px"], data["py"], data["pz"]])
 
-        if self._load_in_memory:
+        if load_in_memory:
             self._load_all_original_volumes_in_memory()
 
     def _load_all_original_volumes_in_memory(self):
@@ -728,7 +745,7 @@ class Dataset(data.Dataset):
             only_inplane_resample=only_inplane_resample,
         )
 
-    def get_preprocessed_original_image(
+    def get_preprocessed_original_volume(
         self,
         index: int,
         as_onehot: bool = True,
@@ -862,6 +879,10 @@ class Dataset(data.Dataset):
         nx, ny, nz = self._n_pix_original[:, index]
 
         return transform_orientation(nx, ny, nz, orientation)
+
+    def get_num_volumes(self):
+        self._open_connection_to_original_h5_file()
+        return self._images_original.shape[0]
     
     def _open_connection_to_preprocessed_h5_file(self):
         if self._h5f_preprocessed is None:
@@ -884,7 +905,10 @@ class Dataset(data.Dataset):
         if self._h5f_original is not None:
             self._h5f_original.close()
             self._h5f_original = None
-
+    @property
+    def dataset_name(self) -> str:
+        return self._dataset_name
+    
     @property
     def augment(self) -> bool:
         return self._augment
@@ -926,132 +950,3 @@ class Dataset(data.Dataset):
 
     def get_label_name(self, label):
         return self.label_names[label]
-
-
-if __name__ == "__main__":
-    import sys
-
-    root_dir = os.path.normpath(
-        os.path.join(os.path.dirname(__file__), "..", "..", "..")
-    )
-
-    print(root_dir)
-
-    sys.path.append(root_dir)
-
-    from tta_uia_segmentation.src.utils.io import load_config
-    from tta_uia_segmentation.src.utils.utils import resize_volume
-    from tta_uia_segmentation.src.utils.loss import dice_score
-
-    dice_score_fn_mean = lambda y_pred, y_gt: dice_score(
-        y_pred, y_gt, soft=False, reduction="mean", foreground_only=True
-    )
-    dice_score_fn = lambda y_pred, y_gt: dice_score(
-        y_pred, y_gt, soft=False, reduction="none", foreground_only=True
-    )
-
-    dataset_config = load_config(os.path.join(root_dir, "config", "datasets.yaml"))
-
-    def current_evaluation_approach(y, orig_pix_size, preprocessed_pix_size):
-        scale_factor = torch.tensor(orig_pix_size) / torch.tensor(preprocessed_pix_size)
-        output_size = (torch.tensor(y.shape[2:]) * scale_factor).round().int().tolist()
-
-        _, _, D, H, W = y.shape
-
-        # Downsize to preprocessed pixel size
-        y_resized = F.interpolate(y.float(), size=output_size, mode="trilinear")
-
-        # Upsample to original dimensions
-        y_resized = F.interpolate(y_resized, size=(D, H, W), mode="trilinear")
-
-        print(
-            "Dice score current evaluation approach: ", dice_score_fn_mean(y_resized, y)
-        )
-        print(
-            "Dice score current evaluation approach (each class): ",
-            dice_score_fn(y_resized, y),
-        )
-
-    split = "train"
-    dataset = "vu_w_synthseg_labels"
-    image_size = [1, 256, 256]
-
-    dataset_info = dataset_config[dataset]
-
-    aug_params = {
-        "da_ratio": 0.25,
-        "sigma": 20,
-        "alpha": 0,
-        "trans_min": 0,
-        "trans_max": 0,
-        "rot_min": 0,
-        "rot_max": 0,
-        "scale_min": 1.0,
-        "scale_max": 1.0,
-        "gamma_min": 0.5,
-        "gamma_max": 2.0,
-        "brightness_min": 0.0,
-        "brightness_max": 0.1,
-        "noise_mean": 0.0,
-        "noise_std": 0.1,
-    }
-
-    (ds,) = get_datasets(
-        dataset_name=dataset,
-        paths=dataset_info["paths_processed"],
-        paths_original=dataset_info["paths_original"],
-        splits=[split],
-        image_size=image_size,
-        resolution_proc=dataset_info["resolution_proc"],
-        dim_proc=dataset_info["dim"],
-        n_classes=dataset_info["n_classes"],
-        aug_params=aug_params,
-        deformation=None,
-        load_original=True,
-    )
-
-    vol_index = 0
-    x_orig, y_orig = ds.get_original_image(vol_index)
-    print(x_orig.shape, y_orig.shape)
-
-    x_proc, y_proc = ds.get_preprocessed_images(
-        vol_index, same_position_as_original=True
-    )
-    print(x_proc.shape, y_proc.shape)
-
-    print(f"Original pixel size: {ds.get_original_pixel_size_w_orientation(vol_index)}")
-    print(f"Processed pixel size: {ds.get_processed_pixel_size_w_orientation()}")
-
-    print("Resizing preprocessed volume to original size")
-    # Test resizing of preprocessed volume to original size
-    x_proc_resized = resize_volume(
-        x_proc,
-        current_pix_size=ds.get_processed_pixel_size_w_orientation(),
-        target_pix_size=ds.get_original_pixel_size_w_orientation(vol_index),
-        target_img_size=tuple(x_orig.shape[-3:]),
-        mode="trilinear",
-        only_inplane_resample=True,
-    )
-    print(x_proc_resized.shape)
-
-    # Test resizing of label volume to preprocessed size
-    y_proc_resized = resize_volume(
-        y_proc.float(),
-        current_pix_size=ds.get_processed_pixel_size_w_orientation(),
-        target_pix_size=ds.get_original_pixel_size_w_orientation(vol_index),
-        target_img_size=tuple(y_orig.shape[-3:]),
-    )
-    print(y_proc_resized.shape)
-
-    print(
-        f"Dice betweeen y_orig and y_proc_resized: {dice_score_fn_mean(y_proc_resized, y_orig)}"
-    )
-    print(
-        f"Dice betweeen y_orig and y_proc_resized (each class): {dice_score_fn(y_proc_resized, y_orig)}\n"
-    )
-
-    current_evaluation_approach(
-        y_orig,
-        ds.get_original_pixel_size_w_orientation(vol_index),
-        ds.get_processed_pixel_size_w_orientation(),
-    )

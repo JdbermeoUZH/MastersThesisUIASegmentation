@@ -22,7 +22,7 @@ from tta_uia_segmentation.src.utils.utils import (
     default,
     resize_volume,
     torch_to_numpy,
-    from_DCHW_to_1CDHW,
+    from_DCHW_to_NCDHW,
     generate_2D_dl_for_vol,
 )
 from tta_uia_segmentation.src.utils.io import save_nii_image, write_to_csv
@@ -660,10 +660,10 @@ class BaseTTASeg(TTAInterface):
             pass
 
         elif output_vol_format == "1CDHW":
-            y_mask = from_DCHW_to_1CDHW(y_mask)
-            y_logits = from_DCHW_to_1CDHW(y_logits)
+            y_mask = from_DCHW_to_NCDHW(y_mask)
+            y_logits = from_DCHW_to_NCDHW(y_logits)
             interm_outs = {
-                key: from_DCHW_to_1CDHW(val) for key, val in interm_outs.items()
+                key: from_DCHW_to_NCDHW(val) for key, val in interm_outs.items()
             }
 
         return y_mask, y_logits, interm_outs
@@ -735,7 +735,7 @@ class BaseTTASeg(TTAInterface):
         classes_of_interest = default(classes_of_interest, self._classes_of_interest)
 
         # Predict segmentation for x_preprocessed
-        # ----------------------------------------------------
+        # :===================================================================:
 
         # Generate a DataLoader if a single volume is provided
         if isinstance(x_preprocessed, torch.Tensor):
@@ -752,13 +752,13 @@ class BaseTTASeg(TTAInterface):
         ), "The volumes must have 5 dimensions (NCDHW)."
 
         # Resize y_pred and interm_outs to the original resolution
-        # --------------------------------------------------------
+        # :===================================================================:
         resize_to_original = partial(
             resize_volume,
             current_pix_size=preprocessed_pix_size,
             target_pix_size=gt_pix_size,
             target_img_size=None,  # We assume no padding or cropping is needed to match image sizes
-            mode="trilinear",
+            mode="bilinear",
             only_inplane_resample=True,
         )
 
@@ -766,7 +766,7 @@ class BaseTTASeg(TTAInterface):
         interm_outs = {key: resize_to_original(val) for key, val in interm_outs.items()}
 
         # Measure the performance of the model
-        # ----------------------------------------------------
+        # :===================================================================:
         y_original_gt = y_original_gt.to(y_pred.device)
 
         metrics_values = {}
@@ -782,7 +782,7 @@ class BaseTTASeg(TTAInterface):
             metrics_values[metric_name] = metric_value
 
         # Save visualizations
-        # ----------------------------------------------------
+        # :===================================================================:
         if store_visualization:
             assert (
                 output_dir is not None
