@@ -24,7 +24,7 @@ def resize_to_multiple_of_patch(image, patch_size):
     Returns:
         torch.Tensor: Resized image with height and width as multiples of patch_size.
     """
-    _, _, h, w = image.shape
+    h, w = image.shape[-2:]
     new_h = math.ceil(h / patch_size) * patch_size
     new_w = math.ceil(w / patch_size) * patch_size
 
@@ -45,8 +45,8 @@ def resize_to_multiple_of_patch(image, patch_size):
     )  # Reflect padding to avoid artifacts
 
     assert (
-        image_padded.shape[2] % patch_size == 0
-        and image_padded.shape[3] % patch_size == 0
+        image_padded.shape[-2] % patch_size == 0
+        and image_padded.shape[-1] % patch_size == 0
     ), "The dimensions of the padded image are not multiples of the patch size."
 
     return image_padded

@@ -7,8 +7,7 @@ import numpy as np
 from typing import Union
 from torch.utils.data import Subset, Dataset, DataLoader
 
-from tta_uia_segmentation.src.dataset.dataset_in_memory import DatasetInMemory
-from tta_uia_segmentation.src.dataset.augmentation import apply_data_augmentation
+from tta_uia_segmentation.src.dataset.dataset import Dataset, ExtraInputs, ExtraInputsEmpty
 import tta_uia_segmentation.src.dataset.utils as du
 from tta_uia_segmentation.src.utils.utils import get_seed
 from tta_uia_segmentation.src.utils.loss import dice_score
@@ -31,15 +30,14 @@ def get_datasets(
 class DatasetDinoFeatures(Dataset):
     def __init__(
         self,
+        paths_preprocessed_dino: str,
         **kwargs,
     ):
-        # Assert that wrong kwargs are not passed and set them to None
+        # Handle how arguments should be set for the wrapped Dataset class
+        # :====================================================================:
         kwargs_should_be_none = [
             "rescale_factor",
-            "image_size",
             "aug_params",
-            "img_transform",
-            "deformation",
         ]
 
         for kwarg in kwargs_should_be_none:
@@ -48,50 +46,82 @@ class DatasetDinoFeatures(Dataset):
             else:
                 kwargs[kwarg] = None
 
-        if "image_transform_args" in kwargs:
-            raise ValueError(
-                "image_transform_args is not supported for DinoFeatures dataset"
-            )
+        if "mode" in kwargs:
+            assert kwargs["mode"] == "2D", "DinoFeatures only precalculated on 2D slices"
         else:
-            kwargs["img_transform"] = {}
+            kwargs["mode"] = "2D"
+
+        if "orientation" in kwargs:
+            assert kwargs["orientation"] == "depth", "DinoFeatures only precalculated on depth-wise slices"
+        else:
+            kwargs["orientation"] = "depth"
+
+        if "load_in_memory" in kwargs:
+            assert not kwargs["load_in_memory"], "DinoFeatures dataset is too large to load in memory"
+        else:
+            kwargs["load_in_memory"] = False
 
         super().__init__(**kwargs)
 
-        with h5py.File(self.path, "r") as data:
+        # Define attributes specific to this class
+        # :====================================================================:
+        self._paths_preprocessed_dino = paths_preprocessed_dino
+        
+        with h5py.File(paths_preprocessed_dino, "r") as data:
             self.n_augmentation_epochs = data["n_augmentation_epochs"][()]
             self.dataset_original_size = data["dataset_original_size"][()]
 
+            assert self.dataset_original_size == self._length, "Dataset length mismatch"
+
             precomputed_features_attrs = f["precomputed_features"].attrs
+        
+        self._h5f_preprocessed_dino = None
+        self._images_preprocessed_dino = None
+        self._labels_preprocessed_dino = None
 
-    def get_preprocessed_images(
-        self,
-        index: int,
-        as_onehot: bool = True,
-        format: Literal["DCHW", "1CDHW"] = "1CDHW",
-        same_position_as_original: bool = True,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    def _define_dataset_length(
+        self, check_dims_proc_and_orig_match: bool = False
+    ) -> None:
+        """
+        Dataset length is forced to be the same as the number of depth-wise slices
+        """
+        with h5py.File(self._path_original, "r") as data:
+            self._length = data["images"].shape[0] * data["images"].shape[1]
 
-        if not same_position_as_original:
-            raise ValueError(
-                "DinoFeatures can only return processed images before computing"
-                + "DinoFeatures with `same_position_as_original=True`"
-            )
+    def __getitem__(self, index) -> tuple[torch.Tensor, torch.Tensor, dict[str, ExtraInputs]]:
+        """
+        Retrieve Dino Features for a given index
 
-        return super().get_preprocessed_images(index, as_onehot, format, True)
-
-    def __getitem__(self, index):
-        assert index <= self.dataset_original_size, "Index out of bounds"
-
-        if not self.apply_augmentation:
-            return super().__getitem__(index)
-
-        else:
+        Dino features are also precomputed for precomputed augmentations
+        """
+        if self.augment:    
             # Precomputed features for augmented images
             #  are stored in [self.dataset_original_size:]
             #  for self.n_augmentation_epochs
             aug_epoch_to_sample = random.choice(self.n_augmentation_epochs) + 1
             index += aug_epoch_to_sample * self.dataset_original_size
-            return super().__getitem__(index)
+            print("TODO: Implement non-augmented DinoFeatures")
+        else:
+            print("TODO: Implement non-augmented DinoFeatures")
 
-    def __len__(self):
-        return self.dataset_original_size
+
+    def get_preprocessed_image(
+        self,
+        index: int,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """
+        Get preprocessed slice, typically used for training directly on images
+        """
+
+        return super().__getitem__(index)
+    
+    def _open_connection_to_preprocessed_dino_h5_file(self):
+        if self._h5f_preprocessed is None:
+            self._h5f_preprocessed_dino = h5py.File(self._path_preprocessed, "r")
+            self._images_preprocessed_dino = self._h5f_preprocessed["images"]
+            self._labels_preprocessed_dino = self._h5f_preprocessed["labels"]
+
+    def close_connection_to_preprocessed_dino_h5_file(self):
+        if self._h5f_preprocessed is not None:
+            self._h5f_preprocessed_dino.close()
+            self._h5f_preprocessed_dino = None

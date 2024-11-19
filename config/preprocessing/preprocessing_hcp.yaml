@@ -5,10 +5,7 @@ dataset:          hcp_t2
 splits:           [train, val, test] 
 
 batch_size: 16
-num_workers: 3
-image_size: [1, 256, 256]
-
-logdir: $RESULTS_DIR/brain/preprocessing/hcp_t2
+num_workers: 2
 
 normalize_with_nn:   
   augmentation: null
@@ -29,10 +26,10 @@ precalculate_dino_features:
 
   dino_model: large
   
-  hierarchy_level: 2
+  hierarchy_levels: 2
 
   augmentation:
-    num_epochs: 20
+    num_epochs: 5
 
     sigma:              20
     alpha:              1000

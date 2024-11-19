@@ -16,8 +16,7 @@ from tta_uia_segmentation.src.dataset.augmentation import apply_data_augmentatio
 from tta_uia_segmentation.src.dataset.deformation import make_noise_masks_3d
 from tta_uia_segmentation.src.dataset.utils import (
     transform_orientation,
-    ensure_4d,
-    ensure_5d,
+    ensure_nd,
 )
 from tta_uia_segmentation.src.utils.loss import class_to_onehot
 from tta_uia_segmentation.src.utils.utils import (
@@ -88,10 +87,9 @@ class Dataset(data.Dataset):
         mode: Literal["2D", "3D"] = "2D",
         orientation: Optional[Literal["depth", "height", "width", "any"]] = "depth",
         rescale_factor: Optional[tuple[float, float, float]] = None,
-        rescale_mode: Literal["trilinear", "bilinear", "nearest"] = "bilinear",
+        rescale_mode: ["trilinear", "bilinear", "nearest"] = "bilinear",
         rescale_only_inplane: bool = False,
         aug_params: Optional[dict] = None,
-        deformation_params: Optional[dict] = None,
         load_original: bool = False,
         load_in_memory: bool = True,
         seed: int = None,
@@ -117,8 +115,6 @@ class Dataset(data.Dataset):
 
         self._aug_params = aug_params
         self._augment = aug_params is not None
-        self._deformation_params = deformation_params
-        self._deform = deformation_params is not None
         self._load_original = load_original
         self._seed = seed
 
@@ -138,7 +134,7 @@ class Dataset(data.Dataset):
 
         if load_original:
             self._load_original_images(load_in_memory=load_in_memory)
-        
+
         # Define dataset length
         # :=========================================================================:
         self._define_dataset_length(check_dims_proc_and_orig_match)
@@ -240,30 +236,28 @@ class Dataset(data.Dataset):
             images = images.squeeze()
             labels = labels.squeeze()
 
-            images = ensure_4d(images)
-            labels = ensure_4d(labels)
+            images, labels = ensure_nd(3, images, labels)
 
         # If mode is 3D, reorient volume to requested orientation
         # :=========================================================================:
         elif self._mode == "3D":
-            images = ensure_5d(images)
-            labels = ensure_5d(labels)
+            images, labels = ensure_nd(4, images, labels)
 
             if orientation in ["height", "width"]:
                 if orientation == "height":
-                    source = 2  # D
-                    destination = 3  # H
+                    source = 1  # D
+                    destination = 2  # H
 
                 elif orientation == "width":
-                    source = 2  # D
-                    destination = 4  # W
+                    source = 1  # D
+                    destination = 3  # W
 
                 images = np.moveaxis(images, source, destination)
                 labels = np.moveaxis(labels, source, destination)
 
         return images, labels
 
-    def __getitem__(self, index: int) -> tuple[torch.Tensor, torch.Tensor, ExtraInputs]:
+    def __getitem__(self, index: int) -> tuple[torch.Tensor, torch.Tensor, dict[str, ExtraInputs]]:
         seed = default(self._seed, get_seed())
 
         # Get the orientation
@@ -292,7 +286,7 @@ class Dataset(data.Dataset):
         images = torch.from_numpy(images)
         labels = torch.from_numpy(labels)
 
-        labels = class_to_onehot(labels, self._n_classes, class_dim=1)
+        labels = class_to_onehot(labels, self._n_classes, class_dim=0)
 
         extra_inputs = self._calculate_extra_inputs(index, images, labels)
 
@@ -314,7 +308,7 @@ class Dataset(data.Dataset):
             if self._mode == "3D":
                 images, labels, *extra_inputs_rescaled = [
                     resize_volume(
-                        tensor.float(),
+                        tensor.float().unsqueeze(0), # add batch dimension
                         current_pix_size=rescale_factor,
                         target_pix_size=(1, 1, 1),
                         mode=self._rescale_mode,
@@ -332,7 +326,7 @@ class Dataset(data.Dataset):
             elif self._mode == "2D":
                 images, labels, *extra_inputs_rescaled = [
                     resize_image(
-                        tensor,
+                        tensor.unsqueeze(0), # add batch dimension
                         current_pix_size=rescale_factor[-2:],
                         target_pix_size=(1, 1),
                         mode="bilinear",
@@ -571,18 +565,17 @@ class Dataset(data.Dataset):
             labels = class_to_onehot(labels, self._n_classes, class_dim=1)
 
         if output_format in ["NCDHW"]:
-            pass
+            images, labels = ensure_nd(5, images, labels)
 
         elif output_format == "DCHW":
             images = images.permute(0, 2, 1, 3, 4).squeeze(0)
             labels = labels.permute(0, 2, 1, 3, 4).squeeze(0)
 
         elif output_format == "NCHW":
-            pass
+            images, labels = ensure_nd(4, images, labels)
 
         elif output_format == "CHW":
-            images.squeeze_(0)
-            labels.squeeze_(0)
+            images, labels = ensure_nd(3, images, labels)
 
         else:
             raise ValueError(f"Unknown format: {format}")
@@ -608,8 +601,8 @@ class Dataset(data.Dataset):
             self._n_pix_original = np.stack([h5f["nx"], h5f["ny"], h5f["nz"]])
 
         # Pixel sizes of original images.
-        with h5py.File(self._path_preprocessed, "r") as data:
-            self._pix_size_original = np.stack([data["px"], data["py"], data["pz"]])
+        with h5py.File(self._path_preprocessed, "r") as h5f:
+            self._pix_size_original = np.stack([h5f["px"], h5f["py"], h5f["pz"]])
 
         if load_in_memory:
             self._load_all_original_volumes_in_memory()
@@ -623,11 +616,11 @@ class Dataset(data.Dataset):
         """
         Load all images and labels to memory.
         """
-        with h5py.File(self._path_preprocessed, "r") as data:
+        with h5py.File(self._path_preprocessed, "r") as h5f:
             # Load images and labels to memory if specified.
             #  If not, a connection to the file is opened once __getitem__ is called.
-            self._images_preprocessed = data["images"][:]
-            self._labels_preprocessed = data["labels"][:]
+            self._images_preprocessed = h5f["images"][:]
+            self._labels_preprocessed = h5f["labels"][:]
 
         if self._rescale_factor is not None:
             # Rescale images and labels with the specified rescale factor
@@ -883,7 +876,7 @@ class Dataset(data.Dataset):
     def get_num_volumes(self):
         self._open_connection_to_original_h5_file()
         return self._images_original.shape[0]
-    
+
     def _open_connection_to_preprocessed_h5_file(self):
         if self._h5f_preprocessed is None:
             self._h5f_preprocessed = h5py.File(self._path_preprocessed, "r")
@@ -905,10 +898,11 @@ class Dataset(data.Dataset):
         if self._h5f_original is not None:
             self._h5f_original.close()
             self._h5f_original = None
+
     @property
     def dataset_name(self) -> str:
         return self._dataset_name
-    
+
     @property
     def augment(self) -> bool:
         return self._augment
@@ -950,3 +944,15 @@ class Dataset(data.Dataset):
 
     def get_label_name(self, label):
         return self.label_names[label]
+    
+    @property
+    def path_preprocessed(self):
+        return self._path_preprocessed
+    
+    @property
+    def path_original(self):
+        return self._path_original
+
+    @property
+    def dim_proc(self):
+        return self._dim_proc

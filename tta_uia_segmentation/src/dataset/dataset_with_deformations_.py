@@ -18,7 +18,7 @@ from tta_uia_segmentation.src.utils.utils import (
     default,
     get_seed,
     assert_in,
-    resize_volume,
+    resize_volume
 )
 
 

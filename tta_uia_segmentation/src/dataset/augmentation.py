@@ -27,7 +27,7 @@ def elastic_transform(image,  # 3d
     dy = gaussian_filter((rng.random((H, W)) * 2 - 1),
                          sigma, mode="constant", cval=0) * alpha
 
-    x, y = np.meshgrid(np.arange(H), np.arange(W))
+    x, y = np.meshgrid(np.arange(W), np.arange(H))
     indices = np.reshape(y+dy, (-1, 1)), np.reshape(x+dx, (-1, 1))
 
     # save deformation field for all slices of the image

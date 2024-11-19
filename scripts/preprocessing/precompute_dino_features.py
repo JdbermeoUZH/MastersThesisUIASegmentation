@@ -6,6 +6,7 @@ import argparse
 
 import h5py
 import torch
+import torch.nn.functional as F
 import numpy as np
 from tqdm import tqdm
 from torch.utils.data import DataLoader
@@ -20,14 +21,18 @@ sys.path.append(
     )
 )
 
-from tta_uia_segmentation.src.dataset.dataset_in_memory import get_datasets
+from tta_uia_segmentation.src.dataset.dataset import get_datasets, Dataset
+import tta_uia_segmentation.src.dataset.utils as du
 from tta_uia_segmentation.src.utils.io import (
     load_config,
     dump_config,
-    print_config,
     rewrite_config_arguments,
 )
-from tta_uia_segmentation.src.utils.utils import seed_everything, define_device
+from tta_uia_segmentation.src.utils.utils import (
+    seed_everything,
+    define_device,
+    torch_to_numpy,
+)
 from tta_uia_segmentation.src.models.seg.dino.DinoV2FeatureExtractor import (
     DinoV2FeatureExtractor,
 )
@@ -78,10 +83,23 @@ def preprocess_cmd_args() -> argparse.Namespace:
         "--batch_size", type=int, help="Batch size to use for evaluation. Default: 32"
     )
 
+    parser.add_argument(
+        "--num_workers",
+        type=int,
+        help="Number of workers to use for evaluation. Default: 2",
+    )
+
     # Dataset parameters
     # :==================================================:
     parser.add_argument(
         "--dataset", type=str, help="Name of dataset to use for training. Default: USZ"
+    )
+
+    parser.add_argument(
+        "--splits",
+        type=str,
+        nargs="+",
+        help="Splits of the dataset to use for training. Default: ['train']",
     )
 
     # Data augmentation parameters
@@ -130,7 +148,6 @@ def get_configuration_arguments() -> tuple[dict, dict]:
 def create_hdf5_datasets(
     h5_path: str,
     image_size: tuple,
-    n_classes: int,
     hierarchy_level: int,
     dino_fe: DinoV2FeatureExtractor,
     n_augmentation_epochs: int,
@@ -138,25 +155,29 @@ def create_hdf5_datasets(
 ) -> h5py.File:
     hdf5_file = h5py.File(h5_path, "w")
 
+    # Dump configuration to hdf5 file
+
     # Dataset for Dino features
     # :=========================================================================:
-    largest_upsample = 2 ** hierarchy_level
+    for hierarchy_i in range(hierarchy_level + 1):
+        upsample = 2**hierarchy_i
 
-    hierarchy_i_img_h = image_size[-2] * largest_upsample
-    hierarchy_i_img_w = image_size[-1] * largest_upsample
+        hierarchy_i_img_h = image_size[0] * upsample
+        hierarchy_i_img_w = image_size[1] * upsample
 
-    feature_spatial_size = (
-        dino_fe.emb_dim,
-        math.ceil(hierarchy_i_img_h / dino_fe.patch_size),
-        math.ceil(hierarchy_i_img_w / dino_fe.patch_size),
-    )
+        feature_spatial_size = (
+            dino_fe.emb_dim,
+            math.ceil(hierarchy_i_img_h / dino_fe.patch_size),
+            math.ceil(hierarchy_i_img_w / dino_fe.patch_size),
+        )
 
-    images_dataset = hdf5_file.create_dataset(
-        f"images",
-        shape=(0, hierarchy_level, *feature_spatial_size),
-        maxshape=(None, hierarchy_level, *feature_spatial_size),
-        dtype=np.float32,
-    )
+        # N, dino_fe, H * 2^hier, W*2^hier
+        images_dataset = hdf5_file.create_dataset(
+            f"images_hier_{hierarchy_i}",
+            shape=(0, *feature_spatial_size),
+            maxshape=(None, *feature_spatial_size),
+            dtype=np.float32,
+        )
 
     # Add attributes to the dataset about the Dino model used
     images_dataset.attrs["patch_size"] = dino_fe.patch_size
@@ -167,24 +188,15 @@ def create_hdf5_datasets(
 
     # Dataset for labels that correspond to each image
     # :=========================================================================:
-    labels_spatial_size = (
-        n_classes,
-        image_size[-2],
-        image_size[-1],
-    )
+    labels_spatial_size = image_size[:2]
 
+    # N, H, W
     hdf5_file.create_dataset(
         "labels",
         shape=(0, *labels_spatial_size),
         maxshape=(None, *labels_spatial_size),
         dtype=np.float32,
     )
-
-    # Image metadata such as field of view and pixel size
-    # :=========================================================================:
-    per_vol_attributes = ["nx", "ny", "nz", "px", "py", "pz"]
-    for attr in per_vol_attributes:
-        hdf5_file.create_dataset(attr, shape=(0,), maxshape=(None,), dtype=np.float32)
 
     return hdf5_file
 
@@ -200,6 +212,47 @@ def append_to_h5dataset(h5file: h5py.File, dataset_name: str, data: np.ndarray) 
     h5file[dataset_name][-new_rows:] = data
 
 
+def add_precomputed_dino_features_to_h5(
+    hdf5_file: h5py.File,
+    dl: DataLoader,
+    dino_fe: DinoV2FeatureExtractor,
+    hierarchy_level: int,
+    device: torch.device,
+    pbar_desc: str = "",
+) -> None:
+    pbar = tqdm(
+        dl,
+        desc=pbar_desc,
+    )
+    for image, labels, *_ in pbar:
+        # Expand to NCHW
+        image = image.to(device)
+        labels = labels.to(device)
+
+        # Convert images to RGB
+        if image.shape[1] == 1:
+            image = du.grayscale_to_rgb(image)
+
+        # Add Dino features to the hdf5 file
+        for hierarchy_i in range(hierarchy_level + 1):
+            # get dino features for each hierarchy level
+            dino_out = dino_fe.forward(image, hierarchy=hierarchy_i)
+
+            features_i = x = dino_out["patch"].permute(
+                0, 3, 1, 2
+            )  # N x np x np x df -> N x df x np x np
+            append_to_h5dataset(
+                hdf5_file,
+                f"images_hier_{hierarchy_i}",
+                torch_to_numpy(features_i),
+            )
+
+        # Add labels to the hdf5 file
+        labels = du.onehot_to_class(labels)
+        labels = labels.squeeze(1)  # N x 1 x H x W -> N x H x W
+        append_to_h5dataset(hdf5_file, "labels", torch_to_numpy(labels))
+
+
 if __name__ == "__main__":
     print(f"Running {__file__}")
 
@@ -210,31 +263,33 @@ if __name__ == "__main__":
 
     seed = preproc_config["seed"]
     device = preproc_config["device"]
-    logdir = preproc_config["logdir"]
 
     seed_everything(seed)
     device = define_device(device)
 
     # Load dataset
     # :=========================================================================:
-    print(f"loading splits of dataset {preproc_config['dataset']}")
-
     dataset_name = preproc_config["dataset"]
     splits = preproc_config["splits"]
-    image_size = preproc_config["image_size"]
     n_classes = dataset_config[dataset_name]["n_classes"]
+    num_aug_epochs = preproc_config[PREPROCESSING_TYPE]["augmentation"].pop(
+        "num_epochs"
+    )
+    aug_params = preproc_config[PREPROCESSING_TYPE]["augmentation"]
+
+    print(f"loading splits {splits} of dataset {preproc_config['dataset']}")
 
     # Dataset definition
     datasets = get_datasets(
         dataset_name=dataset_name,
-        paths=dataset_config[dataset_name]["paths_processed"],
+        paths_preprocessed=dataset_config[dataset_name]["paths_preprocessed"],
         paths_original=dataset_config[dataset_name]["paths_original"],
         splits=splits,
-        image_size=image_size,
         resolution_proc=dataset_config[dataset_name]["resolution_proc"],
         dim_proc=dataset_config[dataset_name]["dim"],
         n_classes=n_classes,
-        aug_params=preproc_config[PREPROCESSING_TYPE]["augmentation"],
+        aug_params=aug_params,
+        mode="2D",
     )
 
     dataloaders = {
@@ -250,53 +305,68 @@ if __name__ == "__main__":
 
     # Load Dino Feature extractor
     # :=========================================================================:
-    dino_fe = DinoV2FeatureExtractor(
-        preproc_config[PREPROCESSING_TYPE]["dino_model"]
-    ).to(device)
+    dino_type = preproc_config[PREPROCESSING_TYPE]["dino_model"]
+    dino_fe = DinoV2FeatureExtractor(dino_type).to(device)
 
     # Write new hdf5 file with precomputed features
     # :=========================================================================:
     hierarchy_level = preproc_config[PREPROCESSING_TYPE]["hierarchy_levels"]
-
+    
     for split, dataloader in dataloaders.items():
         print(f"Computing features for {split} split")
 
+        image_size = dataloader.dataset.dim_proc
+
         # Create hdf5 file object
-        h5path = dataloader.dataset.path.rstrip(".hdf5") + "_dino_features.hdf5"
+        path_preprocessed = dataloader.dataset.path_preprocessed
+        out_dir = os.path.join(
+            os.path.dirname(path_preprocessed),
+            'dino_features',
+        )
+        os.makedirs(out_dir, exist_ok=True)
+        
+        h5filename = os.path.basename(path_preprocessed).replace('.hdf5', '')
+        h5filename += f"_dino_{dino_type}_hier_{hierarchy_level}.hdf5"
+
+        h5path = os.path.join(out_dir, h5filename)
 
         hdf5_file = create_hdf5_datasets(
-            h5path, image_size, n_classes, hierarchy_level, dino_fe
+            h5path,
+            image_size,
+            hierarchy_level,
+            dino_fe,
+            num_aug_epochs,
+            len(dataloader.dataset),
         )
-
-        feature_spatial_size = hdf5_file["images"].shape[1:]
 
         # Iterate once over the dataset without data augmentation
-        dataloader.dataset.set_augmentation(False)
+        dataloader.dataset.augment = False
 
-        pbar = tqdm(
+        add_precomputed_dino_features_to_h5(
+            hdf5_file,
             dataloader,
-            desc=f"Computing features without data augmentation",
+            dino_fe,
+            hierarchy_level,
+            device,
+            pbar_desc=f"Computing features without data augmentation for {split} split",
         )
-        
-        for image, labels, *_ in pbar:
-            image = image.to(device)
-            labels = labels.to(device)
-            batch_size = image.shape[0]
 
-            # Add Dino features to the hdf5 file
-            features_i = []
-            for hierarchy_i in range(hierarchy_level):
-                features_i = dino_fe.forward(image, hierarchy=hierarchy_i)
-                
-                features_i_np = np.zeros((batch_size, *feature_spatial_size), dtype=np.float32)
-                features_i_np[:, ]
-                
+        # Iterate over the dataset with data augmentation for n epochs
+        dataloader.dataset.augment = True
+        print(
+            f"Computing features with data augmentation for {split} split"
+            f" for {num_aug_epochs} epochs"
+        )
+        for epoch in range(num_aug_epochs):
+            add_precomputed_dino_features_to_h5(
+                hdf5_file,
+                dataloader,
+                dino_fe,
+                hierarchy_level,
+                device,
+                pbar_desc=f"Computing features with data augmentation for {split} split, epoch {epoch}",
+            )
 
-            # Add labels to the hdf5 file
-            append_to_h5dataset(hdf5_file, "labels", labels)
+        hdf5_file.close()
 
-            # Add per image attributes to the hdf5 file
-            for attr in ["nx", "ny", "nz", "px", "py", "pz"]:
-                append_to_h5dataset(hdf5_file, attr, getattr(dataloader.dataset, attr))
-
-    # Iterate over the dataset with data augmentation for n epochs
+    print("Done")
