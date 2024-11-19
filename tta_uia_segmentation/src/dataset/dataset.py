@@ -87,7 +87,7 @@ class Dataset(data.Dataset):
         mode: Literal["2D", "3D"] = "2D",
         orientation: Optional[Literal["depth", "height", "width", "any"]] = "depth",
         rescale_factor: Optional[tuple[float, float, float]] = None,
-        rescale_mode: ["trilinear", "bilinear", "nearest"] = "bilinear",
+        rescale_mode: Literal["trilinear", "bilinear", "nearest"] = "bilinear",
         rescale_only_inplane: bool = False,
         aug_params: Optional[dict] = None,
         load_original: bool = False,

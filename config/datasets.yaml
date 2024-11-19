@@ -8,6 +8,19 @@ hcp_t1:
     train: $DATA_DIR/subcortical_structures/hcp/data_T1_2d_size_256_256_depth_256_res_0.7_0.7_from_0_to_20.hdf5
     test: $DATA_DIR/subcortical_structures/hcp/data_T1_2d_size_256_256_depth_256_res_0.7_0.7_from_50_to_70.hdf5
     val: $DATA_DIR/subcortical_structures/hcp/data_T1_2d_size_256_256_depth_256_res_0.7_0.7_from_20_to_25.hdf5
+  paths_preprocessed_dino:
+    base: 
+      train: $DATA_DIR/subcortical_structures/hcp/dino_features/data_T1_2d_size_256_256_depth_256_res_0.7_0.7_from_0_to_20_dino_base_hier_2.hdf5
+      test: $DATA_DIR/subcortical_structures/hcp/dino_features/data_T1_2d_size_256_256_depth_256_res_0.7_0.7_from_50_to_70_dino_base_hier_2.hdf5
+      val: $DATA_DIR/subcortical_structures/hcp/dino_features/data_T1_2d_size_256_256_depth_256_res_0.7_0.7_from_20_to_25_dino_base_hier_2.hdf5
+    large: 
+      train: $DATA_DIR/subcortical_structures/hcp/dino_features/data_T1_2d_size_256_256_depth_256_res_0.7_0.7_from_0_to_20_dino_large_hier_2.hdf5
+      test: $DATA_DIR/subcortical_structures/hcp/dino_features/data_T1_2d_size_256_256_depth_256_res_0.7_0.7_from_50_to_70_dino_large_hier_2.hdf5
+      val: $DATA_DIR/subcortical_structures/hcp/dino_features/data_T1_2d_size_256_256_depth_256_res_0.7_0.7_from_20_to_25_dino_large_hier_2.hdf5
+    giant: 
+      train: $DATA_DIR/subcortical_structures/hcp/dino_features/data_T1_2d_size_256_256_depth_256_res_0.7_0.7_from_0_to_20_dino_giant_hier_2.hdf5
+      test: $DATA_DIR/subcortical_structures/hcp/dino_features/data_T1_2d_size_256_256_depth_256_res_0.7_0.7_from_50_to_70_dino_giant_hier_2.hdf5
+      val: $DATA_DIR/subcortical_structures/hcp/dino_features/data_T1_2d_size_256_256_depth_256_res_0.7_0.7_from_20_to_25_dino_giant_hier_2.hdf5
   paths_original:
     train: $DATA_DIR/subcortical_structures/hcp/data_T1_original_depth_256_from_0_to_20.hdf5
     test: $DATA_DIR/subcortical_structures/hcp/data_T1_original_depth_256_from_50_to_70.hdf5
@@ -24,6 +37,19 @@ hcp_t2:
     train: $DATA_DIR/subcortical_structures/hcp/data_T2_2d_size_256_256_depth_256_res_0.7_0.7_from_0_to_20.hdf5
     test: $DATA_DIR/subcortical_structures/hcp/data_T2_2d_size_256_256_depth_256_res_0.7_0.7_from_50_to_70.hdf5
     val: $DATA_DIR/subcortical_structures/hcp/data_T2_2d_size_256_256_depth_256_res_0.7_0.7_from_20_to_25.hdf5
+  paths_preprocessed_dino:
+    base: 
+      train: $DATA_DIR/subcortical_structures/hcp/dino_features/data_T2_2d_size_256_256_depth_256_res_0.7_0.7_from_0_to_20_dino_base_hier_2.hdf5
+      test: $DATA_DIR/subcortical_structures/hcp/dino_features/data_T2_2d_size_256_256_depth_256_res_0.7_0.7_from_50_to_70_dino_base_hier_2.hdf5
+      val: $DATA_DIR/subcortical_structures/hcp/dino_features/data_T2_2d_size_256_256_depth_256_res_0.7_0.7_from_20_to_25_dino_base_hier_2.hdf5
+    large: 
+      train: $DATA_DIR/subcortical_structures/hcp/dino_features/data_T2_2d_size_256_256_depth_256_res_0.7_0.7_from_0_to_20_dino_large_hier_2.hdf5
+      test: $DATA_DIR/subcortical_structures/hcp/dino_features/data_T2_2d_size_256_256_depth_256_res_0.7_0.7_from_50_to_70_dino_large_hier_2.hdf5
+      val: $DATA_DIR/subcortical_structures/hcp/dino_features/data_T2_2d_size_256_256_depth_256_res_0.7_0.7_from_20_to_25_dino_large_hier_2.hdf5
+    giant: 
+      train: $DATA_DIR/subcortical_structures/hcp/dino_features/data_T2_2d_size_256_256_depth_256_res_0.7_0.7_from_0_to_20_dino_giant_hier_2.hdf5
+      test: $DATA_DIR/subcortical_structures/hcp/dino_features/data_T2_2d_size_256_256_depth_256_res_0.7_0.7_from_50_to_70_dino_giant_hier_2.hdf5
+      val: $DATA_DIR/subcortical_structures/hcp/dino_features/data_T2_2d_size_256_256_depth_256_res_0.7_0.7_from_20_to_25_dino_giant_hier_2.hdf5
   paths_original:
     train: $DATA_DIR/subcortical_structures/hcp/data_T2_original_depth_256_from_0_to_20.hdf5
     test: $DATA_DIR/subcortical_structures/hcp/data_T2_original_depth_256_from_50_to_70.hdf5
@@ -40,6 +66,19 @@ abide_caltech:
     train: $DATA_DIR/subcortical_structures/abide/caltech/data_T1_2d_size_256_256_depth_256_res_0.7_0.7_0.7_from_0_to_10.hdf5
     test: $DATA_DIR/subcortical_structures/abide/caltech/data_T1_2d_size_256_256_depth_256_res_0.7_0.7_0.7_from_16_to_36.hdf5
     val: $DATA_DIR/subcortical_structures/abide/caltech/data_T1_2d_size_256_256_depth_256_res_0.7_0.7_0.7_from_10_to_15.hdf5
+  paths_preprocessed_dino:
+    base: 
+      train: $DATA_DIR/subcortical_structures/abide/caltech/dino_features/data_T1_2d_size_256_256_depth_256_res_0.7_0.7_0.7_from_0_to_10_dino_base_hier_2.hdf5
+      test: $DATA_DIR/subcortical_structures/abide/caltech/dino_features/data_T1_2d_size_256_256_depth_256_res_0.7_0.7_0.7_from_16_to_36_dino_base_hier_2.hdf5
+      val: $DATA_DIR/subcortical_structures/abide/caltech/dino_features/data_T1_2d_size_256_256_depth_256_res_0.7_0.7_0.7_from_10_to_15_dino_base_hier_2.hdf5
+    large: 
+      train: $DATA_DIR/subcortical_structures/abide/caltech/dino_features/data_T1_2d_size_256_256_depth_256_res_0.7_0.7_0.7_from_0_to_10_dino_large_hier_2.hdf5
+      test: $DATA_DIR/subcortical_structures/abide/caltech/dino_features/data_T1_2d_size_256_256_depth_256_res_0.7_0.7_0.7_from_16_to_36_dino_large_hier_2.hdf5
+      val: $DATA_DIR/subcortical_structures/abide/caltech/dino_features/data_T1_2d_size_256_256_depth_256_res_0.7_0.7_0.7_from_10_to_15_dino_large_hier_2.hdf5
+    giant: 
+      train: $DATA_DIR/subcortical_structures/abide/caltech/dino_features/data_T1_2d_size_256_256_depth_256_res_0.7_0.7_0.7_from_0_to_10_dino_giant_hier_2.hdf5
+      test: $DATA_DIR/subcortical_structures/abide/caltech/dino_features/data_T1_2d_size_256_256_depth_256_res_0.7_0.7_0.7_from_16_to_36_dino_giant_hier_2.hdf5
+      val: $DATA_DIR/subcortical_structures/abide/caltech/dino_features/data_T1_2d_size_256_256_depth_256_res_0.7_0.7_0.7_from_10_to_15_dino_giant_hier_2.hdf5
   paths_original:
     train: $DATA_DIR/subcortical_structures/abide/caltech/data_T1_original_depth_256_from_0_to_10.hdf5
     test: $DATA_DIR/subcortical_structures/abide/caltech/data_T1_original_depth_256_from_16_to_36.hdf5
@@ -55,6 +94,19 @@ abide_stanford:
     train: $DATA_DIR/subcortical_structures/abide/stanford/data_T1_2d_size_256_256_depth_132_res_0.7_0.7_from_0_to_10.hdf5
     test: $DATA_DIR/subcortical_structures/abide/stanford/data_T1_2d_size_256_256_depth_132_res_0.7_0.7_from_16_to_36.hdf5
     val: $DATA_DIR/subcortical_structures/abide/stanford/data_T1_2d_size_256_256_depth_132_res_0.7_0.7_from_10_to_15.hdf5
+  paths_preprocessed_dino:
+    base: 
+      train: $DATA_DIR/subcortical_structures/abide/stanford/dino_features/data_T1_2d_size_256_256_depth_132_res_0.7_0.7_from_0_to_10_dino_base_hier_2.hdf5
+      test: $DATA_DIR/subcortical_structures/abide/stanford/dino_features/data_T1_2d_size_256_256_depth_132_res_0.7_0.7_from_16_to_36_dino_base_hier_2.hdf5
+      val: $DATA_DIR/subcortical_structures/abide/stanford/dino_features/data_T1_2d_size_256_256_depth_132_res_0.7_0.7_from_10_to_15_dino_base_hier_2.hdf5
+    large: 
+      train: $DATA_DIR/subcortical_structures/abide/stanford/dino_features/data_T1_2d_size_256_256_depth_132_res_0.7_0.7_from_0_to_10_dino_large_hier_2.hdf5
+      test: $DATA_DIR/subcortical_structures/abide/stanford/dino_features/data_T1_2d_size_256_256_depth_132_res_0.7_0.7_from_16_to_36_dino_large_hier_2.hdf5
+      val: $DATA_DIR/subcortical_structures/abide/stanford/dino_features/data_T1_2d_size_256_256_depth_132_res_0.7_0.7_from_10_to_15_dino_large_hier_2.hdf5
+    giant: 
+      train: $DATA_DIR/subcortical_structures/abide/stanford/dino_features/data_T1_2d_size_256_256_depth_132_res_0.7_0.7_from_0_to_10_dino_giant_hier_2.hdf5
+      test: $DATA_DIR/subcortical_structures/abide/stanford/dino_features/data_T1_2d_size_256_256_depth_132_res_0.7_0.7_from_16_to_36_dino_giant_hier_2.hdf5
+      val: $DATA_DIR/subcortical_structures/abide/stanford/dino_features/data_T1_2d_size_256_256_depth_132_res_0.7_0.7_from_10_to_15_dino_giant_hier_2.hdf5
   paths_original:
     train: $DATA_DIR/subcortical_structures/abide/stanford/data_T1_original_depth_132_from_0_to_10.hdf5
     test: $DATA_DIR/subcortical_structures/abide/stanford/data_T1_original_depth_132_from_16_to_36.hdf5
@@ -70,6 +122,19 @@ nuhs:
     train: $DATA_DIR/wmh/nuhs/data_nuhs_2d_size_256_256_depth_48_res_1_1_3_from_0_to_10.hdf5
     test: $DATA_DIR/wmh/nuhs/data_nuhs_2d_size_256_256_depth_48_res_1_1_3_from_10_to_15.hdf5
     val: $DATA_DIR/wmh/nuhs/data_nuhs_2d_size_256_256_depth_48_res_1_1_3_from_15_to_20.hdf5
+  paths_preprocessed_dino:
+    base: 
+      train: $DATA_DIR/wmh/nuhs/dino_features/data_nuhs_2d_size_256_256_depth_48_res_1_1_3_from_0_to_10_dino_base_hier_2.hdf5
+      test: $DATA_DIR/wmh/nuhs/dino_features/data_nuhs_2d_size_256_256_depth_48_res_1_1_3_from_10_to_15_dino_base_hier_2.hdf5
+      val: $DATA_DIR/wmh/nuhs/dino_features/data_nuhs_2d_size_256_256_depth_48_res_1_1_3_from_15_to_20_dino_base_hier_2.hdf5
+    large: 
+      train: $DATA_DIR/wmh/nuhs/dino_features/data_nuhs_2d_size_256_256_depth_48_res_1_1_3_from_0_to_10_dino_large_hier_2.hdf5
+      test: $DATA_DIR/wmh/nuhs/dino_features/data_nuhs_2d_size_256_256_depth_48_res_1_1_3_from_10_to_15_dino_large_hier_2.hdf5
+      val: $DATA_DIR/wmh/nuhs/dino_features/data_nuhs_2d_size_256_256_depth_48_res_1_1_3_from_15_to_20_dino_large_hier_2.hdf5
+    giant: 
+      train: $DATA_DIR/wmh/nuhs/dino_features/data_nuhs_2d_size_256_256_depth_48_res_1_1_3_from_0_to_10_dino_giant_hier_2.hdf5
+      test: $DATA_DIR/wmh/nuhs/dino_features/data_nuhs_2d_size_256_256_depth_48_res_1_1_3_from_10_to_15_dino_giant_hier_2.hdf5
+      val: $DATA_DIR/wmh/nuhs/dino_features/data_nuhs_2d_size_256_256_depth_48_res_1_1_3_from_15_to_20_dino_giant_hier_2.hdf5
   paths_original:
     train: $DATA_DIR/wmh/nuhs/data_nuhs_original_depth_-1_from_0_to_10.hdf5
     test: $DATA_DIR/wmh/nuhs/data_nuhs_original_depth_-1_from_10_to_15.hdf5
@@ -85,6 +150,19 @@ nuhs_w_synthseg_labels:
     train: $DATA_DIR/wmh/nuhs/data_nuhs_2d_size_256_256_depth_48_res_1_1_3_from_0_to_10_w_synthseg_labels.hdf5
     test: $DATA_DIR/wmh/nuhs/data_nuhs_2d_size_256_256_depth_48_res_1_1_3_from_10_to_15_w_synthseg_labels.hdf5
     val: $DATA_DIR/wmh/nuhs/data_nuhs_2d_size_256_256_depth_48_res_1_1_3_from_15_to_20_w_synthseg_labels.hdf5
+  paths_preprocessed_dino:
+    base: 
+      train: $DATA_DIR/wmh/nuhs/dino_features/data_nuhs_2d_size_256_256_depth_48_res_1_1_3_from_0_to_10_w_synthseg_labels_dino_base_hier_2.hdf5
+      test: $DATA_DIR/wmh/nuhs/dino_features/data_nuhs_2d_size_256_256_depth_48_res_1_1_3_from_10_to_15_w_synthseg_labels_dino_base_hier_2.hdf5
+      val: $DATA_DIR/wmh/nuhs/dino_features/data_nuhs_2d_size_256_256_depth_48_res_1_1_3_from_15_to_20_w_synthseg_labels_dino_base_hier_2.hdf5
+    large: 
+      train: $DATA_DIR/wmh/nuhs/dino_features/data_nuhs_2d_size_256_256_depth_48_res_1_1_3_from_0_to_10_w_synthseg_labels_dino_large_hier_2.hdf5
+      test: $DATA_DIR/wmh/nuhs/dino_features/data_nuhs_2d_size_256_256_depth_48_res_1_1_3_from_10_to_15_w_synthseg_labels_dino_large_hier_2.hdf5
+      val: $DATA_DIR/wmh/nuhs/dino_features/data_nuhs_2d_size_256_256_depth_48_res_1_1_3_from_15_to_20_w_synthseg_labels_dino_large_hier_2.hdf5
+    giant: 
+      train: $DATA_DIR/wmh/nuhs/dino_features/data_nuhs_2d_size_256_256_depth_48_res_1_1_3_from_0_to_10_w_synthseg_labels_dino_giant_hier_2.hdf5
+      test: $DATA_DIR/wmh/nuhs/dino_features/data_nuhs_2d_size_256_256_depth_48_res_1_1_3_from_10_to_15_w_synthseg_labels_dino_giant_hier_2.hdf5
+      val: $DATA_DIR/wmh/nuhs/dino_features/data_nuhs_2d_size_256_256_depth_48_res_1_1_3_from_15_to_20_w_synthseg_labels_dino_giant_hier_2.hdf5
   paths_original:
     train: $DATA_DIR/wmh/nuhs/data_nuhs_original_depth_-1_from_0_to_10_w_synthseg_labels.hdf5
     test: $DATA_DIR/wmh/nuhs/data_nuhs_original_depth_-1_from_10_to_15_w_synthseg_labels.hdf5
@@ -100,6 +178,19 @@ umc:
     train: $DATA_DIR/wmh/umc/data_umc_2d_size_256_256_depth_48_res_1_1_3_from_0_to_10.hdf5
     test: $DATA_DIR/wmh/umc/data_umc_2d_size_256_256_depth_48_res_1_1_3_from_10_to_15.hdf5
     val: $DATA_DIR/wmh/umc/data_umc_2d_size_256_256_depth_48_res_1_1_3_from_15_to_20.hdf5
+  paths_preprocessed_dino:
+    base: 
+      train: $DATA_DIR/wmh/umc/dino_features/data_umc_2d_size_256_256_depth_48_res_1_1_3_from_0_to_10_dino_base_hier_2.hdf5
+      test: $DATA_DIR/wmh/umc/dino_features/data_umc_2d_size_256_256_depth_48_res_1_1_3_from_10_to_15_dino_base_hier_2.hdf5
+      val: $DATA_DIR/wmh/umc/dino_features/data_umc_2d_size_256_256_depth_48_res_1_1_3_from_15_to_20_dino_base_hier_2.hdf5
+    large: 
+      train: $DATA_DIR/wmh/umc/dino_features/data_umc_2d_size_256_256_depth_48_res_1_1_3_from_0_to_10_dino_large_hier_2.hdf5
+      test: $DATA_DIR/wmh/umc/dino_features/data_umc_2d_size_256_256_depth_48_res_1_1_3_from_10_to_15_dino_large_hier_2.hdf5
+      val: $DATA_DIR/wmh/umc/dino_features/data_umc_2d_size_256_256_depth_48_res_1_1_3_from_15_to_20_dino_large_hier_2.hdf5
+    giant: 
+      train: $DATA_DIR/wmh/umc/dino_features/data_umc_2d_size_256_256_depth_48_res_1_1_3_from_0_to_10_dino_giant_hier_2.hdf5
+      test: $DATA_DIR/wmh/umc/dino_features/data_umc_2d_size_256_256_depth_48_res_1_1_3_from_10_to_15_dino_giant_hier_2.hdf5
+      val: $DATA_DIR/wmh/umc/dino_features/data_umc_2d_size_256_256_depth_48_res_1_1_3_from_15_to_20_dino_giant_hier_2.hdf5
   paths_original:
     train: $DATA_DIR/wmh/umc/data_umc_original_depth_-1_from_0_to_10.hdf5
     test: $DATA_DIR/wmh/umc/data_umc_original_depth_-1_from_10_to_15.hdf5
@@ -115,6 +206,19 @@ umc_w_synthseg_labels:
     train: $DATA_DIR/wmh/umc/data_umc_2d_size_256_256_depth_48_res_1_1_3_from_0_to_10_w_synthseg_labels.hdf5
     test: $DATA_DIR/wmh/umc/data_umc_2d_size_256_256_depth_48_res_1_1_3_from_10_to_15_w_synthseg_labels.hdf5
     val: $DATA_DIR/wmh/umc/data_umc_2d_size_256_256_depth_48_res_1_1_3_from_15_to_20_w_synthseg_labels.hdf5
+  paths_preprocessed_dino:
+    base: 
+      train: $DATA_DIR/wmh/umc/dino_features/data_umc_2d_size_256_256_depth_48_res_1_1_3_from_0_to_10_w_synthseg_labels_dino_base_hier_2.hdf5
+      test: $DATA_DIR/wmh/umc/dino_features/data_umc_2d_size_256_256_depth_48_res_1_1_3_from_10_to_15_w_synthseg_labels_dino_base_hier_2.hdf5
+      val: $DATA_DIR/wmh/umc/dino_features/data_umc_2d_size_256_256_depth_48_res_1_1_3_from_15_to_20_w_synthseg_labels_dino_base_hier_2.hdf5
+    large: 
+      train: $DATA_DIR/wmh/umc/dino_features/data_umc_2d_size_256_256_depth_48_res_1_1_3_from_0_to_10_dino_large_hier_2.hdf5
+      test: $DATA_DIR/wmh/umc/dino_features/data_umc_2d_size_256_256_depth_48_res_1_1_3_from_10_to_15_dino_large_hier_2.hdf5
+      val: $DATA_DIR/wmh/umc/dino_features/data_umc_2d_size_256_256_depth_48_res_1_1_3_from_15_to_20_dino_large_hier_2.hdf5
+    giant: 
+      train: $DATA_DIR/wmh/umc/dino_features/data_umc_2d_size_256_256_depth_48_res_1_1_3_from_0_to_10_dino_giant_hier_2.hdf5
+      test: $DATA_DIR/wmh/umc/dino_features/data_umc_2d_size_256_256_depth_48_res_1_1_3_from_10_to_15_dino_giant_hier_2.hdf5
+      val: $DATA_DIR/wmh/umc/dino_features/data_umc_2d_size_256_256_depth_48_res_1_1_3_from_15_to_20_dino_giant_hier_2.hdf5
   paths_original:
     train: $DATA_DIR/wmh/umc/data_umc_original_depth_-1_from_0_to_10_w_synthseg_labels.hdf5
     test: $DATA_DIR/wmh/umc/data_umc_original_depth_-1_from_10_to_15_w_synthseg_labels.hdf5
@@ -129,7 +233,20 @@ vu:
   paths_preprocessed:
     train: $DATA_DIR/wmh/vu/data_vu_2d_size_256_256_depth_48_res_1_1_3_from_0_to_10.hdf5
     test: $DATA_DIR/wmh/vu/data_vu_2d_size_256_256_depth_48_res_1_1_3_from_10_to_15.hdf5
-    val: $DATA_DIR/wmh/vu/data_vu_2d_size_256_256_depth_48_res_1_1_3_from_15_to_20.hdf5
+    val: $DATA_DIR/wmh/vu/data_vu_2d_size_256_256_depth_48_res_1_1_3_from_15_to_20.hdf5   
+  paths_preprocessed_dino:
+    base: 
+      train: $DATA_DIR/wmh/vu/dino_features/data_vu_2d_size_256_256_depth_48_res_1_1_3_from_0_to_10_dino_base_hier_2.hdf5
+      test: $DATA_DIR/wmh/vu/dino_features/data_vu_2d_size_256_256_depth_48_res_1_1_3_from_10_to_15_dino_base_hier_2.hdf5
+      val: $DATA_DIR/wmh/vu/dino_features/data_vu_2d_size_256_256_depth_48_res_1_1_3_from_15_to_20_dino_base_hier_2.hdf5
+    large: 
+      train: $DATA_DIR/wmh/vu/dino_features/data_vu_2d_size_256_256_depth_48_res_1_1_3_from_0_to_10_dino_large_hier_2.hdf5
+      test: $DATA_DIR/wmh/vu/dino_features/data_vu_2d_size_256_256_depth_48_res_1_1_3_from_10_to_15_dino_large_hier_2.hdf5
+      val: $DATA_DIR/wmh/vu/dino_features/data_vu_2d_size_256_256_depth_48_res_1_1_3_from_15_to_20_dino_large_hier_2.hdf5
+    giant: 
+      train: $DATA_DIR/wmh/vu/dino_features/data_vu_2d_size_256_256_depth_48_res_1_1_3_from_0_to_10_dino_giant_hier_2.hdf5
+      test: $DATA_DIR/wmh/vu/dino_features/data_vu_2d_size_256_256_depth_48_res_1_1_3_from_10_to_15_dino_giant_hier_2.hdf5
+      val: $DATA_DIR/wmh/vu/dino_features/data_vu_2d_size_256_256_depth_48_res_1_1_3_from_15_to_20_dino_giant_hier_2.hdf5
   paths_original:
     train: $DATA_DIR/wmh/vu/data_vu_original_depth_-1_from_0_to_10.hdf5
     test: $DATA_DIR/wmh/vu/data_vu_original_depth_-1_from_10_to_15.hdf5
@@ -145,6 +262,19 @@ vu_w_synthseg_labels:
     train: $DATA_DIR/wmh/vu/data_vu_2d_size_256_256_depth_48_res_1_1_3_from_0_to_10_w_synthseg_labels.hdf5
     test: $DATA_DIR/wmh/vu/data_vu_2d_size_256_256_depth_48_res_1_1_3_from_10_to_15_w_synthseg_labels.hdf5
     val: $DATA_DIR/wmh/vu/data_vu_2d_size_256_256_depth_48_res_1_1_3_from_15_to_20_w_synthseg_labels.hdf5
+  paths_preprocessed_dino:
+    base: 
+      train: $DATA_DIR/wmh/vu/dino_features/data_vu_2d_size_256_256_depth_48_res_1_1_3_from_0_to_10_w_synthseg_labels_dino_base_hier_2.hdf5
+      test: $DATA_DIR/wmh/vu/dino_features/data_vu_2d_size_256_256_depth_48_res_1_1_3_from_10_to_15_w_synthseg_labels_dino_base_hier_2.hdf5
+      val: $DATA_DIR/wmh/vu/dino_features/data_vu_2d_size_256_256_depth_48_res_1_1_3_from_15_to_20_w_synthseg_labels_dino_base_hier_2.hdf5
+    large: 
+      train: $DATA_DIR/wmh/vu/dino_features/data_vu_2d_size_256_256_depth_48_res_1_1_3_from_0_to_10_w_synthseg_labels_dino_large_hier_2.hdf5
+      test: $DATA_DIR/wmh/vu/dino_features/data_vu_2d_size_256_256_depth_48_res_1_1_3_from_10_to_15_w_synthseg_labels_dino_large_hier_2.hdf5
+      val: $DATA_DIR/wmh/vu/dino_features/data_vu_2d_size_256_256_depth_48_res_1_1_3_from_15_to_20_w_synthseg_labels_dino_large_hier_2.hdf5
+    giant: 
+      train: $DATA_DIR/wmh/vu/dino_features/data_vu_2d_size_256_256_depth_48_res_1_1_3_from_0_to_10_w_synthseg_labels_dino_giant_hier_2.hdf5
+      test: $DATA_DIR/wmh/vu/dino_features/data_vu_2d_size_256_256_depth_48_res_1_1_3_from_10_to_15_w_synthseg_labels_dino_giant_hier_2.hdf5
+      val: $DATA_DIR/wmh/vu/dino_features/data_vu_2d_size_256_256_depth_48_res_1_1_3_from_15_to_20_w_synthseg_labels_dino_giant_hier_2.hdf5
   paths_original:
     train: $DATA_DIR/wmh/vu/data_vu_original_depth_-1_from_0_to_10_w_synthseg_labels.hdf5
     test: $DATA_DIR/wmh/vu/data_vu_original_depth_-1_from_10_to_15_w_synthseg_labels.hdf5

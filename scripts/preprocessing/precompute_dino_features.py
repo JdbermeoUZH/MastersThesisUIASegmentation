@@ -1,7 +1,6 @@
 import os
 import sys
 import math
-import shutil
 import argparse
 
 import h5py
@@ -172,7 +171,7 @@ def create_hdf5_datasets(
         )
 
         # N, dino_fe, H * 2^hier, W*2^hier
-        images_dataset = hdf5_file.create_dataset(
+        hdf5_file.create_dataset(
             f"images_hier_{hierarchy_i}",
             shape=(0, *feature_spatial_size),
             maxshape=(None, *feature_spatial_size),
@@ -180,12 +179,13 @@ def create_hdf5_datasets(
         )
 
     # Add attributes to the dataset about the Dino model used
-    images_dataset.attrs["patch_size"] = dino_fe.patch_size
-    images_dataset.attrs["emb_dim"] = dino_fe.emb_dim
-    images_dataset.attrs["dino_model"] = dino_fe.model_name
-    images_dataset.attrs["n_augmentation_epochs"] = n_augmentation_epochs
-    images_dataset.attrs["dataset_original_size"] = dataset_original_size
-
+    hdf5_file.attrs["patch_size"] = dino_fe.patch_size
+    hdf5_file.attrs["emb_dim"] = dino_fe.emb_dim
+    hdf5_file.attrs["dino_model"] = dino_fe.model_name
+    hdf5_file.attrs["n_augmentation_epochs"] = n_augmentation_epochs
+    hdf5_file.attrs["dataset_original_size"] = dataset_original_size
+    hdf5_file.attrs["hierarchy_level"] = hierarchy_level
+    
     # Dataset for labels that correspond to each image
     # :=========================================================================:
     labels_spatial_size = image_size[:2]

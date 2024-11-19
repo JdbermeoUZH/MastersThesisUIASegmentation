@@ -25,7 +25,7 @@ class DinoSeg(BaseSeg):
         self._precalculated_fts = precalculated_fts
 
     def forward(
-        self, x: torch.Tensor, **preprocess_kwargs
+        self, x: torch.Tensor, output_size: Optional[tuple[int]] = None, **preprocess_kwargs
     ) -> tuple[torch.Tensor, torch.Tensor, dict[str, torch.Tensor]]:
         """
         Forward pass of the model
@@ -41,9 +41,14 @@ class DinoSeg(BaseSeg):
         intermediate_outputs : dict[str, torch.Tensor]
             Dictionary containing intermediate outputs of preprocessing.
         """
-        # Make output size of the decoder match the input's size if necessary
-        if self._decoder.output_size != x.shape[-2:]:
-            self._decoder.output_size = tuple(x.shape[-2:])
+        if not self.precalculated_fts:
+            # Make output size of the decoder match the input's size if necessary
+            output_size = tuple(x.shape[-2:])
+        else:
+            assert output_size is not None, "Output size is required when features are precalculated"
+        
+        if self._decoder.output_size != output_size:
+                self._decoder.output_size = output_size
 
         return super().forward(x, **preprocess_kwargs)
         
@@ -63,7 +68,7 @@ class DinoSeg(BaseSeg):
             Predicted logits.
         """
 
-        return self.decoder(x)
+        return self._decoder(x)
 
     @torch.inference_mode()
     def _preprocess_x(
