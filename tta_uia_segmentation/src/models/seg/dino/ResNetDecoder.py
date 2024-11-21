@@ -40,9 +40,9 @@ class ResNetDecoderBlock(nn.Module):
             in_channels, out_channels, n_dimensions=n_dimensions
         )
 
-    def forward(self, x, scale_factor=None, size=None):
-        size = default(size, None)
-        scale_factor = default(scale_factor, self.scale_factor)
+    def forward(self, x, scale_factor=None, size=None):        
+        if size is None:
+            scale_factor = default(scale_factor, self.scale_factor)
 
         if isinstance(scale_factor, torch.Tensor):
             scale_factor = scale_factor.cpu().numpy().tolist()
@@ -73,8 +73,10 @@ class ResNetDecoder(BaseDecoder):
 
         super(ResNetDecoder, self).__init__(output_size=output_size)
 
+        self._embedding_dim = embedding_dim
         self._output_size = output_size
         self._n_classes = n_classes
+        self._num_channels = num_channels
         self._num_channels_last_upsample = num_channels_last_upsample
         self._n_dimensions = n_dimensions
         self._in_train_mode = True
@@ -84,24 +86,29 @@ class ResNetDecoder(BaseDecoder):
         num_channels = [embedding_dim] + num_channels + [num_channels_last_upsample]
         block_list = []
         prev_level_channels_in = 0
-        for channel_in, channel_out in zip(num_channels[:-1], num_channels[1:]):
-            channel_in = channel_in + prev_level_channels_in
+        for in_channels, out_channels in zip(num_channels[:-1], num_channels[1:]):
+            in_channels = in_channels + prev_level_channels_in
             block_list.append(
                 ResNetDecoderBlock(
-                    channel_in, channel_out, scale_factor=2, n_dimensions=n_dimensions
+                    in_channels, out_channels, scale_factor=2, n_dimensions=n_dimensions
                 )
             )
-            prev_level_channels_in = channel_in
+            prev_level_channels_in = in_channels
+        
+        self.blocks = nn.ModuleList(block_list)
         
         self.last_block = ResNetDecoderBlock(
-            num_channels_last_upsample + prev_level_channels_in,
-            num_channels_last_upsample,
+            in_channels=num_channels_last_upsample + prev_level_channels_in,
+            out_channels=num_channels_last_upsample,
             scale_factor=None,
             n_dimensions=n_dimensions
         )
 
         self.output_conv = get_conv(
-            num_channels_last_upsample, n_classes, 1, n_dimensions=n_dimensions
+            in_channels=num_channels_last_upsample * 2 + prev_level_channels_in,
+            out_channels=n_classes, 
+            kernel_size=1,
+            n_dimensions=n_dimensions
         )
 
         self.softmax = nn.Softmax(dim=1)

@@ -110,6 +110,7 @@ segmentation_dino:
   learning_rate:                0.001
   optimizer_type:               adam  # adam, adamW
   weight_decay:                 1e-5
+  max_grad_norm:                1.0 
 
   epochs:                       150   # 150 for subcortical_structures, 1000 for WMH (nuhs, umc)
   batch_size:                   16
@@ -145,6 +146,22 @@ segmentation_dino:
     brightness_max:     0.1 #0.2     # Default 0.1
     noise_mean:         0.0
     noise_std:          0.1
+
+
+incremental_pca:
+  logdir:                       $RESULTS_DIR/wmh/pca/incremental_pca/dino/base/test
+  wandb_project:                pca-dino-features
+
+  pca_components:               null # Null means all components are calculated
+  hierarchy_levels:             2    # Number of hierarchy levels (upsamples of 2^[0, ..., hierarchy_levels])
+
+  epochs:                       1
+  batch_size:                   10
+  num_workers:                  1
+  precalculated_fts:            True
+  aug_params:                   null
+
+  check_loss_every:             10  #1000 steps in total 
 
 
 ddpm_lucidrains:

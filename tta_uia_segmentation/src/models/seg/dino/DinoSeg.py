@@ -72,11 +72,17 @@ class DinoSeg(BaseSeg):
 
     def select_necessary_extra_inputs(self, extra_input_dict):
         assert 'output_size' in extra_input_dict, "Output size is required"
-        assert isinstance(extra_input_dict['output_size'], tuple), "Output size must be a tuple"
+        assert isinstance(extra_input_dict['output_size'], tuple | list), "Output size must be a tuple"
+        
+        # Check all elements the batch have the same output size
+        h = extra_input_dict['output_size'][0].unique()
+        w = extra_input_dict['output_size'][1].unique()
 
-        return {
-            'output_size': extra_input_dict['output_size']
-        }
+        assert len(h) == 1 and len(w) == 1, "All images in the batch must have the same output size"
+
+        output_size = (h[0].item(), w[0].item())
+
+        return {'output_size': output_size}
     
     def _forward( # type: ignore
         self,

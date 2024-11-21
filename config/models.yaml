@@ -64,7 +64,6 @@ ddpm_unet_oai:
   num_res_blocks:                   3             # Default is 2, but for bigger datasets they use 3
   num_heads:                        1             # Default is 4 on the original paper when used on Imagenet
 
-
 resnet_decoder_dino:
   num_channels:                     [64, 32, 16]  # If null, it is automatically determined
   num_channels_last_upsample:       16            # If null, it is automatically determined

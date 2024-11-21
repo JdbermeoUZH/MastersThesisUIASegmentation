@@ -6,8 +6,7 @@
 
 source $REPO_DIR/scripts/utils/start_env_and_data.sh
 
-python train_dino_seg.py \
+python train_incremental_pca.py \
  /scratch_net/biwidl319/jbermeo/MastersThesisUIASegmentation/config/datasets.yaml \
- /scratch_net/biwidl319/jbermeo/MastersThesisUIASegmentation/config/models.yaml \
- /scratch_net/biwidl319/jbermeo/MastersThesisUIASegmentation/config/training/training_wmh_umc.yaml \
+ /scratch_net/biwidl319/jbermeo/MastersThesisUIASegmentation/config/training/training.yaml \
  "$@"  

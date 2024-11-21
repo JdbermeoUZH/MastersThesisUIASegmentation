@@ -135,8 +135,8 @@ def print_dice_debug_info(mask_pred, mask_gt, tp, tp_plus_fp, tp_plus_fn, dices)
 
 
 class DiceLoss(nn.Module):
-    def __init__(self, smooth = 0, epsilon=0, debug_mode=False, fg_only=False):
-        """
+    def __init__(self, smooth: float = 0., epsilon: float = 0., debug_mode: bool = False, fg_only: bool = False):
+        """ 
         Dice loss.
         
         Attributes

@@ -14,8 +14,9 @@ class DatasetDinoFeatures(Dataset):
     def __init__(
         self,
         split: str,
-        paths_preprocessed_dino: dict[str, str],
+        paths_preprocessed_dino: dict[str, Any],
         hierarchy_level: int,
+        dino_model: str,
         **kwargs,
     ):
         # Handle how arguments should be set for the wrapped Dataset class
@@ -57,7 +58,7 @@ class DatasetDinoFeatures(Dataset):
         # Define attributes specific to this class
         # :====================================================================:
         self._hierarchy_level = hierarchy_level
-        self._path_preprocessed_dino = paths_preprocessed_dino[split]
+        self._path_preprocessed_dino = paths_preprocessed_dino[dino_model][split]
 
         with h5py.File(self._path_preprocessed_dino, "r") as h5f:
             self._dino_patch_size: int = h5f.attrs["patch_size"]  # type: ignore
@@ -67,9 +68,11 @@ class DatasetDinoFeatures(Dataset):
             self._dataset_original_size: int = h5f.attrs["dataset_original_size"]  # type: ignore
             self._hierarchy_level_available: int = h5f.attrs["hierarchy_level"]  # type: ignore
 
-            assert (
-                self._dataset_original_size == self._length
-            ), "Dataset length mismatch"
+        assert self._dataset_original_size == self._length, "Dataset length mismatch"
+
+        assert (
+            dino_model == self._dino_model
+        ), "Dino model mismatch, in h5 file it is: {self._dino_model}"
 
         assert (
             hierarchy_level <= self._hierarchy_level_available
@@ -114,19 +117,19 @@ class DatasetDinoFeatures(Dataset):
         # Get preprocessed Dino features
         x = list()
         for hier in range(self._hierarchy_level + 1):
-            x.append(torch.tensor(self._images_preprocessed_dino[hier][index]))
+            x.append(torch.tensor(self._images_preprocessed_dino[hier][index]))  # type: ignore
 
         # Get segmentation mask
-        y = torch.tensor(self._labels_preprocessed_dino[index])
+        y = torch.tensor(self._labels_preprocessed_dino[index])  # type: ignore
 
         y = class_to_onehot(y, self._n_classes, class_dim=0)
 
-        return x, y, {}
+        return x, y, {"output_size": tuple(y.shape[-2:])}
 
     def get_preprocessed_items(
         self,
         index: int,
-    ) -> tuple[torch.Tensor, torch.Tensor, dict[str, Any]]:
+    ) -> tuple[torch.Tensor | list[torch.Tensor], torch.Tensor, dict[str, Any]]:
         """
         Get preprocessed slice, typically used for training directly on images
         """
@@ -134,17 +137,17 @@ class DatasetDinoFeatures(Dataset):
         return super().__getitem__(index)
 
     def _open_connection_to_preprocessed_dino_h5_file(self):
-        if self._h5f_preprocessed is None:
+        if self._h5f_preprocessed_dino is None:
             self._h5f_preprocessed_dino = h5py.File(self._path_preprocessed_dino, "r")
 
-            self._images_preprocessed_dino = {
+            self._images_preprocessed_dino = {  # type: ignore
                 hier: self._h5f_preprocessed_dino[f"images_hier_{hier}"]
                 for hier in range(self._hierarchy_level + 1)
             }
             self._labels_preprocessed_dino = self._h5f_preprocessed_dino["labels"]
 
     def close_connection_to_preprocessed_dino_h5_file(self):
-        if self._h5f_preprocessed is not None:
+        if self._h5f_preprocessed_dino is not None:
             self._h5f_preprocessed_dino.close()
             self._h5f_preprocessed_dino = None
 

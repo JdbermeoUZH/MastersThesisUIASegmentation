@@ -31,7 +31,7 @@ class SegTrainer:
         checkpoint_best: str = "checkpoint_best.pth",
         logdir: str = "logs",
         wandb_log: bool = True,
-        wandb_dir: str = "wandb",
+        wandb_dir: Optional[str] = "wandb",
     ):
 
         self._device = device
@@ -125,7 +125,12 @@ class SegTrainer:
             self._seg.train()
 
             for step, (x, y, extra_inputs) in enumerate(train_dataloader):
-                x = x.to(device).float()
+                if isinstance(x, list):
+                    x = [x_i.to(device).float() for x_i in x]
+                    batch_size = x[0].shape[0]
+                else:
+                    x = x.to(device).float()
+                    batch_size = x.shape[0]
                 y = y.to(device).float()
 
                 extra_inputs = self._seg.select_necessary_extra_inputs(extra_inputs)
@@ -143,7 +148,7 @@ class SegTrainer:
                     # Gradient clipping
                     if self._max_grad_norm is not None:
                         torch.nn.utils.clip_grad_norm_(
-                            self._seg.trainable_params(), self._max_grad_norm
+                            self._seg.trainable_params, self._max_grad_norm
                         )
 
                     # Update parameters
@@ -155,8 +160,8 @@ class SegTrainer:
                         warmup_scheduler.step()
 
                 with torch.no_grad():
-                    training_loss += loss.detach() * x.shape[0] * self._grad_acc_steps
-                    n_samples_train += x.shape[0]
+                    training_loss += loss.detach() * batch_size * self._grad_acc_steps
+                    n_samples_train += batch_size
 
             training_loss /= n_samples_train
             self._training_losses.append(training_loss.item())
@@ -246,16 +251,18 @@ class SegTrainer:
 
         self._seg.eval()
 
-        for (
-            x,
-            y,
-            *_,
-        ) in val_dataloader:
-
-            x = x.to(device).float()
+        for x, y, extra_inputs in val_dataloader:
+            if isinstance(x, list):
+                x = [x_i.to(device).float() for x_i in x]
+                batch_size = x[0].shape[0]
+            else:
+                x = x.to(device).float()
+                batch_size = x.shape[0]
             y = y.to(device).float()
 
-            y_pred, *_ = self._seg(x)
+            extra_inputs = self._seg.select_necessary_extra_inputs(extra_inputs)
+
+            y_pred, *_ = self._seg(x, **extra_inputs)
 
             loss = self._loss_func(y_pred, y)
 
@@ -274,9 +281,9 @@ class SegTrainer:
                 # Must initialize to nan, otherwise nan_sum will never return nan
                 #  Necessary to tell appart nan dice scores from 0 dice scores
                 validation_scores = torch.zeros_like(dices) * torch.nan
-            validation_scores = nan_sum(validation_scores, dices * x.shape[0])
-            validation_loss += loss * x.shape[0]
-            n_samples_val += x.shape[0]
+            validation_scores = nan_sum(validation_scores, dices * batch_size)
+            validation_loss += loss * batch_size
+            n_samples_val += batch_size
 
         validation_loss /= n_samples_val
         validation_scores /= n_samples_val

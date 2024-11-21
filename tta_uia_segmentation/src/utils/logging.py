@@ -1,5 +1,6 @@
 import os
 import time
+from typing import Optional
 
 import wandb
 
@@ -42,7 +43,7 @@ def update_wandb_config(new_config: dict):
 
 
 def setup_wandb(params: dict, logdir: str, wandb_project: str, start_new_exp: bool = False,
-                run_name: str = None) -> str:
+                run_name: Optional[str] = None) -> str:
     """
     Setup wandb logging and store its parameters in logdir.
     

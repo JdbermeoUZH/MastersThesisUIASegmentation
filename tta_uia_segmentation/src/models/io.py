@@ -24,7 +24,7 @@ from .seg.dino.DinoV2FeatureExtractor import (
     DinoV2FeatureExtractor,
 )
 from .seg.dino.ResNetDecoder import ResNetDecoder
-from .seg.dino.HierarchichalResNetDecoder import HierarchichalResNetDecoder
+from .seg.dino.HierarchichalDecoder import HierarchichalDecoder
 from .seg.dino.DinoSeg import DinoSeg
 from .seg.dino.HierarchichalDinoSeg import HierarchichalDinoSeg
 
@@ -103,50 +103,48 @@ def define_and_possibly_load_dino_seg(
     embedding_dim = dino_fe.emb_dim
     decoder_type = train_dino_cfg["decoder_type"]
     hierarchy_level = train_dino_cfg["hierarchy_level"]
-    hierarchihcal_model = train_dino_cfg["hierarchichal_model"]
-    output_size: tuple[int, ...] = train_dino_cfg["image_size"]
+    output_size: tuple[int, ...] = train_dino_cfg["output_size"]
     
-    if decoder_type == "ResNet":
-        num_channels: Optional[list[int]] = decoder_cfg["num_channels"], # type: ignore
-        num_channels_last_upsample = decoder_cfg["num_channels_last_upsample"]
+    num_channels: Optional[list[int]] = decoder_cfg["num_channels"]
+    num_channels_last_upsample = decoder_cfg["num_channels_last_upsample"]
 
-        if not hierarchihcal_model:
-            if num_channels is None:
-                num_upsampling = math.ceil(math.log2(dino_fe.patch_size)) + 1
-                num_channels = [int(dino_fe.emb_dim / (2**i)) for i in range(num_upsampling)]
+    if decoder_type == "ResNet":               
+        if num_channels is None:
+            num_upsampling = math.ceil(math.log2(dino_fe.patch_size)) + 1
+            num_channels = [int(dino_fe.emb_dim / (2**i)) for i in range(num_upsampling)]
 
-            decoder = ResNetDecoder(
-                embedding_dim=embedding_dim,
-                n_classes=n_classes,
-                num_channels=num_channels,
-                num_channels_last_upsample=num_channels_last_upsample,
-                output_size=output_size,
-                n_dimensions=2,
-            ).to(device)
+        decoder = ResNetDecoder(
+            embedding_dim=embedding_dim,
+            n_classes=n_classes,
+            num_channels=num_channels,
+            num_channels_last_upsample=num_channels_last_upsample,
+            output_size=output_size,
+            n_dimensions=2,
+        ).to(device)
 
-        else:
-            decoder = HierarchichalResNetDecoder(
-                embedding_dim=embedding_dim,
-                n_classes=n_classes,
-                num_channels_last_upsample=num_channels_last_upsample,
-                output_size=output_size,
-                hierarchy_level=hierarchy_level,
-                num_channels_per_hier=num_channels,
-                n_dimensions=2
-            ).to(device)
+    elif decoder_type == "Hierarchichal":
+        decoder = HierarchichalDecoder(
+            embedding_dim=embedding_dim,
+            n_classes=n_classes,
+            num_channels_last_upsample=num_channels_last_upsample,
+            output_size=output_size,
+            hierarchy_level=hierarchy_level,
+            num_channels_per_hier=num_channels,
+            n_dimensions=2
+        ).to(device)
 
     else:
-        raise ValueError(f"Invalid decoder_type: {decoder_type} and hierarchihcal_model: {hierarchihcal_model} combination")
+        raise ValueError(f"Invalid decoder_type: {decoder_type}")
 
     # Create wrapping DinoSeg model
     precalculated_fts = train_dino_cfg["precalculated_fts"]
 
-    if hierarchihcal_model:
+    if decoder_type != "Hierarchichal":
         dino_seg = DinoSeg(
             decoder=decoder,
             dino_fe=dino_fe,
             precalculated_fts=precalculated_fts,
-            hierarchy_level=train_dino_cfg["hierarchy_level_dino_fe"]
+            hierarchy_level=hierarchy_level
         )
     
     else:

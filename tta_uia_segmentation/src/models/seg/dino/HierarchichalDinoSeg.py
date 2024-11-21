@@ -48,7 +48,7 @@ class HierarchichalDinoSeg(DinoSeg):
             
             
             x_preproc_list = []
-            for hier_i in range(self._hierarchy_levels):
+            for hier_i in range(self._hierarchy_levels + 1):
                 x_preproc = self._dino_fe(x, mask, pre, hierarchy=hier_i)
                 x_preproc_list.append(x_preproc["patch"].permute(0, 3, 1, 2))
 

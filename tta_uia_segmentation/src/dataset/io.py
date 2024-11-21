@@ -25,7 +25,6 @@ def get_datasets(
             "dataset_name",
             "paths_preprocessed",
             "paths_original",
-            "split",
             "resolution_proc",
             "dim_proc",
             "n_classes",
@@ -33,17 +32,20 @@ def get_datasets(
         dataset_type=dataset_type,
     )
 
+    dataset_cls = Dataset
+
     if dataset_type == "DinoFeatures":
         assert_kwargs_present(
             kwargs,
-            ["paths_preprocessed_dino", "hierarchy_level"],
+            ["paths_preprocessed_dino", "hierarchy_level", "dino_model"],
             dataset_type=dataset_type,
         )
+        dataset_cls = DatasetDinoFeatures
 
     if dataset_type == "WithDeformations":
         assert_kwargs_present(kwargs, ["deformation_params"], dataset_type=dataset_type)
 
     for split in splits:
-        datasets.append(Dataset(split=split, **kwargs))
+        datasets.append(dataset_cls(split=split, **kwargs))
 
     return datasets
