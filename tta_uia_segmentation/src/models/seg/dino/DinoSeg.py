@@ -1,11 +1,11 @@
-from typing import Optional
+from typing import Optional, List
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
 from .DinoV2FeatureExtractor import DinoV2FeatureExtractor
-from .ResNetDecoder import ResNetDecoder
+from .BaseDecoder import BaseDecoder
 from ..BaseSeg import BaseSeg
 from tta_uia_segmentation.src.utils.io import save_checkpoint
 
@@ -13,19 +13,33 @@ from tta_uia_segmentation.src.utils.io import save_checkpoint
 class DinoSeg(BaseSeg):
     def __init__(
         self,
-        decoder: ResNetDecoder,
+        decoder: BaseDecoder,
         dino_fe: Optional[DinoV2FeatureExtractor] = None,
+        dino_model_name: Optional[str] = None,
         precalculated_fts: bool = False,
+        hierarchy_level: int = 0,
     ):
         super().__init__()
 
         self._decoder = decoder
         self._dino_fe = dino_fe
+        self._hierarchy_level_dino_fe = hierarchy_level
+
+        if self._dino_fe is not None:
+            assert (
+                dino_model_name is None
+            ), "Dino model name is not required when a Dino feature extractor is provided"
+            self._dino_model_name = self._dino_fe.model_name
+        else:
+            assert (
+                dino_model_name is not None
+            ), "Dino model name is required when a Dino feature extractor is not provided"
+            self._dino_model_name = dino_model_name
 
         self._precalculated_fts = precalculated_fts
 
     def forward(
-        self, x: torch.Tensor, output_size: Optional[tuple[int]] = None, **preprocess_kwargs
+        self, x: torch.Tensor | List[torch.Tensor], output_size: Optional[tuple[int, ...]] = None, **preprocess_kwargs
     ) -> tuple[torch.Tensor, torch.Tensor, dict[str, torch.Tensor]]:
         """
         Forward pass of the model
@@ -41,20 +55,32 @@ class DinoSeg(BaseSeg):
         intermediate_outputs : dict[str, torch.Tensor]
             Dictionary containing intermediate outputs of preprocessing.
         """
+    
         if not self.precalculated_fts:
+            assert isinstance(x, torch.Tensor), "If calculating features, x must be a tensor of image(s)"
             # Make output size of the decoder match the input's size if necessary
             output_size = tuple(x.shape[-2:])
-        else:
-            assert output_size is not None, "Output size is required when features are precalculated"
-        
+        else:       
+            assert output_size is not None, (
+                "Output size is required when features are precalculated"
+            )
+
         if self._decoder.output_size != output_size:
                 self._decoder.output_size = output_size
 
         return super().forward(x, **preprocess_kwargs)
-        
-    def _forward(
+
+    def select_necessary_extra_inputs(self, extra_input_dict):
+        assert 'output_size' in extra_input_dict, "Output size is required"
+        assert isinstance(extra_input_dict['output_size'], tuple), "Output size must be a tuple"
+
+        return {
+            'output_size': extra_input_dict['output_size']
+        }
+    
+    def _forward( # type: ignore
         self,
-        x: torch.Tensor,
+        x_preproc: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Decode the Dino features to a segmentation mask
@@ -68,30 +94,36 @@ class DinoSeg(BaseSeg):
             Predicted logits.
         """
 
-        return self._decoder(x)
+        return self._decoder(x_preproc)
 
     @torch.inference_mode()
     def _preprocess_x(
         self,
-        x,
+        x: torch.Tensor | List[torch.Tensor],
         mask: Optional[torch.Tensor] = None,
         pre: bool = False,
-        hierarchy: int = 0,
-    ):
+    ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
 
         # Calculate dino features if necessary
         if not self.precalculated_fts:
             # Convert grayscale to RGB, required by DINO
+            assert isinstance(x, torch.Tensor), "If calculating features, x must be a tensor of image(s)"
+
             if x.shape[1] == 1:
                 x = x.repeat(1, 3, 1, 1)
 
             assert (
                 self._dino_fe is not None
             ), "Dino feature extractor is required when features are not precalculated"
-            dino_out = self._dino_fe(x, mask, pre, hierarchy)
+            dino_out = self._dino_fe(x, mask, pre, self._hierarchy_level_dino_fe)
             x = dino_out["patch"].permute(
                 0, 3, 1, 2
             )  # N x np x np x df -> N x df x np x np
+        else:
+            assert isinstance(x, list), "If features are precalculated, x must be a list of tensors"
+            x = x[self._hierarchy_level_dino_fe]
+
+        assert isinstance(x, torch.Tensor), "x must be a tensor"
 
         return x, {"Dino Features": x}
 
@@ -99,13 +131,13 @@ class DinoSeg(BaseSeg):
         save_checkpoint(
             path=path,
             decoder_state_dict=self.decoder.state_dict(),
-            dino_model_name=self.dino_fe.model_name,
+            dino_model_name=self._dino_model_name,
             **kwargs,
         )
 
     def load_checkpoint(
         self,
-        path: Optional[str] = None,
+        path: str,
         device: Optional[torch.device] = None,
     ) -> None:
 
@@ -158,12 +190,12 @@ class DinoSeg(BaseSeg):
         self._decoder.train_mode()
 
     @property
-    def trainable_params(self) -> list[nn.Parameter]:
+    def trainable_params(self) -> List[nn.Parameter]:
         return list(self._decoder.parameters())
-    
+
     @property
-    def trainable_modules(self) -> list[torch.nn.Module]:
+    def trainable_modules(self) -> List[torch.nn.Module]:
         """
         Returns the trainable parameters of the model.
         """
-        return (self._decoder,)
+        return [self._decoder]

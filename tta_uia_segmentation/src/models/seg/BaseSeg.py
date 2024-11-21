@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Iterator
+from typing import List, Any
 
 import torch
 
@@ -9,7 +9,7 @@ class BaseSeg(torch.nn.Module, ABC):
         super().__init__(*args, **kwargs)
 
     def forward(
-        self, x: torch.Tensor, **preprocess_kwargs
+        self, x: torch.Tensor | List[torch.Tensor], **preprocess_kwargs
     ) -> tuple[torch.Tensor, torch.Tensor, dict[str, torch.Tensor]]:
         """
         Forward pass of the model
@@ -32,9 +32,20 @@ class BaseSeg(torch.nn.Module, ABC):
         return y_mask, y_logits, intermediate_outputs
 
     @abstractmethod
+    def select_necessary_extra_inputs(
+        self, extra_input_dict: dict[str, Any]
+    ) -> dict[str, Any]:
+        """
+        Selects the necessary extra inputs for the model in a dictionary
+         that will be needed for the forward pass.
+
+        """
+        pass
+
+    @abstractmethod
     def _preprocess_x(
-        self, x: torch.Tensor, **preprocess_kwargs
-    ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        self, x: torch.Tensor | List[torch.Tensor]
+    ) -> tuple[torch.Tensor | List[torch.Tensor], dict[str, torch.Tensor]]:
         """
         Preprocess input tensor
 
@@ -51,7 +62,7 @@ class BaseSeg(torch.nn.Module, ABC):
     @abstractmethod
     def _forward(
         self,
-        x_preproc: torch.Tensor,
+        x_preproc: torch.Tensor | List[torch.Tensor],
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Forward pass of the model assuming a preprocessed input.
@@ -92,7 +103,7 @@ class BaseSeg(torch.nn.Module, ABC):
 
     @property
     @abstractmethod
-    def trainable_params(self) -> Iterator[torch.nn.Parameter]:
+    def trainable_params(self) -> List[torch.nn.Parameter]:
         """
         Returns the trainable parameters of the model.
         """
@@ -100,7 +111,7 @@ class BaseSeg(torch.nn.Module, ABC):
 
     @property
     @abstractmethod
-    def trainable_modules(self) -> Iterator[torch.nn.Module]:
+    def trainable_modules(self) -> List[torch.nn.Module]:
         """
         Returns the trainable parameters of the model.
         """

@@ -97,15 +97,22 @@ segmentation:
 
 segmentation_dino:
   dino_model:                   large  # small, base, large, gigantic
-  svd_path:                     null
-  
   precalculated_fts:            False
+  
+  pca_path:                     null  # path to pretrained PCA model on dino features
+  num_pca_components:           null  # Null for no PCA model
+
+  decoder_type:                 ResNet # Only ResNet available 
+  hierarchy_level:              2     # Upsamples image by 2^hierarchy_level before obtaining dino features.
+                                      #  If hierarchihcal_model is true, uses upsampled images 2^[0, hierarchy_level]
+  hierarchihcal_model:          True  # False for no hierarchichal model
+  output_size:                  [256, 256]
 
   learning_rate:                0.001
-  optimizer_type:               adam # adam, adamW
+  optimizer_type:               adam  # adam, adamW
   weight_decay:                 1e-5
 
-  epochs:                       150  # 150 for subcortical_structures, 1000 for WMH (nuhs, umc)
+  epochs:                       150   # 150 for subcortical_structures, 1000 for WMH (nuhs, umc)
   batch_size:                   16
   grad_acc_steps:               1
   num_workers:                  2
@@ -114,7 +121,6 @@ segmentation_dino:
   logdir:                       $RESULTS_DIR/subcortical_structures/segmentation/hcp_t1/dino_seg/debug
   wandb_project:                mt-segmentation_models
 
-  image_size:                   [1, 256, 256]
 
   # Loss function parameters
   epsilon:                      1e-10

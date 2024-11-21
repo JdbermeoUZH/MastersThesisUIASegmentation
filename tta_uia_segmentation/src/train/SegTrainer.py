@@ -124,11 +124,13 @@ class SegTrainer:
 
             self._seg.train()
 
-            for step, (x, y, *_) in enumerate(train_dataloader):
+            for step, (x, y, extra_inputs) in enumerate(train_dataloader):
                 x = x.to(device).float()
                 y = y.to(device).float()
 
-                y_pred, *_ = self._seg(x)
+                extra_inputs = self._seg.select_necessary_extra_inputs(extra_inputs)
+
+                y_pred, *_ = self._seg(x, **extra_inputs)
 
                 loss = self._loss_func(y_pred, y) / self._grad_acc_steps
 

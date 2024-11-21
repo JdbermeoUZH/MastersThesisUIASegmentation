@@ -1,7 +1,7 @@
 import os
 import json
 import math
-from typing import Optional, Union
+from typing import Optional, Union, Literal
 
 import torch
 import torch.nn as nn
@@ -23,7 +23,10 @@ from . import (
 from .seg.dino.DinoV2FeatureExtractor import (
     DinoV2FeatureExtractor,
 )
-from .seg.dino.DinoSeg import ResNetDecoder
+from .seg.dino.ResNetDecoder import ResNetDecoder
+from .seg.dino.HierarchichalResNetDecoder import HierarchichalResNetDecoder
+from .seg.dino.DinoSeg import DinoSeg
+from .seg.dino.HierarchichalDinoSeg import HierarchichalDinoSeg
 
 
 def define_and_possibly_load_norm(
@@ -42,7 +45,7 @@ def define_and_possibly_load_norm(
         n_dimensions=model_params_norm["n_dimensions"],
     ).to(device)
 
-    if cpt_fp is None:
+    if cpt_fp is not None:
         checkpoint = torch.load(cpt_fp, map_location=device)
         norm.load_state_dict(checkpoint["norm_state_dict"])
 
@@ -87,6 +90,7 @@ def define_and_possibly_load_norm_seg(
 
 def define_and_possibly_load_dino_seg(
     train_dino_cfg: dict,
+    decoder_cfg: dict,
     n_classes: int,
     device: torch.device,
     cpt_fp: Optional[str] = None,
@@ -96,22 +100,62 @@ def define_and_possibly_load_dino_seg(
     dino_fe = DinoV2FeatureExtractor(train_dino_cfg["dino_model"]).to(device)
 
     # Define Decoder
-    num_upsampling = math.ceil(math.log2(dino_fe.patch_size)) + 1
-    num_channels = [int(dino_fe.emb_dim / (2**i)) for i in range(num_upsampling)]
+    embedding_dim = dino_fe.emb_dim
+    decoder_type = train_dino_cfg["decoder_type"]
+    hierarchy_level = train_dino_cfg["hierarchy_level"]
+    hierarchihcal_model = train_dino_cfg["hierarchichal_model"]
+    output_size: tuple[int, ...] = train_dino_cfg["image_size"]
+    
+    if decoder_type == "ResNet":
+        num_channels: Optional[list[int]] = decoder_cfg["num_channels"], # type: ignore
+        num_channels_last_upsample = decoder_cfg["num_channels_last_upsample"]
 
-    decoder = ResNetDecoder(
-        output_size=train_dino_cfg["image_size"][-2:],
-        n_classes=n_classes,
-        channels=num_channels,
-        n_dimensions=2,
-    ).to(device)
+        if not hierarchihcal_model:
+            if num_channels is None:
+                num_upsampling = math.ceil(math.log2(dino_fe.patch_size)) + 1
+                num_channels = [int(dino_fe.emb_dim / (2**i)) for i in range(num_upsampling)]
+
+            decoder = ResNetDecoder(
+                embedding_dim=embedding_dim,
+                n_classes=n_classes,
+                num_channels=num_channels,
+                num_channels_last_upsample=num_channels_last_upsample,
+                output_size=output_size,
+                n_dimensions=2,
+            ).to(device)
+
+        else:
+            decoder = HierarchichalResNetDecoder(
+                embedding_dim=embedding_dim,
+                n_classes=n_classes,
+                num_channels_last_upsample=num_channels_last_upsample,
+                output_size=output_size,
+                hierarchy_level=hierarchy_level,
+                num_channels_per_hier=num_channels,
+                n_dimensions=2
+            ).to(device)
+
+    else:
+        raise ValueError(f"Invalid decoder_type: {decoder_type} and hierarchihcal_model: {hierarchihcal_model} combination")
 
     # Create wrapping DinoSeg model
-    dino_seg = DinoSeg(
-        decoder=decoder,
-        dino_fe=dino_fe,
-        precalculated_fts=train_dino_cfg["precalculated_fts"],
-    )
+    precalculated_fts = train_dino_cfg["precalculated_fts"]
+
+    if hierarchihcal_model:
+        dino_seg = DinoSeg(
+            decoder=decoder,
+            dino_fe=dino_fe,
+            precalculated_fts=precalculated_fts,
+            hierarchy_level=train_dino_cfg["hierarchy_level_dino_fe"]
+        )
+    
+    else:
+        dino_seg = HierarchichalDinoSeg(
+            decoder=decoder,
+            dino_fe=dino_fe,
+            precalculated_fts=precalculated_fts,
+            hierarchy_levels=hierarchy_level,
+        )
 
     if cpt_fp is not None:
         dino_seg.load_checkpoint(cpt_fp)
@@ -120,6 +164,7 @@ def define_and_possibly_load_dino_seg(
     dino_seg = dino_seg.to(device)
 
     return dino_seg
+    
 
 
 def define_and_possibly_load_lcddpm(

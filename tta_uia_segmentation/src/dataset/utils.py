@@ -176,7 +176,9 @@ def rgb_to_grayscale(img, is_originally_gray_scale: bool = False) -> torch.Tenso
     return grayscale_img
 
 
-def ensure_nd(n_dims: int, *arrays: np.ndarray | torch.Tensor) -> tuple[np.ndarray | torch.Tensor]:
+def ensure_nd(
+    n_dims: int, *arrays: np.ndarray | torch.Tensor
+) -> tuple[np.ndarray | torch.Tensor]:
     array_list_nd = []
     for array in arrays:
         current_dims = len(array.shape)
@@ -188,8 +190,12 @@ def ensure_nd(n_dims: int, *arrays: np.ndarray | torch.Tensor) -> tuple[np.ndarr
             # If already the target number of dimensions, keep as is
             array_list_nd.append(array)
         else:
-            # Optionally, raise an error or handle cases where dimensions exceed the target
-            raise ValueError(f"Array has too many dimensions: {current_dims} > {n_dims}")
+            array = array.squeeze()
+            if len(array.shape) != n_dims:
+                raise ValueError(
+                    f"Array has too many dimensions: {current_dims} > {n_dims}"
+                )
+            array_list_nd.append(array)
 
     # Return a single array if only one input, otherwise a tuple
     if len(array_list_nd) == 1:

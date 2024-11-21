@@ -46,7 +46,7 @@ class ExtraInputs(ABC):
         pass
 
     @abstractmethod
-    def to_dict():
+    def to_dict(self) -> dict[str, Any]:
         pass
 
 
@@ -65,13 +65,8 @@ class ExtraInputsEmpty(ExtraInputs):
     def __len__(self) -> int:
         return 0
 
-    def to_dict(self):
+    def to_dict(self) -> dict[str, Any]:
         return dict()
-
-
-def get_datasets(splits, *args, **kwargs):
-
-    return [Dataset(split=split, *args, **kwargs) for split in splits]
 
 
 class Dataset(data.Dataset):
@@ -92,7 +87,7 @@ class Dataset(data.Dataset):
         aug_params: Optional[dict] = None,
         load_original: bool = False,
         load_in_memory: bool = True,
-        seed: int = None,
+        seed: Optional[int] = None,
         label_names: Optional[dict] = None,
         check_dims_proc_and_orig_match: bool = False,
     ):
@@ -257,7 +252,9 @@ class Dataset(data.Dataset):
 
         return images, labels
 
-    def __getitem__(self, index: int) -> tuple[torch.Tensor, torch.Tensor, dict[str, ExtraInputs]]:
+    def __getitem__(
+        self, index: int
+    ) -> tuple[torch.Tensor | list[torch.Tensor], torch.Tensor, dict[str, Any]]:
         seed = default(self._seed, get_seed())
 
         # Get the orientation
@@ -308,7 +305,7 @@ class Dataset(data.Dataset):
             if self._mode == "3D":
                 images, labels, *extra_inputs_rescaled = [
                     resize_volume(
-                        tensor.float().unsqueeze(0), # add batch dimension
+                        tensor.float().unsqueeze(0),  # add batch dimension
                         current_pix_size=rescale_factor,
                         target_pix_size=(1, 1, 1),
                         mode=self._rescale_mode,
@@ -326,7 +323,7 @@ class Dataset(data.Dataset):
             elif self._mode == "2D":
                 images, labels, *extra_inputs_rescaled = [
                     resize_image(
-                        tensor.unsqueeze(0), # add batch dimension
+                        tensor.unsqueeze(0),  # add batch dimension
                         current_pix_size=rescale_factor[-2:],
                         target_pix_size=(1, 1),
                         mode="bilinear",
@@ -944,11 +941,11 @@ class Dataset(data.Dataset):
 
     def get_label_name(self, label):
         return self.label_names[label]
-    
+
     @property
     def path_preprocessed(self):
         return self._path_preprocessed
-    
+
     @property
     def path_original(self):
         return self._path_original

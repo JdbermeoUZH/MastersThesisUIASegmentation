@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Any
 
 import torch
 import torch.nn as nn
@@ -21,6 +21,9 @@ class NormSeg(BaseSeg):
         self._norm = norm
         self._seg = seg
 
+    def select_necessary_extra_inputs(self, extra_input_dict: dict[str, Any]) -> dict[str, Any]:
+        return {}
+    
     def _preprocess_x(
         self,
         x: torch.Tensor,
@@ -43,7 +46,7 @@ class NormSeg(BaseSeg):
     def _forward(
         self,
         x_preproc: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor, dict[str, torch.Tensor]]:
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Forward pass of the model assuming a preprocessed input.
 
@@ -67,7 +70,7 @@ class NormSeg(BaseSeg):
 
     def load_checkpoint(
         self,
-        path: Optional[str] = None,
+        path: str,
         device: Optional[torch.device] = None,
     ) -> None:
 

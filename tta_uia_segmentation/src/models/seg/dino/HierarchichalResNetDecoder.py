@@ -7,6 +7,7 @@ import torch.nn.functional as F
 
 from ..norm_seg.UNet import get_conv, DoubleConv
 from .ResNetDecoder import ResNetDecoderBlock
+from .BaseDecoder import BaseDecoder
 from tta_uia_segmentation.src.utils.utils import assert_in, default
 
 # Set up the logger
@@ -14,36 +15,34 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.WARNING)
 
 
-class HierarchichalResNetDecoder(nn.Module):
-    _N_DIM = 2
-
+class HierarchichalResNetDecoder(BaseDecoder):
     def __init__(
         self,
         embedding_dim: int,
-        hierarchy_levels: int,
-        num_channels_last_upsample: int,
         n_classes: int,
-        output_size: tuple[int, int],
+        num_channels_last_upsample: int,
+        output_size: tuple[int, ...],
+        hierarchy_level: int,
         num_channels_per_hier: Optional[list[int]] = None,
+        n_dimensions: int = 2
     ):
 
-        super(HierarchichalResNetDecoder, self).__init__()
+        super(HierarchichalResNetDecoder, self).__init__(output_size=output_size)
         self._embedding_dim = embedding_dim
-        self._hierarchy_levels = hierarchy_levels
+        self._hierarchy_level = hierarchy_level
         self._n_classes = n_classes
-        self._output_size = output_size
         self._num_channels_last_upsample = num_channels_last_upsample
         self._in_train_mode = True
 
         # If number of channels per level is provided, then check it matches the number of levels
         # :====================================================================:
         if num_channels_per_hier is not None:
-            assert len(num_channels_per_hier) == hierarchy_levels, (
+            assert len(num_channels_per_hier) == hierarchy_level, (
                 "Number of channels per level should match the number hierarchi",
             )
         else:
             num_channels_per_hier = [
-                embedding_dim / (2**hier_i) for hier_i in range(hierarchy_levels)
+                embedding_dim / (2**hier_i) for hier_i in range(hierarchy_level)
             ]
 
         self._num_channels_per_hier = num_channels_per_hier
@@ -52,7 +51,7 @@ class HierarchichalResNetDecoder(nn.Module):
         # :====================================================================:
         module_dict = {}
         num_channels_per_level = num_channels_per_hier + [num_channels_last_upsample]
-        for hier_i in range(hierarchy_levels):
+        for hier_i in range(hierarchy_level):
             hier_i_modules = {}
 
             # Append 1x1 conv layer to reduce the number of channels if needed
@@ -61,7 +60,7 @@ class HierarchichalResNetDecoder(nn.Module):
                     in_channels=embedding_dim,
                     out_channels=num_channels_per_level[hier_i],
                     kernel_size=1,
-                    n_dimensions=self._N_DIM,
+                    n_dimensions=n_dimensions,
                 )
 
             # Append ResNetDecoderBlock that
@@ -71,7 +70,7 @@ class HierarchichalResNetDecoder(nn.Module):
                 in_channels=num_channels_per_level[hier_i],
                 out_channels=num_channels_per_level[hier_i + 1],
                 scale_factor=2,
-                n_dimensions=self._N_DIM,
+                n_dimensions=n_dimensions,
             )
 
             module_dict[f"hier_{hier_i}"] = nn.ModuleDict(hier_i_modules)
@@ -84,14 +83,14 @@ class HierarchichalResNetDecoder(nn.Module):
             in_channels=num_channels_last_upsample,
             out_channels=num_channels_last_upsample / 2,
             scale_factor=None, # Determined dinamically based on the output size
-            n_dimensions=self._N_DIM,
+            n_dimensions=n_dimensions,
         )
 
         self.output_conv = get_conv(
             in_channels=num_channels_last_upsample / 2,
             out_channels=n_classes,
             kernel_size=1,
-            n_dimensions=self._N_DIM
+            n_dimensions=n_dimensions
         )
         self.softmax = nn.Softmax(dim=1)
 
@@ -99,7 +98,9 @@ class HierarchichalResNetDecoder(nn.Module):
 
         # Pass trough decoder blocks for each hierarchy level
         # :====================================================================:
-        for hier_i, hier_block in enumerate(self._hierarchy_levels):
+        for hier_i in range(self._hierarchy_level):
+            hier_block = self.blocks[f"hier_{hier_i}"]
+
             if "conv1" in hier_block:
                 # Reduce the number of channels if needed
                 x_i = hier_block["conv1"](x[hier_i])
@@ -123,14 +124,6 @@ class HierarchichalResNetDecoder(nn.Module):
         x = self.output_conv(x)
 
         return self.softmax(x), x
-
-    @property
-    def output_size(self) -> tuple[int, int]:
-        return self._output_size
-
-    @output_size.setter
-    def output_size(self, output_size: tuple[int, int]) -> None:
-        self._output_size = output_size
 
     @property
     def in_train_mode(self) -> bool:

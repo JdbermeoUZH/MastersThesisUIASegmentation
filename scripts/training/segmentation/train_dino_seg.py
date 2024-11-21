@@ -29,7 +29,7 @@ from tta_uia_segmentation.src.utils.utils import (
 from tta_uia_segmentation.src.utils.logging import setup_wandb
 
 
-train_type = "segmentation_dino"
+TRAIN_TYPE = "segmentation_dino"
 
 
 def preprocess_cmd_args() -> argparse.Namespace:
@@ -143,7 +143,6 @@ def preprocess_cmd_args() -> argparse.Namespace:
         type=str,
         help="Device to use for training. Default cuda",
     )
-
 
     # Loss function
     parser.add_argument(
@@ -266,14 +265,14 @@ def get_configuration_arguments() -> tuple[dict, dict, dict]:
     train_config = load_config(args.train_config_file)
     train_config = rewrite_config_arguments(train_config, args, "train")
 
-    train_config[train_type] = rewrite_config_arguments(
-        train_config[train_type], args, f"train, {train_type}"
+    train_config[TRAIN_TYPE] = rewrite_config_arguments(
+        train_config[TRAIN_TYPE], args, f"train, {TRAIN_TYPE}"
     )
 
-    train_config[train_type]["augmentation"] = rewrite_config_arguments(
-        train_config[train_type]["augmentation"],
+    train_config[TRAIN_TYPE]["augmentation"] = rewrite_config_arguments(
+        train_config[TRAIN_TYPE]["augmentation"],
         args,
-        f"train, {train_type}, augmentation",
+        f"train, {TRAIN_TYPE}, augmentation",
     )
 
     return dataset_config, model_config, train_config
@@ -292,8 +291,8 @@ if __name__ == "__main__":
     seed = train_config["seed"]
     device = train_config["device"]
     wandb_log = train_config["wandb_log"]
-    logdir = train_config[train_type]["logdir"]
-    wandb_project = train_config[train_type]["wandb_project"]
+    logdir = train_config[TRAIN_TYPE]["logdir"]
+    wandb_project = train_config[TRAIN_TYPE]["wandb_project"]
 
     # Write or load parameters to/from logdir, used if a run is resumed.
     # :=========================================================================:
@@ -321,25 +320,37 @@ if __name__ == "__main__":
     print("Defining dataset")
     seed_everything(seed)
     device = define_device(device)
+
+    splits = ["train", "val"]
+
+    dataset_type = train_config["dataset_type"]
     dataset_name = train_config["dataset"]
     n_classes = dataset_config[dataset_name]["n_classes"]
-    batch_size = train_config[train_type]["batch_size"]
-    num_workers = train_config[train_type]["num_workers"]
+    batch_size = train_config[TRAIN_TYPE]["batch_size"]
+    num_workers = train_config[TRAIN_TYPE]["num_workers"]
 
-    # Dataset definition
-    train_dataset, val_dataset = get_datasets(
+    dataset_kwargs = dict(
         dataset_name=dataset_name,
-        paths=dataset_config[dataset_name]["paths_processed"],
+        paths_preprocessed=dataset_config[dataset_name]["paths_processed"],
         paths_original=dataset_config[dataset_name]["paths_original"],
-        splits=["train", "val"],
-        image_size=train_config[train_type]["image_size"],
+        splits=splits,
         resolution_proc=dataset_config[dataset_name]["resolution_proc"],
-        dim_proc=dataset_config[dataset_name]["dim"],
         n_classes=n_classes,
-        aug_params=train_config[train_type]["augmentation"],
-        deformation=None,
+        aug_params=train_config[TRAIN_TYPE]["augmentation"],
         load_original=False,
     )
+
+    if dataset_type == "DinoFeatures":
+        dataset_kwargs["paths_preprocessed_dino"] = dataset_config[dataset_name][
+            "paths_processed_dino"
+        ]
+        dataset_kwargs["hierarchy_level"] = train_config[TRAIN_TYPE]["hierarchy_level"]
+
+    if dataset_type == "WithDeformations":
+        dataset_kwargs["deformation_params"] = train_config[TRAIN_TYPE]["deformation_params"]
+
+    # Dataset definition
+    train_dataset, val_dataset = get_datasets(**dataset_kwargs)
 
     train_dataloader = DataLoader(
         dataset=train_dataset,
@@ -361,7 +372,7 @@ if __name__ == "__main__":
     # Define the 2D segmentation model
     # :=========================================================================:
     dino_seg = define_and_possibly_load_dino_seg(
-        train_dino_cfg=train_config[train_type],
+        train_dino_cfg=train_config[TRAIN_TYPE],
         n_classes=n_classes,
         cpt_fp=cpt_fp,
         device=device,
@@ -372,18 +383,18 @@ if __name__ == "__main__":
     print("Defining trainer: training loop, optimizer and loss")
 
     dice_loss = DiceLoss(
-        smooth=train_config[train_type]["smooth"],
-        epsilon=train_config[train_type]["epsilon"],
-        debug_mode=train_config[train_type]["debug_mode"],
-        fg_only=train_config[train_type]["fg_only"],
+        smooth=train_config[TRAIN_TYPE]["smooth"],
+        epsilon=train_config[TRAIN_TYPE]["epsilon"],
+        debug_mode=train_config[TRAIN_TYPE]["debug_mode"],
+        fg_only=train_config[TRAIN_TYPE]["fg_only"],
     )
 
     trainer = SegTrainer(
         seg=dino_seg,
-        learning_rate=train_config[train_type]["learning_rate"],
+        learning_rate=train_config[TRAIN_TYPE]["learning_rate"],
         loss_func=dice_loss,
         is_resumed=is_resumed,
-        optimizer_type=train_config[train_type]["optimizer_type"],
+        optimizer_type=train_config[TRAIN_TYPE]["optimizer_type"],
         checkpoint_best=train_config["checkpoint_best"],
         checkpoint_last=train_config["checkpoint_last"],
         device=device,
@@ -401,14 +412,14 @@ if __name__ == "__main__":
 
     # Start training
     # :=========================================================================:
-    validate_every = train_config[train_type]["validate_every"]
+    validate_every = train_config[TRAIN_TYPE]["validate_every"]
 
     trainer.train(
         train_dataloader=train_dataloader,
         val_dataloader=val_dataloader,
-        epochs=train_config[train_type]["epochs"],
+        epochs=train_config[TRAIN_TYPE]["epochs"],
         validate_every=validate_every,
-        warmup_steps=train_config[train_type]["warmup_steps"],
+        warmup_steps=train_config[TRAIN_TYPE]["warmup_steps"],
     )
 
     write_to_csv(
@@ -417,7 +428,7 @@ if __name__ == "__main__":
             [
                 trainer.training_losses,
                 np.repeat(trainer.validation_losses, validate_every),
-                np.repeat(trainer.validation_scores, validate_every)
+                np.repeat(trainer.validation_scores, validate_every),
             ],
             1,
         ),

@@ -131,8 +131,12 @@ class DatasetInMemory(data.Dataset):
             self.labels = data["labels"][:].astype(np.uint8)
 
             if self.image_size is not None:
-                self.images = self.images.reshape(-1, *self.image_size)  # NDHW or (N*D)CHW
-                self.labels = self.labels.reshape(-1, *self.image_size)  # NDHW or (N*D)CHW
+                self.images = self.images.reshape(
+                    -1, *self.image_size
+                )  # NDHW or (N*D)CHW
+                self.labels = self.labels.reshape(
+                    -1, *self.image_size
+                )  # NDHW or (N*D)CHW
 
             # Pixel sizes of original images.
             self.pix_size_original = np.stack([data["px"], data["py"], data["pz"]])
@@ -449,10 +453,7 @@ class DatasetInMemory(data.Dataset):
                 labels.float(), index, match_size=False, only_inplane_resample=True
             )
 
-        return (
-            images,
-            labels
-        )
+        return (images, labels)
 
     def get_original_pixel_size(self, index, orientation: str = "DHW"):
         """

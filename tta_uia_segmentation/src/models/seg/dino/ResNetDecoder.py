@@ -1,3 +1,4 @@
+import math
 import logging
 from typing import Optional
 
@@ -5,6 +6,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from .BaseDecoder import BaseDecoder
 from ..norm_seg.UNet import get_conv, DoubleConv
 from tta_uia_segmentation.src.utils.utils import assert_in, default
 
@@ -38,10 +40,6 @@ class ResNetDecoderBlock(nn.Module):
             in_channels, out_channels, n_dimensions=n_dimensions
         )
 
-        self.residual_conv = get_conv(
-            in_channels, out_channels, 1, n_dimensions=n_dimensions
-        )
-
     def forward(self, x, scale_factor=None, size=None):
         size = default(size, None)
         scale_factor = default(scale_factor, self.scale_factor)
@@ -57,42 +55,56 @@ class ResNetDecoderBlock(nn.Module):
             align_corners=True,
         )
 
-        x = self.double_conv(x) + self.residual_conv(x)
+        x = torch.concat([x, self.double_conv(x)], dim=1)
 
         return x
 
 
-class ResNetDecoder(nn.Module):
+class ResNetDecoder(BaseDecoder):
     def __init__(
         self,
+        embedding_dim: int,
         n_classes: int,
-        output_size: tuple[int, int],
-        channels=[128, 64, 32, 16],
-        n_dimensions=2,
+        num_channels: list[int],
+        num_channels_last_upsample: int,
+        output_size: tuple[int, ...],
+        n_dimensions: int = 2,
     ):
 
-        super().__init__()
+        super(ResNetDecoder, self).__init__(output_size=output_size)
 
-        self.blocks = nn.ModuleList(
-            [
+        self._output_size = output_size
+        self._n_classes = n_classes
+        self._num_channels_last_upsample = num_channels_last_upsample
+        self._n_dimensions = n_dimensions
+        self._in_train_mode = True
+
+        # If number of channels per level is provided, then check it matches the number of levels
+        # :====================================================================:
+        num_channels = [embedding_dim] + num_channels + [num_channels_last_upsample]
+        block_list = []
+        prev_level_channels_in = 0
+        for channel_in, channel_out in zip(num_channels[:-1], num_channels[1:]):
+            channel_in = channel_in + prev_level_channels_in
+            block_list.append(
                 ResNetDecoderBlock(
-                    channels[i], channels[i + 1], 2, n_dimensions=n_dimensions
+                    channel_in, channel_out, scale_factor=2, n_dimensions=n_dimensions
                 )
-                for i in range(len(channels) - 2)
-            ]
-        )
-
+            )
+            prev_level_channels_in = channel_in
+        
         self.last_block = ResNetDecoderBlock(
-            channels[-2], channels[-1], None, n_dimensions=n_dimensions
+            num_channels_last_upsample + prev_level_channels_in,
+            num_channels_last_upsample,
+            scale_factor=None,
+            n_dimensions=n_dimensions
         )
 
         self.output_conv = get_conv(
-            channels[-1], n_classes, 1, n_dimensions=n_dimensions
+            num_channels_last_upsample, n_classes, 1, n_dimensions=n_dimensions
         )
-        self.softmax = nn.Softmax(dim=1)
 
-        self._output_size = output_size
-        self._in_train_mode = True
+        self.softmax = nn.Softmax(dim=1)
 
     def forward(self, x) -> tuple[torch.Tensor, torch.Tensor]:
         # Pass trough decoder blocks
@@ -100,7 +112,7 @@ class ResNetDecoder(nn.Module):
             x = block(x)
 
         # Upsample to original size
-        scale_factor = torch.tensor(self._output_size) / torch.tensor(x.shape[-2:])
+        scale_factor = torch.tensor(self._output_size) / torch.tensor(x.shape[-self._n_dimensions:])
         
         if (scale_factor > 2.0).any():
             msg = (
@@ -118,14 +130,6 @@ class ResNetDecoder(nn.Module):
         x = self.output_conv(x)
 
         return self.softmax(x), x
-
-    @property
-    def output_size(self) -> tuple[int, int]:
-        return self._output_size
-
-    @output_size.setter
-    def output_size(self, output_size: tuple[int, int]) -> None:
-        self._output_size = output_size
 
     @property
     def in_train_mode(self) -> bool:

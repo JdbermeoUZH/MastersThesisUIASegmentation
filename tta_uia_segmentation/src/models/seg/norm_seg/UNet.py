@@ -207,7 +207,7 @@ if __name__ == "__main__":
         channels=[16, 32, 64],
         channels_bottleneck=128,
         skips=[True, True, True],
-        two_dim=False,
+        n_dimensions=3,
     )
     # print(net)
     x = torch.rand((8, 1, 40, 128, 128))
@@ -220,7 +220,7 @@ if __name__ == "__main__":
         channels=[16, 32, 64],
         channels_bottleneck=128,
         skips=[True, True, True],
-        n_dimensions=3,
+        n_dimensions=2,
     )
     # print(net)
     x = torch.rand((8, 1, 512, 512))

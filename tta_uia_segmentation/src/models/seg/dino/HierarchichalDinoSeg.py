@@ -1,19 +1,19 @@
-from typing import Optional
+from typing import Optional, List
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
 from .DinoV2FeatureExtractor import DinoV2FeatureExtractor
-from .HierarchichalResNetDecoder import HierarchichalResNetDecoder
 from .DinoSeg import DinoSeg
+from .BaseDecoder import BaseDecoder
 from tta_uia_segmentation.src.utils.io import save_checkpoint
 
 
 class HierarchichalDinoSeg(DinoSeg):
     def __init__(
         self,
-        decoder: HierarchichalResNetDecoder,
+        decoder: BaseDecoder,
         hierarchy_levels: int,
         dino_fe: Optional[DinoV2FeatureExtractor] = None,
         precalculated_fts: bool = False,
@@ -24,19 +24,20 @@ class HierarchichalDinoSeg(DinoSeg):
             decoder=decoder,
             dino_fe=dino_fe,
             precalculated_fts=precalculated_fts,
+            hierarchy_level=0
         )
         
     @torch.inference_mode()
-    def _preprocess_x(
+    def _preprocess_x( # type: ignore
         self,
-        x: torch.Tensor,
+        x: torch.Tensor | List[torch.Tensor],
         mask: Optional[torch.Tensor] = None,
         pre: bool = False,
-        hierarchy: int = 0,
-    ) -> tuple[list[torch.Tensor], dict[str, torch.Tensor]]:
+    ) -> tuple[List[torch.Tensor], dict[str, torch.Tensor]]:
 
         # Calculate dino features if necessary
         if not self.precalculated_fts:
+            assert isinstance(x, torch.Tensor), "If calculating features, x must be a tensor of image(s)"
             # Convert grayscale to RGB, required by DINO
             if x.shape[1] == 1:
                 x = x.repeat(1, 3, 1, 1)
@@ -52,8 +53,9 @@ class HierarchichalDinoSeg(DinoSeg):
                 x_preproc_list.append(x_preproc["patch"].permute(0, 3, 1, 2))
 
         else:
+            assert isinstance(x, list), "If features are precalculated, x must be a list of tensors"
             x_preproc_list = x
         
-        intermediate_outputs = {f"Dino Features (hier {i})": x_preproc_list[i] for i in range(self._hierarchy_levels)}
+        intermediate_outputs = {f"Dino Features (hier {i})": dino_fe for i, dino_fe in enumerate(x_preproc_list)}
 
-        return x, intermediate_outputs
+        return x_preproc_list, intermediate_outputs

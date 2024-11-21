@@ -1,5 +1,5 @@
 if [ "$CLUSTER" = "bmic" ]; then
-    source /scratch_net/biwidl319/jbermeo/conda/conda/etc/profile.d/conda.sh
+    source $CONDA_PATH
     conda activate $ENV_DIR
     echo "Python environment activated"
 

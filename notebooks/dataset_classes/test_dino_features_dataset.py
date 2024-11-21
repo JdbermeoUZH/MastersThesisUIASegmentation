@@ -25,7 +25,7 @@ dino_model = 'base'
 dataset_cfg = load_config('../../config/datasets.yaml')
 dataset_cfg = dataset_cfg[dataset_name]
 
-dataset_cfg['paths_preprocessed_dino'] = {'train': "/scratch/jbermeo/data/wmh/umc/data_umc_2d_size_256_256_depth_48_res_1_1_3_from_0_to_10_dino_base_hier_2.hdf5"}
+#dataset_cfg['paths_preprocessed_dino'] = {'train': "/scratch/jbermeo/data/wmh/umc/data_umc_2d_size_256_256_depth_48_res_1_1_3_from_0_to_10_dino_base_hier_2.hdf5"}
 
 
 (dataset,) = get_datasets(
@@ -33,56 +33,35 @@ dataset_cfg['paths_preprocessed_dino'] = {'train': "/scratch/jbermeo/data/wmh/um
     splits          = [split],
     paths_preprocessed = dataset_cfg['paths_preprocessed'],
     paths_original  = dataset_cfg['paths_original'],
-    paths_preprocessed_dino = dataset_cfg['paths_preprocessed_dino']['dino_model'],
+    paths_preprocessed_dino = dataset_cfg['paths_preprocessed_dino'][dino_model],
     hierarchy_level = 2,
     resolution_proc = dataset_cfg['resolution_proc'],
     dim_proc        = dataset_cfg['dim'],
     n_classes       = dataset_cfg['n_classes'],
     )
 
-img, seg, *_ = dataset[2]
+img, seg, _ = dataset[2]
+print("TEST RETRIEVING SINGLE ITEM")
 
-print(f"Image shape: {img.shape}")
+print(f"Image features: {len(img)}")
+print(f"Image features shapes: {[f.shape for f in img]}")
 print(f"Segmentation shape: {seg.shape}")
 
 
-print('Test for different height and rescale factors')
+# print("TEST Using with a DataLoader")
 
+# from torch.utils.data import DataLoader
 
-# dataset.orientation = 'width' #WDH
-# #dataset.rescale_factor = [0.5, 0.5, 1.0]
-# img, seg, *_ = dataset[64]
+# dl = DataLoader(dataset, batch_size=4, shuffle=True, num_workers=1)
 
-# print(f"Image shape: {img.shape}")
-# print(f"Segmentation shape: {seg.shape}")
+# dataset_size = len(dataset)
 
+# num_imgs = 0
+# for img, seg, *_ in dl:
+#     num_imgs += img[0].shape[0]
 
-# dataset.orientation = 'depth' # HWD
-# #dataset.rescale_factor = [0.5, 0.5, 1.0]
-# img, seg, *_ = dataset[1]
+# print(f"Number of images in DataLoader: {num_imgs}")
+# print(f"Dataset size: {dataset_size}")
+# assert num_imgs == dataset_size, "Number of images in DataLoader is not the same as the dataset size"
 
-# print(f"Image shape: {img.shape}")
-# print(f"Segmentation shape: {seg.shape}")
-
-# # plt.imshow(img.squeeze(), cmap='gray')
-# # plt.show()
-
-# plt.imshow(onehot_to_class(seg).squeeze(), vmin=0, vmax=dataset_cfg['n_classes'] -1 , cmap="tab20", interpolation="none")
-# plt.show()
-
-dataset.orientation = 'depth' 
-img, seg, *_ = dataset.get_original_image(
-    index=128,
-    output_format='CHW'
-)
-print(f"Image shape: {img.shape}")
-print(f"Segmentation shape: {seg.shape}")
-
-dataset.orientation = 'depth' 
-img, seg, *_ = dataset.get_original_image(
-    index=128,
-    output_format='NCHW'
-)
-print(f"Image shape: {img.shape}")
-print(f"Segmentation shape: {seg.shape}")
-
+# print('Test for different height and rescale factors')
