@@ -21,8 +21,10 @@ model_type = "dino"  # 'dino' or 'norm_seg'
 
 seg_models_path = {
     "umc": (
-        "$RESULTS_DIR/wmh/segmentation/umc/dino/large/dice_loss_smoothing_den_1em10_opt_param_kerem_bs_16_grad_acc_2_lr_0.001",
-        "$RESULTS_DIR/wmh/segmentation/umc/dino/large/dice_loss_smoothing_den_1em10_opt_param_kerem_bs_16_grad_acc_2_lr_0.0001",
+        "$RESULTS_DIR/wmh/segmentation/umc/dino/base/bs_32_lr_1em4_grad_clip_1.0_hier_1",
+        "$RESULTS_DIR/wmh/segmentation/umc/dino/base/bs_32_lr_1em4_grad_clip_1.0_hier_0",
+        "$RESULTS_DIR/wmh/segmentation/umc/dino/base/hierarchichal_decoder/bs_32_lr_1em4_grad_clip_1.0_hier_1",
+        "$RESULTS_DIR/wmh/segmentation/umc/dino/base/hierarchichal_decoder/bs_32_lr_1em4_grad_clip_1.0_hier_2"
     ),
     "nuhs": (
         "$RESULTS_DIR/wmh/segmentation/nuhs/dino/large/dice_loss_smoothing_den_1em10_opt_param_kerem_bs_16",
@@ -71,7 +73,8 @@ for source_dataset, seg_model_paths in seg_models_path.items():
 
     for seg_model_path in seg_model_paths:
         # use the last to elements in the path as seg_model_exp
-        seg_model_exp = os.path.join(*seg_model_path.split(os.path.sep)[-2:])
+        tree_level = seg_model_path.split(os.path.sep).index("dino") + 1 
+        seg_model_exp = os.path.join(*seg_model_path.split(os.path.sep)[tree_level:])
 
         for target_dataset in target_datasets:
             log_dir = log_dir_base_path.format(

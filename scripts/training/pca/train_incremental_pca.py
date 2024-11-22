@@ -4,7 +4,7 @@ import argparse
 
 import wandb
 import numpy as np
-from torch import Tensor
+import torch
 from tqdm import tqdm
 import joblib
 from torch.utils.data import DataLoader
@@ -33,7 +33,7 @@ from tta_uia_segmentation.src.utils.utils import (
 from tta_uia_segmentation.src.utils.logging import setup_wandb
 
 
-TRAIN_TYPE = "incremental_pca"
+TRAIN_MODE = "incremental_pca"
 
 
 def preprocess_cmd_args() -> argparse.Namespace:
@@ -68,7 +68,11 @@ def preprocess_cmd_args() -> argparse.Namespace:
     parser.add_argument(
         "--wandb_log", type=parse_bool, help="Log training to wandb. Default: False."
     )
-    
+    parser.add_argument(
+        "--wandb_run_name",
+        type=str,
+        help="Name of wandb run. Default: None",
+    )
     # Model parameters
     # :=========================================================================:
     parser.add_argument(
@@ -101,6 +105,9 @@ def preprocess_cmd_args() -> argparse.Namespace:
         type=int,
         help="Check loss every n iterations. Default: 10",
     )
+    parser.add_argument(
+        "--batch_size", type=int, help="Batch size for training. Default: 10"
+    )
     # Dataset and its transformations to use for training
     # :=========================================================================:
     parser.add_argument(
@@ -126,14 +133,10 @@ def get_configuration_arguments() -> tuple[dict, dict]:
     train_config = load_config(args.train_config_file)
     train_config = rewrite_config_arguments(train_config, args, "train")
 
-    train_config[TRAIN_TYPE] = rewrite_config_arguments(
-        train_config[TRAIN_TYPE], args, f"train, {TRAIN_TYPE}"
-    )
+    train_config['train_mode'] = TRAIN_MODE
 
-    train_config[TRAIN_TYPE]["augmentation"] = rewrite_config_arguments(
-        train_config[TRAIN_TYPE]["augmentation"],
-        args,
-        f"train, {TRAIN_TYPE}, augmentation",
+    train_config[TRAIN_MODE] = rewrite_config_arguments(
+        train_config[TRAIN_MODE], args, f"train, {TRAIN_MODE}"
     )
 
     return dataset_config, train_config
@@ -142,7 +145,6 @@ def get_configuration_arguments() -> tuple[dict, dict]:
 def measure_reconstruction_error(x: np.ndarray, ipca: IncrementalPCA, scaler: StandardScaler) -> float:
     x_normalized = scaler.transform(x)
     x_reconstructed = ipca.inverse_transform(ipca.transform(x_normalized))
-    breakpoint()
     return float(mean_squared_error(x_normalized, x_reconstructed))
 
 
@@ -155,8 +157,12 @@ def measure_error_on_dataloader(dataloader: DataLoader, split: str, ipca: Increm
     )
     
     for x, *_ in pbar:
-        x_batch = x.view(-1, x.shape[0])
-        n_samples += x.shape[0]
+        # Flatten the images from NCHW to (N**H*W)C
+        if isinstance(x, torch.Tensor):
+            x_batch = x.view(-1, x.shape[0])
+        elif isinstance(x, list):
+            x_batch = torch.cat([x_i.view(-1, x_i.shape[0]) for x_i in x], dim=0)
+        n_samples += x_batch.shape[0]
         x_batch = torch_to_numpy(x_batch)
 
         error += measure_reconstruction_error(x_batch, ipca, scaler)
@@ -178,8 +184,9 @@ if __name__ == "__main__":
     seed = train_config["seed"]
     device = train_config["device"]
     wandb_log = train_config["wandb_log"]
-    logdir = train_config[TRAIN_TYPE]["logdir"]
-    wandb_project = train_config[TRAIN_TYPE]["wandb_project"]
+    wandb_run_name = train_config["wandb_run_name"]
+    logdir = train_config[TRAIN_MODE]["logdir"]
+    wandb_project = train_config[TRAIN_MODE]["wandb_project"]
 
     # Write or load parameters to/from logdir, used if a run is resumed.
     # :=========================================================================:
@@ -196,11 +203,18 @@ if __name__ == "__main__":
         dump_config(os.path.join(logdir, "params.yaml"), params)
         cpt_fp = None
 
-    print_config(params, keys=["training", "model"])
+    print_config(params, keys=["training"])
 
     # Setup wandb logging
     # :=========================================================================:
-    wandb_dir = setup_wandb(params, logdir, wandb_project) if wandb_log else None
+    if wandb_log:
+        wandb_dir = setup_wandb(
+            params,
+            logdir,
+            wandb_project,
+            run_name=wandb_run_name)
+    else:
+        wandb_dir = None
 
     # Define the dataset that is to be used for training
     # :=========================================================================:
@@ -212,10 +226,9 @@ if __name__ == "__main__":
 
     dataset_name = train_config["dataset"]
     n_classes = dataset_config[dataset_name]["n_classes"]
-    batch_size = train_config[TRAIN_TYPE]["batch_size"]
-    num_workers = train_config[TRAIN_TYPE]["num_workers"]
+
     dataset_type = (
-        "DinoFeatures" if train_config[TRAIN_TYPE]["precalculated_fts"] 
+        "DinoFeatures" if train_config[TRAIN_MODE]["precalculated_fts"] 
         else "Normal"
     )
 
@@ -226,7 +239,7 @@ if __name__ == "__main__":
         resolution_proc=dataset_config[dataset_name]["resolution_proc"],
         n_classes=n_classes,
         dim_proc=dataset_config[dataset_name]["dim"],
-        aug_params=train_config[TRAIN_TYPE]["augmentation"],
+        aug_params=train_config[TRAIN_MODE]["augmentation"],
         load_original=False,
     )
 
@@ -234,8 +247,27 @@ if __name__ == "__main__":
         dataset_kwargs["paths_preprocessed_dino"] = dataset_config[dataset_name][
             "paths_preprocessed_dino"
         ]
-        dataset_kwargs["hierarchy_level"] = train_config[TRAIN_TYPE]["hierarchy_level"]
-        dataset_kwargs["dino_model"] = train_config[TRAIN_TYPE]["dino_model"]
+        dataset_kwargs["hierarchy_level"] = train_config[TRAIN_MODE]["hierarchy_level"]
+        dataset_kwargs["dino_model"] = train_config[TRAIN_MODE]["dino_model"]
+        del dataset_kwargs["aug_params"]
+
+    dataset_kwargs = dict(
+        dataset_name=dataset_name,
+        paths_preprocessed=dataset_config[dataset_name]["paths_preprocessed"],
+        paths_original=dataset_config[dataset_name]["paths_original"],
+        resolution_proc=dataset_config[dataset_name]["resolution_proc"],
+        n_classes=n_classes,
+        dim_proc=dataset_config[dataset_name]["dim"],
+        aug_params=train_config[TRAIN_MODE]["augmentation"],
+        load_original=False,
+    )
+
+    if dataset_type == "DinoFeatures":
+        dataset_kwargs["paths_preprocessed_dino"] = dataset_config[dataset_name][
+            "paths_preprocessed_dino"
+        ]
+        dataset_kwargs["hierarchy_level"] = train_config[TRAIN_MODE]["hierarchy_level"]
+        dataset_kwargs["dino_model"] = train_config[TRAIN_MODE]["dino_model"]
         del dataset_kwargs["aug_params"]
         
     # Dataset definition
@@ -244,6 +276,9 @@ if __name__ == "__main__":
     )
 
     # Define dataloaders
+    batch_size = train_config[TRAIN_MODE]["batch_size"]
+    num_workers = train_config[TRAIN_MODE]["num_workers"]
+    
     train_dataloader = DataLoader(
         dataset=train_dataset,
         batch_size=batch_size,
@@ -260,9 +295,9 @@ if __name__ == "__main__":
     )
 
     # Initialize IncrementalPCA and scaler
-    pca_components = train_config[TRAIN_TYPE]["num_pca_components"]
-    epochs = train_config["epochs"]
-    check_loss_every = train_config[TRAIN_TYPE]["check_loss_every"]
+    pca_components = train_config[TRAIN_MODE]["pca_components"]
+    epochs = train_config[TRAIN_MODE]["epochs"]
+    check_loss_every = train_config[TRAIN_MODE]["check_loss_every"]
 
     scaler = StandardScaler()
     ipca = IncrementalPCA(n_components=pca_components)
@@ -270,12 +305,16 @@ if __name__ == "__main__":
     # Define the incremental PCA model
     # :=========================================================================:
     best_val_error = np.inf
-    for epoch in epochs:
+    for epoch in range(epochs):
         print(f"Epoch {epoch}")
         n_samples = 0
         for step_i, (x, *_) in enumerate(tqdm(train_dataloader)):
             # Flatten the images from NCHW to (N**H*W)C
-            x_batch = x.view(-1, x.shape[0])
+            if isinstance(x, torch.Tensor):
+                x_batch = x.view(-1, x.shape[0])
+            elif isinstance(x, list):
+                x_batch = torch.cat([x_i.view(-1, x_i.shape[0]) for x_i in x], dim=0)
+            
             n_samples += x_batch.shape[0]
 
             # Convert to numpy array

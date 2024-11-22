@@ -39,7 +39,10 @@ class DinoSeg(BaseSeg):
         self._precalculated_fts = precalculated_fts
 
     def forward(
-        self, x: torch.Tensor | List[torch.Tensor], output_size: Optional[tuple[int, ...]] = None, **preprocess_kwargs
+        self,
+        x: torch.Tensor | List[torch.Tensor],
+        output_size: Optional[tuple[int, ...]] = None,
+        **preprocess_kwargs
     ) -> tuple[torch.Tensor, torch.Tensor, dict[str, torch.Tensor]]:
         """
         Forward pass of the model
@@ -55,36 +58,42 @@ class DinoSeg(BaseSeg):
         intermediate_outputs : dict[str, torch.Tensor]
             Dictionary containing intermediate outputs of preprocessing.
         """
-    
+
         if not self.precalculated_fts:
-            assert isinstance(x, torch.Tensor), "If calculating features, x must be a tensor of image(s)"
+            assert isinstance(
+                x, torch.Tensor
+            ), "If calculating features, x must be a tensor of image(s)"
             # Make output size of the decoder match the input's size if necessary
             output_size = tuple(x.shape[-2:])
-        else:       
-            assert output_size is not None, (
-                "Output size is required when features are precalculated"
-            )
+        else:
+            assert (
+                output_size is not None
+            ), "Output size is required when features are precalculated"
 
         if self._decoder.output_size != output_size:
-                self._decoder.output_size = output_size
+            self._decoder.output_size = output_size
 
         return super().forward(x, **preprocess_kwargs)
 
     def select_necessary_extra_inputs(self, extra_input_dict):
-        assert 'output_size' in extra_input_dict, "Output size is required"
-        assert isinstance(extra_input_dict['output_size'], tuple | list), "Output size must be a tuple"
-        
-        # Check all elements the batch have the same output size
-        h = extra_input_dict['output_size'][0].unique()
-        w = extra_input_dict['output_size'][1].unique()
+        assert "output_size" in extra_input_dict, "Output size is required"
+        assert isinstance(
+            extra_input_dict["output_size"], tuple | list
+        ), "Output size must be a tuple"
 
-        assert len(h) == 1 and len(w) == 1, "All images in the batch must have the same output size"
+        # Check all elements the batch have the same output size
+        h = extra_input_dict["output_size"][0].unique()
+        w = extra_input_dict["output_size"][1].unique()
+
+        assert (
+            len(h) == 1 and len(w) == 1
+        ), "All images in the batch must have the same output size"
 
         output_size = (h[0].item(), w[0].item())
 
-        return {'output_size': output_size}
-    
-    def _forward( # type: ignore
+        return {"output_size": output_size}
+
+    def _forward(  # type: ignore
         self,
         x_preproc: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
@@ -113,7 +122,9 @@ class DinoSeg(BaseSeg):
         # Calculate dino features if necessary
         if not self.precalculated_fts:
             # Convert grayscale to RGB, required by DINO
-            assert isinstance(x, torch.Tensor), "If calculating features, x must be a tensor of image(s)"
+            assert isinstance(
+                x, torch.Tensor
+            ), "If calculating features, x must be a tensor of image(s)"
 
             if x.shape[1] == 1:
                 x = x.repeat(1, 3, 1, 1)
@@ -126,7 +137,9 @@ class DinoSeg(BaseSeg):
                 0, 3, 1, 2
             )  # N x np x np x df -> N x df x np x np
         else:
-            assert isinstance(x, list), "If features are precalculated, x must be a list of tensors"
+            assert isinstance(
+                x, list
+            ), "If features are precalculated, x must be a list of tensors"
             x = x[self._hierarchy_level_dino_fe]
 
         assert isinstance(x, torch.Tensor), "x must be a tensor"

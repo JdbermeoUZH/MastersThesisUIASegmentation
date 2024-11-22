@@ -20,7 +20,7 @@ sys.path.append(
     )
 )
 
-from tta_uia_segmentation.src.dataset.dataset import get_datasets, Dataset
+from tta_uia_segmentation.src.dataset.io import get_datasets
 import tta_uia_segmentation.src.dataset.utils as du
 from tta_uia_segmentation.src.utils.io import (
     load_config,
@@ -281,6 +281,7 @@ if __name__ == "__main__":
 
     # Dataset definition
     datasets = get_datasets(
+        dataset_type='Normal',
         dataset_name=dataset_name,
         paths_preprocessed=dataset_config[dataset_name]["paths_preprocessed"],
         paths_original=dataset_config[dataset_name]["paths_original"],

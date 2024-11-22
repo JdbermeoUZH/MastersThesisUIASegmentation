@@ -9,7 +9,7 @@ import numpy as np
 sys.path.append(os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
 from tta_uia_segmentation.src.tta import NoTTASeg
-from tta_uia_segmentation.src.dataset.dataset import get_datasets
+from tta_uia_segmentation.src.dataset.io import get_datasets
 from tta_uia_segmentation.src.models.io import (
     define_and_possibly_load_norm_seg,
     define_and_possibly_load_dino_seg,
@@ -217,19 +217,14 @@ if __name__ == "__main__":
 
     params_seg = load_config(os.path.join(seg_dir, "params.yaml"))
     train_params_seg = params_seg["training"]
-    model_type = tta_config[tta_mode]["model_type"]
+    train_mode = train_params_seg["train_mode"]
 
-    if model_type == "norm_seg":
-        model_params_norm = params_seg["model"]["normalization_2D"]
-        model_params_seg = params_seg["model"]["segmentation_2D"]
-        model_params = {"norm": model_params_norm, "seg": model_params_seg}
-    elif model_type == "dino":
-        model_params = {}
-
+    model_params_seg = params_seg["model"]
+    
     params = {
         "datset": dataset_config,
-        "model": model_params,
-        "training": {"seg": train_params_seg},
+        "model": model_params_seg,
+        "training": train_params_seg,
         "tta": tta_config,
     }
 
@@ -240,6 +235,9 @@ if __name__ == "__main__":
     logdir = tta_config[tta_mode]["logdir"]
     wandb_project = tta_config[tta_mode]["wandb_project"]
 
+    seed_everything(seed)
+    device = define_device(device)
+    
     os.makedirs(logdir, exist_ok=True)
     dump_config(os.path.join(logdir, "params.yaml"), params)
     print_config(params, keys=["datset", "model", "tta"])
@@ -252,34 +250,42 @@ if __name__ == "__main__":
     # Define the dataset that is to be used for training
     # :=========================================================================:
     print("Defining dataset and its datloader that will be used for TTA")
-    seed_everything(seed)
-    device = define_device(device)
+
     dataset_name = tta_config["dataset"]
     split = tta_config["split"]
+    dataset_type = tta_config["dataset_type"]
+
     n_classes = dataset_config[dataset_name]["n_classes"]
-    mode = (
-        train_params_seg["seg_model_mode"]
-        if "seg_model_mode" in train_params_seg
-        else "2D"
-    )
-    orientation = tta_config["eval_orientation"]
-
-    # So far only depth orientation is used
-    assert_in(orientation, "orientation", ["depth", "height", "width"])
-
-    (test_dataset,) = get_datasets(
+    
+    dataset_kwargs = dict(
         dataset_name=dataset_name,
         paths_preprocessed=dataset_config[dataset_name]["paths_preprocessed"],
         paths_original=dataset_config[dataset_name]["paths_original"],
-        splits=[split],
         resolution_proc=dataset_config[dataset_name]["resolution_proc"],
-        dim_proc=dataset_config[dataset_name]["dim"],
         n_classes=n_classes,
-        mode=mode,
-        orientation=orientation,
+        dim_proc=dataset_config[dataset_name]["dim"],
         aug_params=None,
         load_original=True,
-        load_in_memory=tta_config["load_in_memory"],
+    )
+
+    if dataset_type == "Normal":
+        dataset_kwargs["mode"] = train_params_seg["seg_model_mode"] if "seg_model_mode" in train_params_seg else "2D"
+        dataset_kwargs["load_in_memory"] = tta_config["load_in_memory"]
+        dataset_kwargs['orientation'] = tta_config["eval_orientation"]
+        assert_in(dataset_kwargs['orientation'], "orientation", ["depth", "height", "width"])
+
+
+    if dataset_type == "DinoFeatures":
+        dataset_kwargs["paths_preprocessed_dino"] = dataset_config[dataset_name][
+            "paths_preprocessed_dino"
+        ]
+        dataset_kwargs["hierarchy_level"] = train_params_seg[train_mode]["hierarchy_level"]
+        dataset_kwargs["dino_model"] = train_params_seg[train_mode]["dino_model"]
+        del dataset_kwargs["aug_params"]
+
+    # So far only depth orientation is used
+    (test_dataset,) = get_datasets(
+        dataset_type=dataset_type, splits=[split], **dataset_kwargs
     )
 
     print("Datasets loaded")
@@ -291,23 +297,25 @@ if __name__ == "__main__":
     cpt_type = "checkpoint_best" if tta_config["load_best_cpt"] else "checkpoint_last"
     cpt_seg_fp = os.path.join(seg_dir, train_params_seg[cpt_type])
 
-    if model_type == "norm_seg":
+    if train_mode == "segmentation":
         seg = define_and_possibly_load_norm_seg(
             n_classes=n_classes,
-            model_params_norm=model_params_norm,
-            model_params_seg=model_params_seg,
+            model_params_norm=model_params_seg["normalization_2D"], # type: ignore 
+            model_params_seg=model_params_seg["segmentation_2D"], # type: ignore
             cpt_fp=cpt_seg_fp,
             device=device,
         )
-    elif model_type == "dino":
+    elif train_mode == "segmentation_dino":
         seg = define_and_possibly_load_dino_seg(
             train_dino_cfg=train_params_seg["segmentation_dino"],
+            decoder_cfg=model_params_seg["resnet_decoder_dino"],
             n_classes=n_classes,
             cpt_fp=cpt_seg_fp,
             device=device,
+            load_dino_fe=True
         )
     else:
-        raise ValueError(f"Unknown model type: {model_type}")
+        raise ValueError(f"Invalid segmentation model train mode: {train_mode}")
 
     # Define the TTADAE object that does the test time adapatation
     # :=========================================================================:
@@ -394,3 +402,4 @@ if __name__ == "__main__":
 
     if wandb_log:
         wandb.finish()
+

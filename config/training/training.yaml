@@ -1,3 +1,5 @@
+train_mode:       null          # Typically null, filled out with the training type (e.g. dae, segmentation, segmentation_dino, incremental_pca, ddpm_lucidrains, cddpm, lddpm) during training 
+
 wandb_log:        True
 wandb_run_name:   null
 start_new_exp:    False
@@ -152,8 +154,10 @@ incremental_pca:
   logdir:                       $RESULTS_DIR/wmh/pca/incremental_pca/dino/base/test
   wandb_project:                pca-dino-features
 
+  dino_model:                   base # small, base, large, giant
+  
   pca_components:               null # Null means all components are calculated
-  hierarchy_levels:             2    # Number of hierarchy levels (upsamples of 2^[0, ..., hierarchy_levels])
+  hierarchy_level:              2    # Number of hierarchy levels (upsamples of 2^[0, ..., hierarchy_levels])
 
   epochs:                       1
   batch_size:                   10
@@ -162,6 +166,24 @@ incremental_pca:
   aug_params:                   null
 
   check_loss_every:             10  #1000 steps in total 
+
+  precalculated_fts:            True
+  augmentation:                       # Not used if precalculated_fts is True
+    da_ratio:           0.25
+    sigma:              20
+    alpha:              1000
+    trans_min:          -10
+    trans_max:          10
+    rot_min:            -10
+    rot_max:            10
+    scale_min:          0.9
+    scale_max:          1.1
+    gamma_min:          0.5     # Default 0.5
+    gamma_max:          2.0     # Default 2.0
+    brightness_min:     0.0     # Default 0.0
+    brightness_max:     0.1     # Default 0.1
+    noise_mean:         0.0
+    noise_std:          0.0
 
 
 ddpm_lucidrains:

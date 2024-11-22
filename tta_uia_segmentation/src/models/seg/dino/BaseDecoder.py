@@ -5,7 +5,7 @@ class BaseDecoder(torch.nn.Module):
     def __init__(self, output_size: tuple[int, ...], *args, **kwargs):
         self._output_size = output_size
         super().__init__(*args, **kwargs)
-    
+
     @property
     def output_size(self) -> tuple[int, ...]:
         """
@@ -18,4 +18,4 @@ class BaseDecoder(torch.nn.Module):
         """
         Set the output size of the decoder.
         """
-        self._output_size = output_size    
+        self._output_size = output_size

@@ -94,6 +94,7 @@ def define_and_possibly_load_dino_seg(
     n_classes: int,
     device: torch.device,
     cpt_fp: Optional[str] = None,
+    load_dino_fe: bool = True,
 ) -> DinoSeg:
 
     # Define DinoFeatureExtractor
@@ -104,14 +105,16 @@ def define_and_possibly_load_dino_seg(
     decoder_type = train_dino_cfg["decoder_type"]
     hierarchy_level = train_dino_cfg["hierarchy_level"]
     output_size: tuple[int, ...] = train_dino_cfg["output_size"]
-    
+
     num_channels: Optional[list[int]] = decoder_cfg["num_channels"]
     num_channels_last_upsample = decoder_cfg["num_channels_last_upsample"]
 
-    if decoder_type == "ResNet":               
+    if decoder_type == "ResNet":
         if num_channels is None:
             num_upsampling = math.ceil(math.log2(dino_fe.patch_size)) + 1
-            num_channels = [int(dino_fe.emb_dim / (2**i)) for i in range(num_upsampling)]
+            num_channels = [
+                int(dino_fe.emb_dim / (2**i)) for i in range(num_upsampling)
+            ]
 
         decoder = ResNetDecoder(
             embedding_dim=embedding_dim,
@@ -130,7 +133,7 @@ def define_and_possibly_load_dino_seg(
             output_size=output_size,
             hierarchy_level=hierarchy_level,
             num_channels_per_hier=num_channels,
-            n_dimensions=2
+            n_dimensions=2,
         ).to(device)
 
     else:
@@ -139,30 +142,37 @@ def define_and_possibly_load_dino_seg(
     # Create wrapping DinoSeg model
     precalculated_fts = train_dino_cfg["precalculated_fts"]
 
+    if load_dino_fe:
+        extra_kwargs = dict()
+    else:
+        extra_kwargs = dict(dino_model_name=dino_fe.model_name)
+        dino_fe = None
+
     if decoder_type != "Hierarchichal":
         dino_seg = DinoSeg(
             decoder=decoder,
             dino_fe=dino_fe,
             precalculated_fts=precalculated_fts,
-            hierarchy_level=hierarchy_level
+            hierarchy_level=hierarchy_level,
+            **extra_kwargs,
         )
-    
+
     else:
         dino_seg = HierarchichalDinoSeg(
             decoder=decoder,
             dino_fe=dino_fe,
             precalculated_fts=precalculated_fts,
             hierarchy_levels=hierarchy_level,
+            **extra_kwargs,
         )
 
     if cpt_fp is not None:
         dino_seg.load_checkpoint(cpt_fp)
-    
+
     # Move to device
     dino_seg = dino_seg.to(device)
 
     return dino_seg
-    
 
 
 def define_and_possibly_load_lcddpm(

@@ -56,8 +56,6 @@ class DecoderBlock(nn.Module):
         return self.double_conv(x)
 
 
-    
-
 class HierarchichalDecoder(BaseDecoder):
     def __init__(
         self,
@@ -67,7 +65,7 @@ class HierarchichalDecoder(BaseDecoder):
         output_size: tuple[int, ...],
         hierarchy_level: int,
         num_channels_per_hier: Optional[list[int]] = None,
-        n_dimensions: int = 2
+        n_dimensions: int = 2,
     ):
 
         super(HierarchichalDecoder, self).__init__(output_size=output_size)
@@ -94,19 +92,21 @@ class HierarchichalDecoder(BaseDecoder):
         # Define modules for each hierarchy level
         # :====================================================================:
         hier_blocks = list()
-        num_channels = [self._embedding_dim] + num_channels_per_hier 
-        
-        for hier_i, (in_channels, out_channels) in enumerate(zip(num_channels[:-1], num_channels[1:])):
-        
+        num_channels = [self._embedding_dim] + num_channels_per_hier
+
+        for hier_i, (in_channels, out_channels) in enumerate(
+            zip(num_channels[:-1], num_channels[1:])
+        ):
+
             if hier_i > 0:
                 in_channels += self._embedding_dim
             hier_blocks.append(
                 DecoderBlock(
-                in_channels=in_channels,
-                out_channels=out_channels,
-                scale_factor=2,
-                n_dimensions=n_dimensions,
-            )
+                    in_channels=in_channels,
+                    out_channels=out_channels,
+                    scale_factor=2,
+                    n_dimensions=n_dimensions,
+                )
             )
 
         self.hier_blocks = nn.ModuleList(hier_blocks)
@@ -116,7 +116,7 @@ class HierarchichalDecoder(BaseDecoder):
         self.last_block = DecoderBlock(
             in_channels=num_channels_per_hier[-1],
             out_channels=num_channels_last_upsample,
-            scale_factor=None, # Determined dinamically based on the output size
+            scale_factor=None,  # Determined dinamically based on the output size
             n_dimensions=n_dimensions,
         )
 
@@ -124,7 +124,7 @@ class HierarchichalDecoder(BaseDecoder):
             in_channels=num_channels_last_upsample,
             out_channels=n_classes,
             kernel_size=1,
-            n_dimensions=n_dimensions
+            n_dimensions=n_dimensions,
         )
         self.softmax = nn.Softmax(dim=1)
 
@@ -138,13 +138,18 @@ class HierarchichalDecoder(BaseDecoder):
                 # to match the spatial dimensions of the current hierarchy level
                 x[hier_i] = F.pad(
                     x[hier_i],
-                    (0, out_hier_i.shape[-1]- x[hier_i].shape[-1], 0, out_hier_i.shape[-2] - x[hier_i].shape[-2]),
-                    mode='constant',
-                    value=0
+                    (
+                        0,
+                        out_hier_i.shape[-1] - x[hier_i].shape[-1],
+                        0,
+                        out_hier_i.shape[-2] - x[hier_i].shape[-2],
+                    ),
+                    mode="constant",
+                    value=0,
                 )
                 x_in = torch.cat([out_hier_i, x[hier_i]], dim=1)
             else:
-                x_in = x[hier_i]   
+                x_in = x[hier_i]
 
             out_hier_i = hier_block(x_in)
 

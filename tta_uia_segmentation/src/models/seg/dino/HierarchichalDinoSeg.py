@@ -17,6 +17,7 @@ class HierarchichalDinoSeg(DinoSeg):
         hierarchy_levels: int,
         dino_fe: Optional[DinoV2FeatureExtractor] = None,
         precalculated_fts: bool = False,
+        **kwargs,
     ):
         self._hierarchy_levels = hierarchy_levels
 
@@ -24,11 +25,12 @@ class HierarchichalDinoSeg(DinoSeg):
             decoder=decoder,
             dino_fe=dino_fe,
             precalculated_fts=precalculated_fts,
-            hierarchy_level=0
+            hierarchy_level=0,
+            **kwargs,
         )
-        
+
     @torch.inference_mode()
-    def _preprocess_x( # type: ignore
+    def _preprocess_x(  # type: ignore
         self,
         x: torch.Tensor | List[torch.Tensor],
         mask: Optional[torch.Tensor] = None,
@@ -37,7 +39,9 @@ class HierarchichalDinoSeg(DinoSeg):
 
         # Calculate dino features if necessary
         if not self.precalculated_fts:
-            assert isinstance(x, torch.Tensor), "If calculating features, x must be a tensor of image(s)"
+            assert isinstance(
+                x, torch.Tensor
+            ), "If calculating features, x must be a tensor of image(s)"
             # Convert grayscale to RGB, required by DINO
             if x.shape[1] == 1:
                 x = x.repeat(1, 3, 1, 1)
@@ -45,17 +49,21 @@ class HierarchichalDinoSeg(DinoSeg):
             assert (
                 self._dino_fe is not None
             ), "Dino feature extractor is required when features are not precalculated"
-            
-            
+
             x_preproc_list = []
             for hier_i in range(self._hierarchy_levels + 1):
                 x_preproc = self._dino_fe(x, mask, pre, hierarchy=hier_i)
                 x_preproc_list.append(x_preproc["patch"].permute(0, 3, 1, 2))
 
         else:
-            assert isinstance(x, list), "If features are precalculated, x must be a list of tensors"
+            assert isinstance(
+                x, list
+            ), "If features are precalculated, x must be a list of tensors"
             x_preproc_list = x
-        
-        intermediate_outputs = {f"Dino Features (hier {i})": dino_fe for i, dino_fe in enumerate(x_preproc_list)}
+
+        intermediate_outputs = {
+            f"Dino Features (hier {i})": dino_fe
+            for i, dino_fe in enumerate(x_preproc_list)
+        }
 
         return x_preproc_list, intermediate_outputs

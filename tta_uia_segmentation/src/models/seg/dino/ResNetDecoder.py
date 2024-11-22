@@ -40,7 +40,7 @@ class ResNetDecoderBlock(nn.Module):
             in_channels, out_channels, n_dimensions=n_dimensions
         )
 
-    def forward(self, x, scale_factor=None, size=None):        
+    def forward(self, x, scale_factor=None, size=None):
         if size is None:
             scale_factor = default(scale_factor, self.scale_factor)
 
@@ -94,21 +94,21 @@ class ResNetDecoder(BaseDecoder):
                 )
             )
             prev_level_channels_in = in_channels
-        
+
         self.blocks = nn.ModuleList(block_list)
-        
+
         self.last_block = ResNetDecoderBlock(
             in_channels=num_channels_last_upsample + prev_level_channels_in,
             out_channels=num_channels_last_upsample,
             scale_factor=None,
-            n_dimensions=n_dimensions
+            n_dimensions=n_dimensions,
         )
 
         self.output_conv = get_conv(
             in_channels=num_channels_last_upsample * 2 + prev_level_channels_in,
-            out_channels=n_classes, 
+            out_channels=n_classes,
             kernel_size=1,
-            n_dimensions=n_dimensions
+            n_dimensions=n_dimensions,
         )
 
         self.softmax = nn.Softmax(dim=1)
@@ -119,8 +119,10 @@ class ResNetDecoder(BaseDecoder):
             x = block(x)
 
         # Upsample to original size
-        scale_factor = torch.tensor(self._output_size) / torch.tensor(x.shape[-self._n_dimensions:])
-        
+        scale_factor = torch.tensor(self._output_size) / torch.tensor(
+            x.shape[-self._n_dimensions :]
+        )
+
         if (scale_factor > 2.0).any():
             msg = (
                 f"Upsampling is too large: {scale_factor},"
@@ -152,7 +154,7 @@ class ResNetDecoder(BaseDecoder):
         """
         self.eval()
         self._in_train_mode = False
-    
+
     def train_mode(self) -> None:
         """
         Sets the model to training mode.

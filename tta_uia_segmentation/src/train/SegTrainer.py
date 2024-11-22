@@ -52,10 +52,11 @@ class SegTrainer:
 
         if is_resumed:
             self._load_checkpoint(os.path.join(logdir, checkpoint_last))
-
         else:
             print("Starting training from scratch.")
             self._best_validation_loss = np.inf
+            self._epoch = 0
+            self._best_epoch = -1
 
         self._loss_func = loss_func
 
@@ -65,10 +66,6 @@ class SegTrainer:
         self._training_losses = []
         self._validation_losses = []
         self._validation_scores = []
-
-        self._best_validation_loss = np.inf
-        self._epoch = 0
-        self._best_epoch = -1
 
         self._logdir = logdir
         self._checkpoint_last = checkpoint_last
@@ -115,7 +112,7 @@ class SegTrainer:
 
         print("Starting training on epoch", self._epoch)
 
-        pbar = tqdm(range(self._epoch, epochs), desc="Epochs")
+        pbar = tqdm(range(epochs), desc="Epochs", initial=self._epoch)
 
         for epoch in pbar:
 

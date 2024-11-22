@@ -5,7 +5,7 @@ import os
 # :====================================:
 num_workers = 2
 hierarchy_levels = 2
-num_aug_epochs = 0
+num_aug_epochs = 2
 gpu_type = None #"geforce_gtx_titan_x"
 
 # Command format
@@ -25,19 +25,19 @@ base_command += (
 # :====================================:
 dino_model_sizes = {
     "base": {"batch_size": 32},
-    # "large": {"batch_size": 16},
- #   "giant": {"batch_size": 8},
+    #"large": {"batch_size": 16},
+    #"giant": {"batch_size": 8},
 }
 datasets = [
     # "hcp_t1",
     # "hcp_t2",
     # "abide_caltech",
     # "abide_stanford",
-    "umc",
+    #"umc",
     # "umc_w_synthseg_labels",
-    "nuhs",
+    #"nuhs",
     # "nuhs_w_synthseg_labels",
-    #"vu",
+    "vu",
     # "vu_w_synthseg_labels",
 ]
 
