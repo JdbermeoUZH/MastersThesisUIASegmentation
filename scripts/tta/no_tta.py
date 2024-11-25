@@ -108,13 +108,6 @@ def preprocess_cmd_args() -> argparse.Namespace:
     )
 
     parser.add_argument(
-        "--model_type",
-        type=str,
-        choices=["norm_seg", "dino"],
-        help="Type of model to use for segmentation. Default: norm_seg",
-    )
-
-    parser.add_argument(
         "--viz_interm_outs",
         type=str,
         nargs="*",
@@ -159,6 +152,11 @@ def preprocess_cmd_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--num_workers", type=int, help="Number of workers for dataloader. Default: 2"
+    )
+    parser.add_argument(
+        "--save_predicted_vol_as_nifti",
+        type=parse_bool,
+        help="Save predicted volume as nifti. Default True"
     )
 
     # Dataset and its transformations to use for TTA
@@ -213,14 +211,14 @@ if __name__ == "__main__":
     tta_mode = "no_tta"
     seg_dir = tta_config["seg_dir"]
     classes_of_interest = default(tta_config["classes_of_interest"], tuple())
-    classes_of_interest = tuple(classes_of_interest)
+    classes_of_interest: tuple[int | str, ...] = tuple(classes_of_interest)
 
     params_seg = load_config(os.path.join(seg_dir, "params.yaml"))
     train_params_seg = params_seg["training"]
     train_mode = train_params_seg["train_mode"]
 
     model_params_seg = params_seg["model"]
-    
+
     params = {
         "datset": dataset_config,
         "model": model_params_seg,
@@ -237,7 +235,7 @@ if __name__ == "__main__":
 
     seed_everything(seed)
     device = define_device(device)
-    
+
     os.makedirs(logdir, exist_ok=True)
     dump_config(os.path.join(logdir, "params.yaml"), params)
     print_config(params, keys=["datset", "model", "tta"])
@@ -256,7 +254,7 @@ if __name__ == "__main__":
     dataset_type = tta_config["dataset_type"]
 
     n_classes = dataset_config[dataset_name]["n_classes"]
-    
+
     dataset_kwargs = dict(
         dataset_name=dataset_name,
         paths_preprocessed=dataset_config[dataset_name]["paths_preprocessed"],
@@ -269,17 +267,24 @@ if __name__ == "__main__":
     )
 
     if dataset_type == "Normal":
-        dataset_kwargs["mode"] = train_params_seg["seg_model_mode"] if "seg_model_mode" in train_params_seg else "2D"
+        dataset_kwargs["mode"] = ( # type: ignore
+            train_params_seg["seg_model_mode"]
+            if "seg_model_mode" in train_params_seg
+            else "2D"
+        ) 
         dataset_kwargs["load_in_memory"] = tta_config["load_in_memory"]
-        dataset_kwargs['orientation'] = tta_config["eval_orientation"]
-        assert_in(dataset_kwargs['orientation'], "orientation", ["depth", "height", "width"])
-
+        dataset_kwargs["orientation"] = tta_config["eval_orientation"]
+        assert_in(
+            dataset_kwargs["orientation"], "orientation", ["depth", "height", "width"]
+        )
 
     if dataset_type == "DinoFeatures":
         dataset_kwargs["paths_preprocessed_dino"] = dataset_config[dataset_name][
             "paths_preprocessed_dino"
         ]
-        dataset_kwargs["hierarchy_level"] = train_params_seg[train_mode]["hierarchy_level"]
+        dataset_kwargs["hierarchy_level"] = train_params_seg[train_mode][
+            "hierarchy_level"
+        ]
         dataset_kwargs["dino_model"] = train_params_seg[train_mode]["dino_model"]
         del dataset_kwargs["aug_params"]
 
@@ -300,8 +305,8 @@ if __name__ == "__main__":
     if train_mode == "segmentation":
         seg = define_and_possibly_load_norm_seg(
             n_classes=n_classes,
-            model_params_norm=model_params_seg["normalization_2D"], # type: ignore 
-            model_params_seg=model_params_seg["segmentation_2D"], # type: ignore
+            model_params_norm=model_params_seg["normalization_2D"],  # type: ignore
+            model_params_seg=model_params_seg["segmentation_2D"],  # type: ignore
             cpt_fp=cpt_seg_fp,
             device=device,
         )
@@ -312,8 +317,9 @@ if __name__ == "__main__":
             n_classes=n_classes,
             cpt_fp=cpt_seg_fp,
             device=device,
-            load_dino_fe=True
+            load_dino_fe=True,
         )
+        seg.precalculated_fts = False # We will calculate them on the fly
     else:
         raise ValueError(f"Invalid segmentation model train mode: {train_mode}")
 
@@ -350,6 +356,9 @@ if __name__ == "__main__":
         else tta_config["stop"]
     )
 
+
+    save_predicted_vol_as_nifti = tta_config["save_predicted_vol_as_nifti"]
+
     print("---------------------TTA---------------------")
     print("start vol_idx:", start_idx)
     print("end vol_idx:", stop_idx)
@@ -375,6 +384,7 @@ if __name__ == "__main__":
             num_workers=num_workers,
             logdir=logdir,
             slice_vols_for_viz=slice_vols_for_viz,
+            save_predicted_vol_as_nifti=save_predicted_vol_as_nifti
         )
 
         # Get evaluation for last iteration with prediction in as Nifti volumes
@@ -402,4 +412,3 @@ if __name__ == "__main__":
 
     if wandb_log:
         wandb.finish()
-

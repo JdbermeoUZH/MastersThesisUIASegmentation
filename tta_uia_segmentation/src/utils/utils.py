@@ -14,14 +14,14 @@ import nibabel.processing as nibp
 
 def define_device(device: str, print_device: bool = False) -> torch.device:
     if device == 'cuda' and not torch.cuda.is_available():
-        device = torch.device('cpu')
+        device = torch.device('cpu') # type: ignore
         if print_device: print('No GPU available, using CPU instead')
     else:
-        device = torch.device(device)
+        device = torch.device(device) # type: ignore
 
     if print_device: print(f'Using Device {device}')
     
-    return device
+    return device # type: ignore
 
 
 def assert_in(value, name, possible_values):

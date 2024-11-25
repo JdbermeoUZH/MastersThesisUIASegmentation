@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Literal, Optional
 
 import torch
 import torch.nn as nn
@@ -40,8 +40,8 @@ def one_hot_score_to_onehot_pred(mask_pred, class_dim=1, dtype=None):
     return one_hot
 
 
-def dice_score(mask_pred, mask_gt, soft=True, reduction='mean', bg_channel=0, smooth=0, epsilon=0,
-               classes_to_exclude: torch.Tensor = None, foreground_only: bool = False, debug_mode=False):
+def dice_score(mask_pred, mask_gt, soft=True, reduction='mean', bg_channel=0, smooth=0., epsilon=0.,
+               classes_to_exclude: Optional[torch.Tensor] = None, foreground_only: bool = False, debug_mode=False):
     """ 
     Assumes that mask_pred and mask_gt are one-hot encoded.
     

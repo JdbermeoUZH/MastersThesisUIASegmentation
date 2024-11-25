@@ -53,32 +53,30 @@ dae:
     is_size_masks_fixed:  False
 
 segmentation:
-  batch_size:                   16
-  num_workers:                  3
-  image_size:                   [1, 256, 256]
-  epochs:                       150  # 150 for subcortical_structures, 1000 for WMH (nuhs, umc)
-  validate_every:               3
-  learning_rate:                0.001
   logdir:                       $RESULTS_DIR/subcortical_structures/segmentation/hcp_t1/no_bg_supp_norm_w_3x3_conv
   wandb_project:                mt-segmentation_models
   
-  with_bg_supression:           False
+  # Optimization parameters
+  learning_rate:                0.001
+  optimizer_type:               adam  # adam, adamW
+  weight_decay:                 0
+  max_grad_norm:                null 
+
+  epochs:                       150   # 150 for subcortical_structures, 1000 for WMH (nuhs, umc)
+  warmup_steps:                 0.05 # 0.05 for 5% of the total number of steps
+  batch_size:                   16
+  grad_acc_steps:               1
+  num_workers:                  1
+
+  validate_every:               3
 
   # Loss function parameters
+  optimizer_type:               adam  # adam, adamW
   epsilon:                      1e-10
-  smooth:                       1e-5
+  smooth:                       0
   debug_mode:                   False
   fg_only:                      False  
 
-  bg_suppression_opts:
-    type:               none  # possible values: none, fixed_value, random_value, None means no background suppression
-    bg_value:           -0.5
-    bg_value_min:       -0.5
-    bg_value_max:       1
-    mask_source:        thresholding  # possible values: thresholding, ground_truth
-    thresholding:       otsu  # possible values: isodata, li, mean, minimum, otsu, triangle, yen
-    hole_filling:       True
-  
   augmentation:
     da_ratio:           0.25
     sigma:              20
@@ -110,14 +108,14 @@ segmentation_dino:
   output_size:                  [256, 256]
 
   learning_rate:                0.001
-  optimizer_type:               adam  # adam, adamW
+  optimizer_type:               adamW  # adam, adamW
   weight_decay:                 1e-5
   max_grad_norm:                1.0 
 
   epochs:                       150   # 150 for subcortical_structures, 1000 for WMH (nuhs, umc)
   batch_size:                   16
   grad_acc_steps:               1
-  num_workers:                  2
+  num_workers:                  1
   validate_every:               3
   warmup_steps:                 0.05 # 0.05 for 5% of the total number of steps
   logdir:                       $RESULTS_DIR/subcortical_structures/segmentation/hcp_t1/dino_seg/debug

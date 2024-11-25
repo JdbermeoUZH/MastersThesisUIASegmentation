@@ -5,7 +5,8 @@ import os
 
 # Inference params
 # :====================================:
-batch_size = 16
+batch_size = 2
+save_predicted_vol_as_nifti = True
 
 # Datasets
 # :====================================:
@@ -17,23 +18,23 @@ classes_of_interest = [str(c) for c in classes_of_interest]
 
 # Trained Models
 # :====================================:
-model_type = "dino"  # 'dino' or 'norm_seg'
-
 seg_models_path = {
-    "umc": (
-        "$RESULTS_DIR/wmh/segmentation/umc/dino/base/bs_32_lr_1em4_grad_clip_1.0_hier_1",
-        "$RESULTS_DIR/wmh/segmentation/umc/dino/base/bs_32_lr_1em4_grad_clip_1.0_hier_0",
-        "$RESULTS_DIR/wmh/segmentation/umc/dino/base/hierarchichal_decoder/bs_32_lr_1em4_grad_clip_1.0_hier_1",
-        "$RESULTS_DIR/wmh/segmentation/umc/dino/base/hierarchichal_decoder/bs_32_lr_1em4_grad_clip_1.0_hier_2"
-    ),
+    # "umc": (
+    #     "$RESULTS_DIR/wmh/segmentation/umc/dino/base/bs_32_lr_1em4_grad_clip_1.0_hier_1",
+    #     "$RESULTS_DIR/wmh/segmentation/umc/dino/base/bs_32_lr_1em4_grad_clip_1.0_hier_0",
+    #     "$RESULTS_DIR/wmh/segmentation/umc/dino/base/hierarchichal_decoder/bs_32_lr_1em4_grad_clip_1.0_hier_1",
+    #     "$RESULTS_DIR/wmh/segmentation/umc/dino/base/hierarchichal_decoder/bs_32_lr_1em4_grad_clip_1.0_hier_2"
+    # ),
     "nuhs": (
-        "$RESULTS_DIR/wmh/segmentation/nuhs/dino/large/dice_loss_smoothing_den_1em10_opt_param_kerem_bs_16",
-        "$RESULTS_DIR/wmh/segmentation/nuhs/dino/large/dice_loss_smoothing_den_1em10_opt_param_kerem_bs_16_grad_acc_2_lr_0.0001",
+        "$RESULTS_DIR/wmh/segmentation/nuhs/dino/base/bs_32_lr_1em4_grad_clip_1.0_hier_1",
+        "$RESULTS_DIR/wmh/segmentation/nuhs/dino/base/bs_32_lr_1em4_grad_clip_1.0_hier_0",
+        "$RESULTS_DIR/wmh/segmentation/nuhs/dino/base/hierarchichal_decoder/bs_32_lr_1em4_grad_clip_1.0_hier_1",
+        "$RESULTS_DIR/wmh/segmentation/nuhs/dino/base/hierarchichal_decoder/bs_32_lr_1em4_grad_clip_1.0_hier_2"
     ),
-    "vu": (
-        "$RESULTS_DIR/wmh/segmentation/vu/dino/large/dice_loss_smoothing_den_1em10_opt_param_kerem_bs_16",
-        "$RESULTS_DIR/wmh/segmentation/vu/dino/large/dice_loss_smoothing_den_1em10_opt_param_kerem_bs_16_grad_acc_2_lr_0.0001",
-    ),
+    # "vu": (
+    #     "$RESULTS_DIR/wmh/segmentation/vu/dino/large/dice_loss_smoothing_den_1em10_opt_param_kerem_bs_16",
+    #     "$RESULTS_DIR/wmh/segmentation/vu/dino/large/dice_loss_smoothing_den_1em10_opt_param_kerem_bs_16_grad_acc_2_lr_0.0001",
+    # ),
 }
 
 # Command format
@@ -41,9 +42,11 @@ seg_models_path = {
 base_command = (
     "python no_tta.py "
     + "$REPO_DIR/config/datasets.yaml "
-    + "$REPO_DIR/config/tta/tta_brain_hcp_t1w.yaml "
-    + f"--wandb_log False --split {split} --model_type {model_type}"
+    + "$REPO_DIR/config/tta/tta.yaml "
+    + f" --wandb_log False" 
+    + f" --split {split}"
     + f" --batch_size {batch_size}"
+    + f" --save_predicted_vol_as_nifti {save_predicted_vol_as_nifti}"
     + " --viz_interm_outs "
 )
 
@@ -61,7 +64,6 @@ log_dir_base_path = os.path.join(
     log_dir_base_path,
     split,
     "noTTA",
-    model_type,
     "{seg_model_exp}",
 )
 
@@ -73,16 +75,21 @@ for source_dataset, seg_model_paths in seg_models_path.items():
 
     for seg_model_path in seg_model_paths:
         # use the last to elements in the path as seg_model_exp
-        tree_level = seg_model_path.split(os.path.sep).index("dino") + 1 
+        tree_level = seg_model_path.split(os.path.sep).index(source_dataset) + 1
         seg_model_exp = os.path.join(*seg_model_path.split(os.path.sep)[tree_level:])
-
-        for target_dataset in target_datasets:
+        
+        for target_dataset in target_datasets:    
             log_dir = log_dir_base_path.format(
                 source_dataset=source_dataset,
                 target_dataset=target_dataset,
                 seg_model_exp=seg_model_exp,
             )
 
+            print("#" * 70)
+            print("Source Dataset:", source_dataset)    
+            print("Target Dataset:", target_dataset)
+            print("Experiment:", seg_model_exp) 
+            print("#" * 70)
             os.system(
                 f"{base_command} --seg_dir {seg_model_path} --dataset {target_dataset} --logdir {log_dir}"
             )

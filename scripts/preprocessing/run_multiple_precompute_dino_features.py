@@ -24,20 +24,20 @@ base_command += (
 # Specific run param combination
 # :====================================:
 dino_model_sizes = {
-    "base": {"batch_size": 32},
-    #"large": {"batch_size": 16},
+    #"base": {"batch_size": 32},
+    "large": {"batch_size": 16},
     #"giant": {"batch_size": 8},
 }
 datasets = [
-    # "hcp_t1",
-    # "hcp_t2",
+    "hcp_t1",
+    "hcp_t2",
     # "abide_caltech",
-    # "abide_stanford",
+     "abide_stanford",
     #"umc",
     # "umc_w_synthseg_labels",
     #"nuhs",
     # "nuhs_w_synthseg_labels",
-    "vu",
+    #"vu",
     # "vu_w_synthseg_labels",
 ]
 

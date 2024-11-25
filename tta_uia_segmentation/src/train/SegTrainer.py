@@ -216,7 +216,7 @@ class SegTrainer:
                         for i, score_per_class in enumerate(validation_scores):
                             label_name = val_dataloader.dataset.get_label_name(i)
                             validation_metrics_to_log[
-                                f"validation_score_{label_name}"
+                                f"validation_score_{label_name:02}"
                             ] = score_per_class.item()
                 else:
                     validation_metrics_to_log = {}
@@ -316,19 +316,19 @@ class SegTrainer:
         )
 
     @property
-    def last_checkpoint_name(self):
+    def last_checkpoint_name(self) -> str:
         return self._checkpoint_last
 
     @property
-    def best_checkpoint_name(self):
+    def best_checkpoint_name(self) -> str:
         return self._checkpoint_best
 
     @property
-    def last_checkpoint_path(self):
+    def last_checkpoint_path(self) -> str:
         return os.path.join(self._logdir, self._checkpoint_last)
 
     @property
-    def best_checkpoint_path(self):
+    def best_checkpoint_path(self) -> str:
         return os.path.join(self._logdir, self._checkpoint_best)
 
     @property

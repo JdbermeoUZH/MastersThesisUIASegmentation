@@ -1,7 +1,7 @@
 import os
 import copy
 from functools import partial
-from typing import Optional, Literal, Union
+from typing import Optional, Literal, Union, Callable
 from collections import OrderedDict, defaultdict
 from dataclasses import dataclass, field, asdict
 
@@ -582,11 +582,11 @@ class BaseTTASeg(TTAInterface):
         self,
         seg: BaseSeg,
         n_classes: int,
-        classes_of_interest: tuple[int] = tuple(),
-        eval_metrics: dict[str, callable] = EVAL_METRICS,
-        viz_interm_outs: Optional[list[str]] = None,
+        classes_of_interest: Optional[tuple[int | str, ...]] = tuple(),
+        eval_metrics: dict[str, Callable] = EVAL_METRICS,
+        viz_interm_outs: tuple[str, ...] = tuple(),
         wandb_log: bool = False,
-        device: str = "cuda",
+        device: str | torch.device = "cuda",
     ):
         self._state = BaseTTAState()
 
@@ -615,10 +615,11 @@ class BaseTTASeg(TTAInterface):
     @torch.inference_mode()
     def predict(
         self,
-        x: DataLoader,
+        x: torch.Tensor | DataLoader,
+        include_interm_outs: bool = True,
         output_vol_format: Literal["DCHW", "1CDHW"] = "1CDHW",
         **preprocess_kwargs,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | dict[str, torch.Tensor]]:
         """
         Make predictions on the input data.
 
@@ -633,28 +634,41 @@ class BaseTTASeg(TTAInterface):
         y_mask_list, y_logits_list = [], []
         interm_outs_dict = defaultdict(list)
 
+        # Convert the input volume to a DataLoader (DCHW) if necessary
+        if isinstance(x, torch.Tensor):
+            # Verify that the input volume has the correct number of dimensions
+            assert x.ndim == 5, "The input volume must have 5 dimensions (NCDHW)."
+
+            # Create a DataLoader for the input volume
+            x = generate_2D_dl_for_vol(
+                x, 
+                batch_size=preprocess_kwargs['batch_size'],
+                num_workers=preprocess_kwargs['num_workers']
+            )
+
         for x_b, *_ in x:
             x_b = x_b.to(self._device).float()
             y_mask, y_logits, interm_outs = self._seg.predict(
                 x_b,
-                include_interm_outs=True,
+                include_interm_outs=include_interm_outs,
                 **preprocess_kwargs,
             )
             y_mask_list.append(y_mask)
             y_logits_list.append(y_logits)
 
             # Append intermediate outputs
-            for key in self._viz_interm_outs:
-                assert (
-                    key in interm_outs
-                ), f"{key} is not an intermediate output of the segmentaion model's forward pass."
-                interm_outs_dict[key].append(interm_outs[key])
+            if interm_outs is not None:
+                for key in self._viz_interm_outs:
+                    assert (
+                        key in interm_outs
+                    ), f"{key} is not an intermediate output of the model's forward pass."
+                    interm_outs_dict[key].append(interm_outs[key])
 
         # Concatenate the masks and logits
         y_mask = torch.cat(y_mask_list)
         y_logits = torch.cat(y_logits_list)
         interm_outs = {key: torch.cat(val) for key, val in interm_outs_dict.items()}
-        
+
         # Rearrange the output volume format
         if output_vol_format == "DCHW":
             pass
@@ -675,7 +689,7 @@ class BaseTTASeg(TTAInterface):
         y_original_gt: torch.Tensor,
         preprocessed_pix_size: tuple[float, ...],
         gt_pix_size: tuple[float, ...],
-        metrics: Optional[dict[str, callable]] = None,
+        metrics: Optional[dict[str, Callable]] = None,
         batch_size: Optional[int] = None,
         num_workers: Optional[int] = None,
         classes_of_interest: tuple[int] = tuple(),
@@ -703,7 +717,7 @@ class BaseTTASeg(TTAInterface):
             Pixel size of the preprocessed input image.
         gt_pix_size : tuple[float, ...]
             Pixel size of the ground truth labels.
-        metrics : dict[str, callable], optional
+        metrics : dict[str, Callable], optional
             Dictionary of metric functions to evaluate the model's performance.
         classes_of_interest : tuple[int], optional
             List of classes to visualize.
@@ -1013,7 +1027,7 @@ class BaseTTASeg(TTAInterface):
     def get_score(self, metric_name: str) -> OrderedDict[int, float]:
         return self._state.get_score(metric_name)
 
-    def tta(self, x: torch.Tensor) -> None:
+    def tta(self, x: torch.Tensor | DataLoader) -> None:
         """
         Perform test-time adaptation on the input data.
 

@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import List, Any
+from typing import List, Any, Optional
 
 import torch
 
@@ -136,10 +136,7 @@ class BaseSeg(torch.nn.Module, ABC):
     @torch.inference_mode()
     def predict(
         self, x: torch.Tensor, include_interm_outs: bool = False, **preprocess_kwargs
-    ) -> (
-        tuple[torch.Tensor, torch.Tensor]
-        | tuple[torch.Tensor, torch.Tensor, dict[str, torch.Tensor]]
-    ):
+    ) -> tuple[torch.Tensor, torch.Tensor, Optional[dict[str, torch.Tensor]]]:
         """
         Predict segmentation mask and logits.
 
@@ -158,7 +155,7 @@ class BaseSeg(torch.nn.Module, ABC):
         if include_interm_outs:
             return y_mask, y_logits, interm_outs
         else:
-            return y_mask, y_logits
+            return y_mask, y_logits, None
 
     def eval_mode(
         self,

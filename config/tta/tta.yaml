@@ -22,6 +22,7 @@ device: cuda
 seed: 0
 
 viz_interm_outs: ['Normalized Image']
+save_predicted_vol_as_nifti: True
 
 no_tta:
   wandb_project: baseline_performance 

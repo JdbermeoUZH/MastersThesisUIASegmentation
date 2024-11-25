@@ -1,6 +1,7 @@
-from typing import Optional
+from typing import Optional, Callable
 
 import numpy as np
+import torch
 
 from tta_uia_segmentation.src.dataset import Dataset
 from tta_uia_segmentation.src.tta.BaseTTASeg import BaseTTASeg, EVAL_METRICS
@@ -20,11 +21,11 @@ class NoTTASeg(BaseTTASeg):
         self,
         seg: BaseSeg,
         n_classes: int,
-        classes_of_interest: Optional[list[int]] = None,
-        eval_metrics: Optional[dict[str, callable]] = EVAL_METRICS,
-        viz_interm_outs: Optional[list[str]] = None,
+        classes_of_interest: Optional[tuple[int | str, ...]] = None,
+        eval_metrics: dict[str, Callable] = EVAL_METRICS,
+        viz_interm_outs: tuple[str, ...] = tuple(),
         wandb_log: bool = False,
-        device: str = "cuda",
+        device: str | torch.device = "cuda",
     ):
         super().__init__(
             seg,
@@ -42,7 +43,7 @@ class NoTTASeg(BaseTTASeg):
         vol_idx: int,
         batch_size: int,
         num_workers: int,
-        metrics: Optional[dict[str, callable]] = None,
+        metrics: Optional[dict[str, Callable]] = None,
         classes_of_interest: tuple[int] = tuple(),
         logdir: Optional[str] = None,
         slice_vols_for_viz: Optional[

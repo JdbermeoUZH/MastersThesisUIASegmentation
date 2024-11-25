@@ -1,7 +1,16 @@
 if [ "$CLUSTER" = "bmic" ]; then
+    # Activate python environment
     source $CONDA_PATH
     conda activate $ENV_DIR
     echo "Python environment activated"
+
+    # Setup wandb env variable for logging
+    #WANDB_DIR="/scratch/${USER}/wandb_dir"
+    WANDB_DIR="/tmp/${USER}/wandb_dir"
+    WANDB_CACHE_DIR="${WANDB_DIR}/.cache"
+    export WANDB_DIR WANDB_CACHE_DIR
+    mkdir -vp "${WANDB_CACHE_DIR}"
+    
 
 elif [ "$CLUSTER" = "euler" ]; then
     # Load necessary modules
@@ -35,6 +44,13 @@ elif [ "$CLUSTER" = "euler" ]; then
     # Move to the dir where current script should be
     cd $REPO_DIR/scripts/training/ddpm
 
+    # Setup wandb env variable for logging
+    WANDB_DIR="${TMPDIR}/wandb_dir"
+    WANDB_CACHE_DIR="${WANDB_DIR}/.cache"
+    export WANDB_DIR WANDB_CACHE_DIR
+    mkdir -vp "${WANDB_CACHE_DIR}"
 else
     echo "Python environment not activated. (env variable cluster: $CLUSTER)"
 fi
+
+
