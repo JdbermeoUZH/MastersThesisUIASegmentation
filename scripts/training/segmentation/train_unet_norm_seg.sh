@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --output=../../logs/%j_train_segmentation_2D.out
+#SBATCH --output=../../logs/%j_train_unet_norm_seg.out
 #SBATCH --cpus-per-task=4
 #SBATCH --gres=gpu:1
 #SBATCH --constraint='geforce_gtx_titan_x'

@@ -98,6 +98,11 @@ def preprocess_cmd_args() -> argparse.Namespace:
         type=str,
         help="Path to yaml config file with parameters for test time adaptation",
     )
+    parser.add_argument(
+        "--print_config",
+        type=parse_bool,
+        help="Print the configuration parameters. Default: True",
+    )
 
     # Segmentation model parameters
     # :================================================================================================:
@@ -145,7 +150,7 @@ def preprocess_cmd_args() -> argparse.Namespace:
     )
 
     # TTA loop
-    # -------------:
+    # :================================================================================================:
     # Optimization parameters
     parser.add_argument(
         "--batch_size", type=int, help="Batch size for tta. Default: 64"
@@ -160,7 +165,7 @@ def preprocess_cmd_args() -> argparse.Namespace:
     )
 
     # Dataset and its transformations to use for TTA
-    # ---------------------------------------------------:
+    # :================================================================================================:
     parser.add_argument("--dataset", type=str, help="Name of dataset to use for tta")
     parser.add_argument(
         "--split", type=str, help="Name of split to use for tta. Default: test"
@@ -229,6 +234,7 @@ if __name__ == "__main__":
     seed = tta_config["seed"]
     device = tta_config["device"]
     wandb_log = tta_config["wandb_log"]
+    wandb_run_name = tta_config["wandb_run_name"]
     start_new_exp = tta_config["start_new_exp"]
     logdir = tta_config[tta_mode]["logdir"]
     wandb_project = tta_config[tta_mode]["wandb_project"]
@@ -238,12 +244,16 @@ if __name__ == "__main__":
 
     os.makedirs(logdir, exist_ok=True)
     dump_config(os.path.join(logdir, "params.yaml"), params)
-    print_config(params, keys=["datset", "model", "tta"])
+
+    if tta_config["print_config"]:
+        print_config(params, keys=["datset", "model", "tta"])
 
     # Setup wandb logging
     # :=========================================================================:
     if wandb_log:
-        wandb_dir = setup_wandb(params, logdir, wandb_project, start_new_exp)
+        wandb_dir = setup_wandb(params, logdir, wandb_project, run_name=wandb_run_name)
+    else:
+        wandb_dir = None
 
     # Define the dataset that is to be used for training
     # :=========================================================================:

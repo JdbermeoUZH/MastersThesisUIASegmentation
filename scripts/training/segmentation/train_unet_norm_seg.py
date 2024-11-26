@@ -31,6 +31,7 @@ from tta_uia_segmentation.src.utils.logging import setup_wandb
 
 TRAIN_MODE = "segmentation"
 
+
 def preprocess_cmd_args() -> argparse.Namespace:
     """_
     Parse command line arguments and return them as a Namespace object.

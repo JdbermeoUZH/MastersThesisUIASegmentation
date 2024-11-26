@@ -7,6 +7,7 @@ import os
 # :====================================:
 batch_size = 2
 save_predicted_vol_as_nifti = True
+print_config = False
 
 # Datasets
 # :====================================:
@@ -19,18 +20,13 @@ classes_of_interest = [str(c) for c in classes_of_interest]
 # Trained Models
 # :====================================:
 seg_models_path = {
-    # "umc": (
-    #     "$RESULTS_DIR/wmh/segmentation/umc/dino/base/bs_32_lr_1em4_grad_clip_1.0_hier_1",
-    #     "$RESULTS_DIR/wmh/segmentation/umc/dino/base/bs_32_lr_1em4_grad_clip_1.0_hier_0",
-    #     "$RESULTS_DIR/wmh/segmentation/umc/dino/base/hierarchichal_decoder/bs_32_lr_1em4_grad_clip_1.0_hier_1",
-    #     "$RESULTS_DIR/wmh/segmentation/umc/dino/base/hierarchichal_decoder/bs_32_lr_1em4_grad_clip_1.0_hier_2"
-    # ),
-    "nuhs": (
-        "$RESULTS_DIR/wmh/segmentation/nuhs/dino/base/bs_32_lr_1em4_grad_clip_1.0_hier_1",
-        "$RESULTS_DIR/wmh/segmentation/nuhs/dino/base/bs_32_lr_1em4_grad_clip_1.0_hier_0",
-        "$RESULTS_DIR/wmh/segmentation/nuhs/dino/base/hierarchichal_decoder/bs_32_lr_1em4_grad_clip_1.0_hier_1",
-        "$RESULTS_DIR/wmh/segmentation/nuhs/dino/base/hierarchichal_decoder/bs_32_lr_1em4_grad_clip_1.0_hier_2"
+    "umc": (
+        #"$RESULTS_DIR/wmh/segmentation/umc/norm_seg/norm_k_3/bs_32_lr_1em4_grad_clip_1.0",
+        "$RESULTS_DIR/wmh/segmentation/umc/dino/large/hierarchichal_decoder/bs_32_lr_1em4_grad_clip_1.0_hier_2",
     ),
+    # "nuhs": (
+    #     "$RESULTS_DIR/wmh/segmentation/nuhs/dino/large/hierarchichal_decoder/bs_32_lr_1em4_grad_clip_1.0_hier_2",
+    # ),
     # "vu": (
     #     "$RESULTS_DIR/wmh/segmentation/vu/dino/large/dice_loss_smoothing_den_1em10_opt_param_kerem_bs_16",
     #     "$RESULTS_DIR/wmh/segmentation/vu/dino/large/dice_loss_smoothing_den_1em10_opt_param_kerem_bs_16_grad_acc_2_lr_0.0001",
@@ -47,6 +43,7 @@ base_command = (
     + f" --split {split}"
     + f" --batch_size {batch_size}"
     + f" --save_predicted_vol_as_nifti {save_predicted_vol_as_nifti}"
+    + f" --print_config {print_config}"
     + " --viz_interm_outs "
 )
 

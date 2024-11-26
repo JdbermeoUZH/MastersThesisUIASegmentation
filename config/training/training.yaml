@@ -5,6 +5,9 @@ wandb_run_name:   null
 start_new_exp:    False
 seed:             0
 resume:           False
+
+print_config: True
+
 device:           cuda
 checkpoint_best:  checkpoint_best.pth
 checkpoint_last:  checkpoint_last.pth
@@ -63,7 +66,7 @@ segmentation:
   max_grad_norm:                null 
 
   epochs:                       150   # 150 for subcortical_structures, 1000 for WMH (nuhs, umc)
-  warmup_steps:                 0.05 # 0.05 for 5% of the total number of steps
+  warmup_steps:                 null # 0.05 for 5% of the total number of steps
   batch_size:                   16
   grad_acc_steps:               1
   num_workers:                  1
@@ -102,15 +105,15 @@ segmentation_dino:
   pca_path:                     null  # path to pretrained PCA model on dino features
   num_pca_components:           null  # Null for no PCA model
 
-  decoder_type:                 ResNet # ResNet or Hierarchichal
+  decoder_type:                 Hierarchichal # ResNet or Hierarchichal
   hierarchy_level:              2      # Upsamples image by 2^hierarchy_level before obtaining dino features.
                                        #  If hierarchihcal_model is true, uses upsampled images 2^[0, hierarchy_level]
   output_size:                  [256, 256]
 
   learning_rate:                0.001
-  optimizer_type:               adamW  # adam, adamW
-  weight_decay:                 1e-5
-  max_grad_norm:                1.0 
+  optimizer_type:               adam  # adam, adamW
+  weight_decay:                 0
+  max_grad_norm:                null 
 
   epochs:                       150   # 150 for subcortical_structures, 1000 for WMH (nuhs, umc)
   batch_size:                   16

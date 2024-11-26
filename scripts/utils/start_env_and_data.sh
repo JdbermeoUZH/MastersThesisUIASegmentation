@@ -6,7 +6,7 @@ if [ "$CLUSTER" = "bmic" ]; then
 
     # Setup wandb env variable for logging
     #WANDB_DIR="/scratch/${USER}/wandb_dir"
-    WANDB_DIR="/tmp/${USER}/wandb_dir"
+    WANDB_DIR="/tmp/${USER}/wandb_dir/${SLURM_JOB_ID:-unknown_job}"
     WANDB_CACHE_DIR="${WANDB_DIR}/.cache"
     export WANDB_DIR WANDB_CACHE_DIR
     mkdir -vp "${WANDB_CACHE_DIR}"

@@ -216,7 +216,7 @@ class SegTrainer:
                         for i, score_per_class in enumerate(validation_scores):
                             label_name = val_dataloader.dataset.get_label_name(i)
                             validation_metrics_to_log[
-                                f"validation_score_{label_name:02}"
+                                f"validation_score_{label_name.zfill(2)}"
                             ] = score_per_class.item()
                 else:
                     validation_metrics_to_log = {}

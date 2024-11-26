@@ -2,7 +2,9 @@ tta_mode: null                # Typically defined when running a tta type: no_tt
 
 start_new_exp: False
 wandb_log: True
+wandb_run_name:   null
 debug_mode: True
+print_config: True
 
 dataset: hcp_t2   # subcortical_structures: hcp_t1, hcp_t2, abide_caltech, abide_stanford; wmh: nuhs, umc, vu
 dataset_type: Normal          # Normal, DinoFeatures
