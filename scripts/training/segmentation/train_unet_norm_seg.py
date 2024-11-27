@@ -5,6 +5,7 @@ import argparse
 import wandb
 import numpy as np
 from torch.utils.data import DataLoader
+from torch.nn import CrossEntropyLoss
 
 sys.path.append(
     os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
@@ -153,7 +154,12 @@ def preprocess_cmd_args() -> argparse.Namespace:
     parser.add_argument(
         "--warmup_steps",
         type=float,
-        help="Number of warmup steps for scheduler. Default: 0.05",
+        help="Number of warmup steps for scheduler. Default: 0.",
+    )
+    parser.add_argument(
+        "--lr_decay",
+        type=parse_bool,
+        help="Whether to use linear learning rate decay. Default: False",
     )
     parser.add_argument(
         "--num_workers", type=int, help="Number of workers for dataloader. Default: 0"
@@ -171,6 +177,12 @@ def preprocess_cmd_args() -> argparse.Namespace:
     )
 
     # Loss function
+    parser.add_argument(
+        "--loss_type",
+        type=str,
+        help="Type of loss function to use. Default: dice",
+        choices=["dice", "ce"],
+    )
     parser.add_argument(
         "--smooth", type=float, help="Smoothing factor for dice loss. Default: 1e-5"
     )
@@ -328,17 +340,24 @@ if __name__ == "__main__":
     # :=========================================================================:
     print("Defining trainer: training loop, optimizer and loss")
 
-    dice_loss = DiceLoss(
-        smooth=float(train_config[TRAIN_MODE]["smooth"]),
-        epsilon=float(train_config[TRAIN_MODE]["epsilon"]),
-        debug_mode=train_config[TRAIN_MODE]["debug_mode"],
-        fg_only=train_config[TRAIN_MODE]["fg_only"],
-    )
+    loss_type = train_config[TRAIN_MODE]["loss_type"]
+    if loss_type == "dice":
+        loss = DiceLoss(
+            smooth=float(train_config[TRAIN_MODE]["smooth"]),
+            epsilon=float(train_config[TRAIN_MODE]["epsilon"]),
+            debug_mode=train_config[TRAIN_MODE]["debug_mode"],
+            fg_only=train_config[TRAIN_MODE]["fg_only"],
+        )
+    elif loss_type == "ce":
+        loss = CrossEntropyLoss()
+    else:
+        raise ValueError(f"Loss type {loss_type} not supported")
+    
 
     trainer = SegTrainer(
         seg=norm_seg,
         learning_rate=float(train_config[TRAIN_MODE]["learning_rate"]),
-        loss_func=dice_loss,
+        loss_func=loss,
         is_resumed=is_resumed,
         optimizer_type=train_config[TRAIN_MODE]["optimizer_type"],
         weight_decay=float(train_config[TRAIN_MODE]["weight_decay"]),
@@ -361,23 +380,29 @@ if __name__ == "__main__":
 
     # Start training
     # :=========================================================================:
-    epochs = train_config[TRAIN_MODE]["epochs"]
     validate_every = train_config[TRAIN_MODE]["validate_every"]
 
     trainer.train(
         train_dataloader=train_dataloader,
         val_dataloader=val_dataloader,
-        epochs=epochs,
+        epochs=train_config[TRAIN_MODE]["epochs"],
         validate_every=validate_every,
+        warmup_steps=train_config[TRAIN_MODE]["warmup_steps"],
+        lr_decay=train_config[TRAIN_MODE]["lr_decay"],
     )
 
+    train_losses = trainer.training_losses
+    validation_losses = np.repeat(trainer.validation_losses, validate_every)
+    validation_losses = validation_losses[: len(train_losses)]
+    validation_scores = np.repeat(trainer.validation_scores, validate_every)
+    validation_scores = validation_scores[: len(train_losses)]
     write_to_csv(
         path=os.path.join(logdir, "training_statistics.csv"),
         data=np.stack(
             [
-                trainer.training_losses,
-                np.repeat(trainer.validation_losses, validate_every),
-                np.repeat(trainer.validation_scores, validate_every),
+                train_losses,
+                validation_losses,
+                validation_scores,
             ],
             1,
         ),

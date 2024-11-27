@@ -1,6 +1,5 @@
-import math
 import logging
-from typing import Optional
+from typing import Optional, Literal
 
 import torch
 import torch.nn as nn
@@ -15,47 +14,75 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.WARNING)
 
 
-class ResNetDecoderBlock(nn.Module):
+class UpResNetDecoderBlock(nn.Module):
     def __init__(
         self,
         in_channels,
         out_channels,
-        scale_factor: Optional[float] = 2.0,
+        convs_per_block: int = 2,
+        scale_factor: Optional[float | tuple[float, ...]] = None,
+        size: Optional[tuple[int, ...]] = None,
         n_dimensions=2,
     ):
         super().__init__()
 
         assert_in(n_dimensions, "n_dimensions", [1, 2, 3])
 
+        # Upsample module
+        # :====================================================================:
         if n_dimensions == 1:
-            self.interpolation_mode = "linear"
+            interpolation_mode = "linear"
         elif n_dimensions == 2:
-            self.interpolation_mode = "bilinear"
+            interpolation_mode = "bilinear"
         else:
-            self.interpolation_mode = "trilinear"
+            interpolation_mode = "trilinear"
 
-        self.scale_factor = scale_factor
-
-        self.double_conv = DoubleConv(
-            in_channels, out_channels, n_dimensions=n_dimensions
-        )
-
-    def forward(self, x, scale_factor=None, size=None):
-        if size is None:
-            scale_factor = default(scale_factor, self.scale_factor)
-
-        if isinstance(scale_factor, torch.Tensor):
-            scale_factor = scale_factor.cpu().numpy().tolist()
-
-        x = F.interpolate(
-            x,
-            size=size,
+        self._up = nn.Upsample(
             scale_factor=scale_factor,
-            mode=self.interpolation_mode,
+            size=size,
+            mode=interpolation_mode,
             align_corners=True,
         )
 
-        x = torch.concat([x, self.double_conv(x)], dim=1)
+        # Channel reduction module
+        # :====================================================================:
+        if in_channels != out_channels:
+            self._channel_reduction = get_conv(
+                in_channels=in_channels,
+                out_channels=out_channels,
+                kernel_size=1,
+                n_dimensions=n_dimensions,
+            )
+        else:
+            self._channel_reduction = None
+
+        # Convolutional blocks
+        # :====================================================================:
+
+        self._conv_blocks = nn.ModuleList(
+            [
+                DoubleConv(out_channels, out_channels, n_dimensions=n_dimensions)
+                for _ in range(convs_per_block)
+            ]
+        )
+
+    def forward(self, x, scale_factor=None, size=None):
+        if size is not None:
+            self._up.size = size
+
+        if scale_factor is not None:
+            if isinstance(scale_factor, torch.Tensor):
+                scale_factor = scale_factor.cpu().numpy().tolist()
+
+            self._up.scale_factor = scale_factor
+
+        x = self._up(x)
+
+        if self._channel_reduction is not None:
+            x = self._channel_reduction(x)
+
+        for conv_block in self._conv_blocks:
+            x = x + conv_block(x)
 
         return x
 
@@ -65,10 +92,10 @@ class ResNetDecoder(BaseDecoder):
         self,
         embedding_dim: int,
         n_classes: int,
-        num_channels: list[int],
-        num_channels_last_upsample: int,
+        num_channels: tuple[int, ...],
         output_size: tuple[int, ...],
         n_dimensions: int = 2,
+        convs_per_block: int = 2,
     ):
 
         super(ResNetDecoder, self).__init__(output_size=output_size)
@@ -77,35 +104,31 @@ class ResNetDecoder(BaseDecoder):
         self._output_size = output_size
         self._n_classes = n_classes
         self._num_channels = num_channels
-        self._num_channels_last_upsample = num_channels_last_upsample
         self._n_dimensions = n_dimensions
         self._in_train_mode = True
 
         # If number of channels per level is provided, then check it matches the number of levels
         # :====================================================================:
-        num_channels = [embedding_dim] + num_channels + [num_channels_last_upsample]
+        num_ch = [embedding_dim] + list(num_channels)
+
         block_list = []
-        prev_level_channels_in = 0
-        for in_channels, out_channels in zip(num_channels[:-1], num_channels[1:]):
-            in_channels = in_channels + prev_level_channels_in
+        out_ch = None
+        for level_i, (in_ch, out_ch) in enumerate(zip(num_ch[:-1], num_ch[1:])):
+            scale_factor = 2 if level_i < len(num_ch) - 2 else None
             block_list.append(
-                ResNetDecoderBlock(
-                    in_channels, out_channels, scale_factor=2, n_dimensions=n_dimensions
+                UpResNetDecoderBlock(
+                    in_channels=in_ch,
+                    out_channels=out_ch,
+                    scale_factor=scale_factor,
+                    n_dimensions=n_dimensions,
+                    convs_per_block=convs_per_block,
                 )
             )
-            prev_level_channels_in = in_channels
 
         self.blocks = nn.ModuleList(block_list)
 
-        self.last_block = ResNetDecoderBlock(
-            in_channels=num_channels_last_upsample + prev_level_channels_in,
-            out_channels=num_channels_last_upsample,
-            scale_factor=None,
-            n_dimensions=n_dimensions,
-        )
-
         self.output_conv = get_conv(
-            in_channels=num_channels_last_upsample * 2 + prev_level_channels_in,
+            in_channels=out_ch,
             out_channels=n_classes,
             kernel_size=1,
             n_dimensions=n_dimensions,
@@ -115,25 +138,26 @@ class ResNetDecoder(BaseDecoder):
 
     def forward(self, x) -> tuple[torch.Tensor, torch.Tensor]:
         # Pass trough decoder blocks
-        for block in self.blocks:
-            x = block(x)
-
-        # Upsample to original size
-        scale_factor = torch.tensor(self._output_size) / torch.tensor(
-            x.shape[-self._n_dimensions :]
-        )
-
-        if (scale_factor > 2.0).any():
-            msg = (
-                f"Upsampling is too large: {scale_factor},"
-                + " Consider adding another block to the decoder instead"
-            )
-            if self._in_train_mode:
-                raise ValueError(msg)
+        for block_i, block in enumerate(self.blocks):
+            if block_i < len(self.blocks) - 1:
+                x = block(x)
             else:
-                logger.warning(msg)
+                # Upsample to original size
+                scale_factor = torch.tensor(self._output_size) / torch.tensor(
+                    x.shape[-self._n_dimensions :]
+                )
 
-        x = self.last_block(x, size=self._output_size)
+                if (scale_factor > 2.0).any():
+                    msg = (
+                        f"Upsampling is too large: {scale_factor},"
+                        + " Consider adding another block to the decoder instead"
+                    )
+                    if self._in_train_mode:
+                        raise ValueError(msg)
+                    else:
+                        logger.warning(msg)
+                        
+                x = block(x, size=self._output_size)
 
         # Output to n_classes
         x = self.output_conv(x)

@@ -7,6 +7,7 @@ import torch.nn.functional as F
 
 from ..norm_seg.UNet import get_conv, DoubleConv
 from .BaseDecoder import BaseDecoder
+from .ResNetDecoder import UpResNetDecoderBlock
 from tta_uia_segmentation.src.utils.utils import assert_in, default
 
 # Set up the logger
@@ -14,46 +15,70 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.WARNING)
 
 
-class DecoderBlock(nn.Module):
+class UpDecoderBlock(nn.Module):
     def __init__(
         self,
         in_channels,
         out_channels,
+        convs_per_block: int = 2,
         scale_factor: Optional[float] = 2.0,
+        size: Optional[tuple[int, ...]] = None,
         n_dimensions=2,
     ):
         super().__init__()
 
         assert_in(n_dimensions, "n_dimensions", [1, 2, 3])
 
+        # Upsample module
+        # :====================================================================:
         if n_dimensions == 1:
-            self.interpolation_mode = "linear"
+            interpolation_mode = "linear"
         elif n_dimensions == 2:
-            self.interpolation_mode = "bilinear"
+            interpolation_mode = "bilinear"
         else:
-            self.interpolation_mode = "trilinear"
+            interpolation_mode = "trilinear"
 
-        self.scale_factor = scale_factor
-
-        self.double_conv = DoubleConv(
-            in_channels, out_channels, n_dimensions=n_dimensions
-        )
-
-    def forward(self, x, scale_factor=None, size=None):
-        scale_factor = default(scale_factor, self.scale_factor)
-
-        if isinstance(scale_factor, torch.Tensor):
-            scale_factor = scale_factor.cpu().numpy().tolist()
-
-        x = F.interpolate(
-            x,
-            size=size,
+        self._up = nn.Upsample(
             scale_factor=scale_factor,
-            mode=self.interpolation_mode,
+            size=size,
+            mode=interpolation_mode,
             align_corners=True,
         )
 
-        return self.double_conv(x)
+        # Convolutional blocks
+        # :====================================================================:
+        conv_block_list = list()
+        for i in range(convs_per_block):
+            if i == 0:
+                in_channels = in_channels
+            else:
+                in_channels = out_channels
+
+            conv_block_list.append(    
+                DoubleConv(
+                    in_channels=in_channels,
+                    out_channels=out_channels,
+                    n_dimensions=n_dimensions,
+                )
+            )
+
+        self._conv_blocks = nn.ModuleList(conv_block_list)
+
+    def forward(self, x, scale_factor=None, size=None):
+        if size is not None:
+            self._up.size = size
+
+        if scale_factor is not None:
+            if isinstance(scale_factor, torch.Tensor):
+                scale_factor = scale_factor.cpu().numpy().tolist()
+
+            self._up.scale_factor = scale_factor
+
+        x = self._up(x)
+        for conv_block in self._conv_blocks:
+            x = conv_block(x)
+
+        return x
 
 
 class HierarchichalDecoder(BaseDecoder):
@@ -61,67 +86,66 @@ class HierarchichalDecoder(BaseDecoder):
         self,
         embedding_dim: int,
         n_classes: int,
-        num_channels_last_upsample: int,
         output_size: tuple[int, ...],
+        num_channels: tuple[int, ...],
         hierarchy_level: int,
-        num_channels_per_hier: Optional[list[int]] = None,
         n_dimensions: int = 2,
+        convs_per_block: int = 2,
     ):
 
         super(HierarchichalDecoder, self).__init__(output_size=output_size)
         self._embedding_dim = embedding_dim
         self._hierarchy_level = hierarchy_level
         self._n_classes = n_classes
-        self._num_channels_last_upsample = num_channels_last_upsample
+        self._num_channels = num_channels
         self._in_train_mode = True
 
-        # If number of channels per level is provided, then check it matches the number of levels
+        # Check we have at least as many channels as hierarchy levels + 1
         # :====================================================================:
-        if num_channels_per_hier is not None:
-            assert len(num_channels_per_hier) == hierarchy_level + 1, (
-                "Number of channels per level should match the number hierarchies",
-            )
-        else:
-            num_channels_per_hier = [
-                embedding_dim / (2**hier_i) for hier_i in range(1, hierarchy_level + 1)
-            ]
-            breakpoint()
-            print("Check the number of channels is defined correctly")
-        self._num_channels_per_hier = num_channels_per_hier
+        assert len(num_channels) >= hierarchy_level + 1, (
+            f"Number of channels per hierarchy level must be at least"
+            + f" hierarchy_level + 1: {hierarchy_level + 1}"
+        )
 
         # Define modules for each hierarchy level
         # :====================================================================:
-        hier_blocks = list()
-        num_channels = [self._embedding_dim] + num_channels_per_hier
+        conv_blocks = list()
+        out_ch = None
+        num_ch = [self._embedding_dim] + list(num_channels)
+        for level_i, (in_ch, out_ch) in enumerate(zip(num_ch[:-1], num_ch[1:])):
+            # Add decoder blocks for each hierarchy level
+            if level_i <= self._hierarchy_level:
+                if level_i > 0:
+                    in_ch += self._embedding_dim
 
-        for hier_i, (in_channels, out_channels) in enumerate(
-            zip(num_channels[:-1], num_channels[1:])
-        ):
-
-            if hier_i > 0:
-                in_channels += self._embedding_dim
-            hier_blocks.append(
-                DecoderBlock(
-                    in_channels=in_channels,
-                    out_channels=out_channels,
-                    scale_factor=2,
-                    n_dimensions=n_dimensions,
+                conv_blocks.append(
+                    UpDecoderBlock(
+                        in_channels=in_ch,
+                        out_channels=out_ch,
+                        scale_factor=2,
+                        n_dimensions=n_dimensions,
+                        convs_per_block=convs_per_block,
+                    )
                 )
-            )
+            # Add Resnet blocks to continue upsampling
+            else:
+                scale_factor = 2 if level_i < len(num_ch) - 2 else None
+                conv_blocks.append(
+                    UpResNetDecoderBlock(
+                        in_channels=in_ch,
+                        out_channels=out_ch,
+                        scale_factor=scale_factor,
+                        n_dimensions=n_dimensions,
+                        convs_per_block=convs_per_block,
+                    )
+                )
 
-        self.hier_blocks = nn.ModuleList(hier_blocks)
+        self.conv_blocks = nn.ModuleList(conv_blocks)
 
-        # Define modules for last upsampling block and classification head
+        # Define modules for classification head
         # :====================================================================:
-        self.last_block = DecoderBlock(
-            in_channels=num_channels_per_hier[-1],
-            out_channels=num_channels_last_upsample,
-            scale_factor=None,  # Determined dinamically based on the output size
-            n_dimensions=n_dimensions,
-        )
-
         self.output_conv = get_conv(
-            in_channels=num_channels_last_upsample,
+            in_channels=out_ch,
             out_channels=n_classes,
             kernel_size=1,
             n_dimensions=n_dimensions,
@@ -131,34 +155,37 @@ class HierarchichalDecoder(BaseDecoder):
     def forward(self, x: list[torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor]:
         # Pass trough decoder blocks for each hierarchy level
         # :====================================================================:
-        out_hier_i = None
-        for hier_i, hier_block in enumerate(self.hier_blocks):
-            if hier_i > 0:
-                # Pad spatial dimensions of the output of the previous hierarchy level
-                # to match the spatial dimensions of the current hierarchy level
-                x[hier_i] = F.pad(
-                    x[hier_i],
-                    (
-                        0,
-                        out_hier_i.shape[-1] - x[hier_i].shape[-1],
-                        0,
-                        out_hier_i.shape[-2] - x[hier_i].shape[-2],
-                    ),
-                    mode="constant",
-                    value=0,
-                )
-                x_in = torch.cat([out_hier_i, x[hier_i]], dim=1)
+        out_hier_i: Optional[torch.Tensor] = None
+        for level_i, conv_block in enumerate(self.conv_blocks):
+            # Use Decoder blocks that take as input dino features from upsampled images
+            if level_i <= self._hierarchy_level:
+                if level_i > 0:
+                    # Pad spatial dimensions of the output of the previous hierarchy level
+                    # to match the spatial dimensions of the current hierarchy level
+                    assert isinstance(out_hier_i, torch.Tensor)
+
+                    pad_x = out_hier_i.shape[-1] - x[level_i].shape[-1]
+                    pad_y = out_hier_i.shape[-2] - x[level_i].shape[-2]
+
+                    x[level_i] = F.pad(
+                        x[level_i], (0, pad_x, 0, pad_y), mode="constant", value=0
+                    )
+                    x_in = torch.cat([out_hier_i, x[level_i]], dim=1)
+                else:
+                    x_in = x[level_i]
+
+            # Use ResNet blocks to continue upsampling
             else:
-                x_in = x[hier_i]
+                x_in = out_hier_i
 
-            out_hier_i = hier_block(x_in)
+            if level_i < len(self.conv_blocks) - 1:
+                out_hier_i = conv_block(x_in)
+            else:
+                out_hier_i = conv_block(x_in, size=self._output_size)
 
-        # Last upsampling block to original size
+        # Classify
         # :====================================================================:
-        out = self.last_block(out_hier_i, size=self._output_size)
-
-        # Output to n_classes
-        out = self.output_conv(out)
+        out = self.output_conv(out_hier_i)
 
         return self.softmax(out), out
 

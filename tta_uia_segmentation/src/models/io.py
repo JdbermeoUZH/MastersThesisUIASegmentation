@@ -106,34 +106,34 @@ def define_and_possibly_load_dino_seg(
     hierarchy_level = train_dino_cfg["hierarchy_level"]
     output_size: tuple[int, ...] = train_dino_cfg["output_size"]
 
-    num_channels: Optional[list[int]] = decoder_cfg["num_channels"]
-    num_channels_last_upsample = decoder_cfg["num_channels_last_upsample"]
+    num_channels: Optional[tuple[int, ...]] = decoder_cfg["num_channels"]
+    convs_per_block = decoder_cfg["convs_per_block"]
 
+    if num_channels is None or len(num_channels) == 0:
+        num_upsampling = math.ceil(math.log2(dino_fe.patch_size)) + 1
+        num_channels = tuple([
+            int(dino_fe.emb_dim / (2**i)) for i in range(1, num_upsampling)
+        ])
+    
     if decoder_type == "ResNet":
-        if num_channels is None:
-            num_upsampling = math.ceil(math.log2(dino_fe.patch_size)) + 1
-            num_channels = [
-                int(dino_fe.emb_dim / (2**i)) for i in range(num_upsampling)
-            ]
-
         decoder = ResNetDecoder(
             embedding_dim=embedding_dim,
             n_classes=n_classes,
             num_channels=num_channels,
-            num_channels_last_upsample=num_channels_last_upsample,
             output_size=output_size,
             n_dimensions=2,
+            convs_per_block=convs_per_block
         ).to(device)
 
     elif decoder_type == "Hierarchichal":
         decoder = HierarchichalDecoder(
             embedding_dim=embedding_dim,
             n_classes=n_classes,
-            num_channels_last_upsample=num_channels_last_upsample,
+            num_channels=num_channels,
             output_size=output_size,
             hierarchy_level=hierarchy_level,
-            num_channels_per_hier=num_channels,
             n_dimensions=2,
+            convs_per_block=convs_per_block
         ).to(device)
 
     else:

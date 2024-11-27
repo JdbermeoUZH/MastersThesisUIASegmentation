@@ -1,5 +1,5 @@
 import os
-import json
+import time
 from tqdm import tqdm
 from typing import Union, Optional, Literal
 
@@ -7,7 +7,7 @@ import wandb
 import torch
 import numpy as np
 from torch.utils.data import DataLoader
-from torch.optim.lr_scheduler import LinearLR
+from torch.optim.lr_scheduler import LinearLR, PolynomialLR, SequentialLR
 
 from tta_uia_segmentation.src.models import BaseSeg
 from tta_uia_segmentation.src.utils.loss import DiceLoss, dice_score
@@ -79,7 +79,8 @@ class SegTrainer:
         train_dataloader: DataLoader,
         epochs: int,
         validate_every: int,
-        warmup_steps: Optional[int] = None,
+        warmup_steps: int | float = 0.0,
+        lr_decay: bool = False,
         checkpoint_best: Optional[str] = None,
         checkpoint_last: Optional[str] = None,
         logdir: Optional[str] = None,
@@ -89,26 +90,54 @@ class SegTrainer:
         wandb_dir: Optional[str] = None,
     ):
 
-        # Define warmup scheduler
-        if warmup_steps is not None:
-            if 0.0 < warmup_steps < 1.0:
-                total_steps = len(train_dataloader) * epochs
-                warmup_steps = int(warmup_steps * total_steps)
-            warmup_scheduler = LinearLR(
-                self._optimizer,
-                start_factor=0.01,
-                end_factor=1.0,
-                total_iters=warmup_steps,
-            )
-        else:
-            warmup_scheduler = None
-
         wandb_log = wandb_log or self._wandb_log
         device = device or self._device
         logdir = logdir or self._logdir
         checkpoint_best = checkpoint_best or self._checkpoint_best
         checkpoint_last = checkpoint_last or self._checkpoint_last
         wandb_dir = wandb_dir or self._wandb_dir
+
+        # Define schedulers
+        # :====================================================================:
+        schedulers = list()
+        total_steps = len(train_dataloader) * epochs
+        if isinstance(warmup_steps, float):
+            if warmup_steps < 1.0:
+                warmup_steps = int(warmup_steps * total_steps)
+            else:
+                raise ValueError("IWarmup steps must be in or a float between 0 and 1.")
+
+        if warmup_steps > 0:
+            schedulers.append(
+                LinearLR(
+                    self._optimizer,
+                    start_factor=1 / 3,
+                    end_factor=1.0,
+                    total_iters=warmup_steps,
+                )
+            )
+
+        if lr_decay:
+            linear_decay_steps = int(2 * (total_steps - warmup_steps))
+            schedulers.append(
+                PolynomialLR(
+                    self._optimizer,
+                    power=1.0,
+                    total_iters=linear_decay_steps,
+                )
+            )
+
+        if len(schedulers) > 1:
+            scheduler = SequentialLR(
+                self._optimizer, schedulers, milestones=[warmup_steps]
+            )
+        elif len(schedulers) == 1:
+            scheduler = schedulers[0]
+        else:
+            scheduler = None
+
+        # Training loop
+        # :====================================================================:
 
         print("Starting training on epoch", self._epoch)
 
@@ -120,14 +149,19 @@ class SegTrainer:
             n_samples_train = 0
 
             self._seg.train()
-
+            # load_time_start = time.time()
             for step, (x, y, extra_inputs) in enumerate(train_dataloader):
+                # load_time_end = time.time()
+                # forward_time_start = time.time()
+                # print(f"Load time: {load_time_end - load_time_start}")
+
                 if isinstance(x, list):
                     x = [x_i.to(device).float() for x_i in x]
                     batch_size = x[0].shape[0]
                 else:
                     x = x.to(device).float()
                     batch_size = x.shape[0]
+
                 y = y.to(device).float()
 
                 extra_inputs = self._seg.select_necessary_extra_inputs(extra_inputs)
@@ -153,18 +187,28 @@ class SegTrainer:
                     self._optimizer.zero_grad()
 
                     # Update learning rate
-                    if warmup_scheduler is not None:
-                        warmup_scheduler.step()
+                    if scheduler is not None:
+                        scheduler.step()
+
+                # forward_time_end = time.time()
+                # print(f"Forward time: {forward_time_end - forward_time_start}")
 
                 with torch.no_grad():
                     training_loss += loss.detach() * batch_size * self._grad_acc_steps
                     n_samples_train += batch_size
 
+                # load_time_start = time.time()
+
             training_loss /= n_samples_train
-            self._training_losses.append(training_loss.item())
+            training_loss = (
+                training_loss.item()
+                if isinstance(training_loss, torch.Tensor)
+                else training_loss
+            )
+            self._training_losses.append(training_loss)
 
             # Add training loss to progress bar
-            pbar.set_postfix({"train_loss": f"{training_loss.item():.3f}"})
+            pbar.set_postfix({"train_loss": f"{training_loss:.3f}"})
 
             if (epoch + 1) % validate_every != 0 and epoch != epochs - 1:
                 continue
@@ -174,7 +218,12 @@ class SegTrainer:
                 validation_loss, validation_score_fg, validation_scores = self.evaluate(
                     val_dataloader, device=device
                 )
-                self._validation_losses.append(validation_loss.item())
+                validation_loss = (
+                    validation_loss.item()
+                    if isinstance(validation_loss, torch.Tensor)
+                    else validation_loss
+                )
+                self._validation_losses.append(validation_loss)
                 self._validation_scores.append(validation_score_fg.item())
 
                 # Checkpoint last state
@@ -185,15 +234,15 @@ class SegTrainer:
                 # Add validation loss and score to progress bar
                 pbar.set_postfix(
                     {
-                        "train_loss": f"{training_loss.item():.3f}",
-                        "validation_loss": f"{validation_loss.item():.3f}",
+                        "train_loss": f"{training_loss:.3f}",
+                        "validation_loss": f"{validation_loss:.3f}",
                         "validation_score": f"{validation_score_fg.item():.3f}",
                     }
                 )
 
                 if validation_loss < self._best_validation_loss:
                     print(
-                        f"New best validation loss: {validation_loss.item()}"
+                        f"New best validation loss: {validation_loss}"
                         + f" at epoch {epoch}."
                     )
 

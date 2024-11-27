@@ -4,6 +4,7 @@ import argparse
 
 import wandb
 import numpy as np
+from torch.nn import CrossEntropyLoss
 from torch.utils.data import DataLoader
 
 sys.path.append(
@@ -118,7 +119,7 @@ def preprocess_cmd_args() -> argparse.Namespace:
     parser.add_argument(
         "--num_channels",
         type=int,
-        nargs="+",
+        nargs="*",
         help="Number of channels for the first layer of the decoder",
     )
 
@@ -137,6 +138,11 @@ def preprocess_cmd_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--weight_decay", type=float, help="Weight decay for optimizer. Default: 1e-5"
+    )
+    parser.add_argument(
+        "--lr_decay",
+        type=parse_bool,
+        help="Whether to use linear learning rate decay. Default: False",
     )
     parser.add_argument(
         "--learning_rate", type=float, help="Learning rate for optimizer. Default: 1e-3"
@@ -175,6 +181,12 @@ def preprocess_cmd_args() -> argparse.Namespace:
     )
 
     # Loss function
+    parser.add_argument(
+        "--loss_type",
+        type=str,
+        help="Type of loss function to use. Default: dice",
+        choices=["dice", "ce"],
+    )
     parser.add_argument(
         "--smooth", type=float, help="Smoothing factor for dice loss. Default: 0"
     )
@@ -220,7 +232,7 @@ def get_configuration_arguments() -> tuple[dict, dict, dict]:
     train_config = load_config(args.train_config_file)
     train_config = rewrite_config_arguments(train_config, args, "train")
 
-    train_config['train_mode'] = TRAIN_MODE
+    train_config["train_mode"] = TRAIN_MODE
 
     model_config[MODEL_TYPE] = rewrite_config_arguments(
         model_config[MODEL_TYPE], args, f"model, {MODEL_TYPE}"
@@ -279,11 +291,7 @@ if __name__ == "__main__":
     # Setup wandb logging
     # :=========================================================================:
     if wandb_log:
-        wandb_dir = setup_wandb(
-            params,
-            logdir,
-            wandb_project,
-            run_name=wandb_run_name)
+        wandb_dir = setup_wandb(params, logdir, wandb_project, run_name=wandb_run_name)
     else:
         wandb_dir = None
 
@@ -295,8 +303,7 @@ if __name__ == "__main__":
     dataset_name = train_config["dataset"]
     n_classes = dataset_config[dataset_name]["n_classes"]
     dataset_type = (
-        "DinoFeatures" if train_config[TRAIN_MODE]["precalculated_fts"] 
-        else "Normal"
+        "DinoFeatures" if train_config[TRAIN_MODE]["precalculated_fts"] else "Normal"
     )
 
     dataset_kwargs = dict(
@@ -317,7 +324,7 @@ if __name__ == "__main__":
         dataset_kwargs["hierarchy_level"] = train_config[TRAIN_MODE]["hierarchy_level"]
         dataset_kwargs["dino_model"] = train_config[TRAIN_MODE]["dino_model"]
         del dataset_kwargs["aug_params"]
-        
+
     # Dataset definition
     train_dataset, val_dataset = get_datasets(
         dataset_type=dataset_type, splits=splits, **dataset_kwargs
@@ -348,31 +355,37 @@ if __name__ == "__main__":
     # Define the 2D segmentation model
     # :=========================================================================:
     load_dino_fe = not train_config[TRAIN_MODE]["precalculated_fts"]
-    
+
     dino_seg = define_and_possibly_load_dino_seg(
         train_dino_cfg=train_config[TRAIN_MODE],
         decoder_cfg=model_config[MODEL_TYPE],
         n_classes=n_classes,
         device=device,
         cpt_fp=cpt_fp,
-        load_dino_fe=load_dino_fe
+        load_dino_fe=load_dino_fe,
     )
 
     # Define the Trainer that will be used to train the model
     # :=========================================================================:
     print("Defining trainer: training loop, optimizer and loss")
 
-    dice_loss = DiceLoss(
-        smooth=float(train_config[TRAIN_MODE]["smooth"]),
-        epsilon=float(train_config[TRAIN_MODE]["epsilon"]),
-        debug_mode=train_config[TRAIN_MODE]["debug_mode"],
-        fg_only=train_config[TRAIN_MODE]["fg_only"],
-    )
-
+    loss_type = train_config[TRAIN_MODE]["loss_type"]
+    if loss_type == "dice":
+        loss = DiceLoss(
+            smooth=float(train_config[TRAIN_MODE]["smooth"]),
+            epsilon=float(train_config[TRAIN_MODE]["epsilon"]),
+            debug_mode=train_config[TRAIN_MODE]["debug_mode"],
+            fg_only=train_config[TRAIN_MODE]["fg_only"],
+        )
+    elif loss_type == "ce":
+        loss = CrossEntropyLoss()
+    else:
+        raise ValueError(f"Loss type {loss_type} not supported")
+    
     trainer = SegTrainer(
         seg=dino_seg,
         learning_rate=float(train_config[TRAIN_MODE]["learning_rate"]),
-        loss_func=dice_loss,
+        loss_func=loss,
         is_resumed=is_resumed,
         optimizer_type=train_config[TRAIN_MODE]["optimizer_type"],
         weight_decay=float(train_config[TRAIN_MODE]["weight_decay"]),
@@ -403,20 +416,27 @@ if __name__ == "__main__":
         epochs=train_config[TRAIN_MODE]["epochs"],
         validate_every=validate_every,
         warmup_steps=train_config[TRAIN_MODE]["warmup_steps"],
+        lr_decay=train_config[TRAIN_MODE]["lr_decay"],
     )
-
+    
+    train_losses = trainer.training_losses
+    validation_losses = np.repeat(trainer.validation_losses, validate_every)
+    validation_losses = validation_losses[: len(train_losses)]
+    validation_scores = np.repeat(trainer.validation_scores, validate_every)
+    validation_scores = validation_scores[: len(train_losses)]
     write_to_csv(
         path=os.path.join(logdir, "training_statistics.csv"),
         data=np.stack(
             [
-                trainer.training_losses,
-                np.repeat(trainer.validation_losses, validate_every),
-                np.repeat(trainer.validation_scores, validate_every),
+                train_losses,
+                validation_losses,
+                validation_scores,
             ],
             1,
         ),
         header=["training_losses", "validation_losses", "validation_scores"],
     )
+
 
     if wandb_log:
         wandb.finish()

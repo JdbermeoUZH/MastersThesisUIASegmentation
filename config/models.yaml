@@ -65,6 +65,5 @@ ddpm_unet_oai:
   num_heads:                        1             # Default is 4 on the original paper when used on Imagenet
 
 resnet_decoder_dino:
-  num_channels:                     [64, 32, 16]  # If null, it is automatically determined
-  num_channels_last_upsample:       16            # If null, it is automatically determined
-
+  num_channels:                     [128, 64, 32, 16]  # If null, it is automatically determined
+  convs_per_block:                  2                  # Number of convolutions per block

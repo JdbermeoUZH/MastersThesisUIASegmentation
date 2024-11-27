@@ -62,11 +62,12 @@ segmentation:
   # Optimization parameters
   learning_rate:                0.001
   optimizer_type:               adam  # adam, adamW
-  weight_decay:                 0
+  weight_decay:                 0.
   max_grad_norm:                null 
 
   epochs:                       150   # 150 for subcortical_structures, 1000 for WMH (nuhs, umc)
-  warmup_steps:                 null # 0.05 for 5% of the total number of steps
+  warmup_steps:                 0. # 0.05 for 5% of the total number of steps
+  lr_decay:                     False
   batch_size:                   16
   grad_acc_steps:               1
   num_workers:                  1
@@ -74,7 +75,7 @@ segmentation:
   validate_every:               3
 
   # Loss function parameters
-  optimizer_type:               adam  # adam, adamW
+  loss_type:                    dice  # dice, ce
   epsilon:                      1e-10
   smooth:                       0
   debug_mode:                   False
@@ -97,7 +98,6 @@ segmentation:
     noise_mean:         0.0
     noise_std:          0.1
 
-
 segmentation_dino:
   dino_model:                   base  # small, base, large, gigantic
   precalculated_fts:            True
@@ -111,6 +111,7 @@ segmentation_dino:
   output_size:                  [256, 256]
 
   learning_rate:                0.001
+  
   optimizer_type:               adam  # adam, adamW
   weight_decay:                 0
   max_grad_norm:                null 
@@ -120,12 +121,13 @@ segmentation_dino:
   grad_acc_steps:               1
   num_workers:                  1
   validate_every:               3
-  warmup_steps:                 0.05 # 0.05 for 5% of the total number of steps
+  warmup_steps:                 0. # 0.05 for 5% of the total number of steps
+  lr_decay:                     False
   logdir:                       $RESULTS_DIR/subcortical_structures/segmentation/hcp_t1/dino_seg/debug
   wandb_project:                mt-segmentation_models
 
-
   # Loss function parameters
+  loss_type:                    dice  # dice, ce
   epsilon:                      1e-10
   smooth:                       0
   debug_mode:                   False
@@ -149,7 +151,6 @@ segmentation_dino:
     brightness_max:     0.1 #0.2     # Default 0.1
     noise_mean:         0.0
     noise_std:          0.1
-
 
 incremental_pca:
   logdir:                       $RESULTS_DIR/wmh/pca/incremental_pca/dino/base/test
@@ -185,7 +186,6 @@ incremental_pca:
     brightness_max:     0.1     # Default 0.1
     noise_mean:         0.0
     noise_std:          0.0
-
 
 ddpm_lucidrains:
   logdir:                       $RESULTS_DIR/subcortical_structures/ddpm/hcp_t1/normalized_imgs/3x3_norm_filters/4_15/batch_size_128_cond_by_concat
