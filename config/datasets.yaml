@@ -53,7 +53,7 @@ hcp_t2:
   paths_original:
     train: $DATA_DIR/subcortical_structures/hcp/data_T2_original_depth_256_from_0_to_20.hdf5
     test: $DATA_DIR/subcortical_structures/hcp/data_T2_original_depth_256_from_50_to_70.hdf5
-    val: $DATA_DIR/subcortical_structures/hcp/data_T2_original_depth_256_from_50_to_70.hdf5
+    val: $DATA_DIR/subcortical_structures/hcp/data_T2_original_depth_256_from_20_to_25.hdf5
 
 
 abide_caltech:

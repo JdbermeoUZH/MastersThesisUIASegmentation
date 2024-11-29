@@ -15,6 +15,9 @@ dataset:          hcp_t1        # subcortical_structures: hcp_t1, hcp_t2, abide_
                                 # wmh: umc, nuhs, vu
                                 # wmh + synthseg labels: umc_w_synthseg_labels, nuhs_w_synthseg_labels, vu_w_synthseg_labels
 
+move_data_to_node: True
+node_data_path:    /scratch/${USER}/data
+
 dae:
   wandb_project:                mt-dae_training
   batch_size:                   1
@@ -167,7 +170,9 @@ incremental_pca:
   precalculated_fts:            True
   aug_params:                   null
 
-  check_loss_every:             10  #1000 steps in total 
+  check_loss_every:             null  
+  explained_var_pcs:            0.95  # Use 0.95 for 95% explained variance components, which are use to measure reconstruction error
+  checkpoint_every:             100  
 
   precalculated_fts:            True
   augmentation:                       # Not used if precalculated_fts is True

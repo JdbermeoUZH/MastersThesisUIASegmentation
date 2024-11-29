@@ -1,6 +1,7 @@
 import os
 import sys
 import argparse
+from typing import Optional
 
 import wandb
 import numpy as np
@@ -8,15 +9,14 @@ import torch
 from tqdm import tqdm
 import joblib
 from torch.utils.data import DataLoader
-from sklearn.decomposition import IncrementalPCA
-from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import mean_squared_error
-
+from torch.nn.functional import mse_loss
 
 sys.path.append(
     os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 )
 
+from tta_uia_segmentation.src.models.pca.IncrementalPCA import IncrementalPCA
+from tta_uia_segmentation.src.models.pca.utils import flatten_pixels
 from tta_uia_segmentation.src.dataset.io import get_datasets
 from tta_uia_segmentation.src.utils.io import (
     load_config,
@@ -28,7 +28,7 @@ from tta_uia_segmentation.src.utils.utils import (
     seed_everything,
     define_device,
     parse_bool,
-    torch_to_numpy
+    torch_to_numpy,
 )
 from tta_uia_segmentation.src.utils.logging import setup_wandb
 
@@ -106,7 +106,17 @@ def preprocess_cmd_args() -> argparse.Namespace:
         help="Check loss every n iterations. Default: 10",
     )
     parser.add_argument(
+        "--checkpoint_every",
+        type=int,
+        help="Save checkpoint every n iterations. Default: 100",
+    )
+    parser.add_argument(
         "--batch_size", type=int, help="Batch size for training. Default: 10"
+    )
+    parser.add_argument(
+        "--num_workers",
+        type=int,
+        help="Number of workers for dataloader. Default: 1",
     )
     # Dataset and its transformations to use for training
     # :=========================================================================:
@@ -117,6 +127,11 @@ def preprocess_cmd_args() -> argparse.Namespace:
         "--hierarchy_level",
         type=int,
         help="Hierarchy level for DINO dataset. Default: 2",
+    )
+    parser.add_argument(
+        "--move_data_to_node",
+        type=parse_bool,
+        help="Move data to node before training. Default: True",
     )
 
     args = parser.parse_args()
@@ -133,7 +148,7 @@ def get_configuration_arguments() -> tuple[dict, dict]:
     train_config = load_config(args.train_config_file)
     train_config = rewrite_config_arguments(train_config, args, "train")
 
-    train_config['train_mode'] = TRAIN_MODE
+    train_config["train_mode"] = TRAIN_MODE
 
     train_config[TRAIN_MODE] = rewrite_config_arguments(
         train_config[TRAIN_MODE], args, f"train, {TRAIN_MODE}"
@@ -142,33 +157,35 @@ def get_configuration_arguments() -> tuple[dict, dict]:
     return dataset_config, train_config
 
 
-def measure_reconstruction_error(x: np.ndarray, ipca: IncrementalPCA, scaler: StandardScaler) -> float:
-    x_normalized = scaler.transform(x)
-    x_reconstructed = ipca.inverse_transform(ipca.transform(x_normalized))
-    return float(mean_squared_error(x_normalized, x_reconstructed))
-
-
-def measure_error_on_dataloader(dataloader: DataLoader, split: str, ipca: IncrementalPCA, scaler: StandardScaler) -> float:
+def measure_error_on_dataloader(
+    dataloader: DataLoader,
+    split: str,
+    ipca: IncrementalPCA,
+    num_components_recosntruct: Optional[int] = None,
+) -> float:
     n_samples = 0
     error = 0
-    pbar = tqdm(
-        dataloader,
-        desc=f"Measuring error on {split} set"
-    )
-    
+    pbar = tqdm(dataloader, desc=f"Measuring error on {split} set")
+
     for x, *_ in pbar:
         # Flatten the images from NCHW to (N**H*W)C
         if isinstance(x, torch.Tensor):
-            x_batch = x.view(-1, x.shape[0])
+            x_batch, *_ = flatten_pixels(x)
         elif isinstance(x, list):
-            x_batch = torch.cat([x_i.view(-1, x_i.shape[0]) for x_i in x], dim=0)
+            x_batch = torch.cat([flatten_pixels(x_i)[0] for x_i in x], dim=0)
+        else:
+            raise ValueError("x must be a tensor or a list of tensors")
         n_samples += x_batch.shape[0]
-        x_batch = torch_to_numpy(x_batch)
 
-        error += measure_reconstruction_error(x_batch, ipca, scaler)
+        x_batch_recon = ipca.reconstruct(x_batch, num_components_recosntruct)
+ 
+        batch_mse = mse_loss(
+            x_batch.to(x_batch_recon.device), x_batch_recon
+        )
 
-    return error/n_samples
+        error += float(batch_mse)
 
+    return error / n_samples
 
 
 if __name__ == "__main__":
@@ -208,11 +225,7 @@ if __name__ == "__main__":
     # Setup wandb logging
     # :=========================================================================:
     if wandb_log:
-        wandb_dir = setup_wandb(
-            params,
-            logdir,
-            wandb_project,
-            run_name=wandb_run_name)
+        wandb_dir = setup_wandb(params, logdir, wandb_project, run_name=wandb_run_name)
     else:
         wandb_dir = None
 
@@ -226,10 +239,10 @@ if __name__ == "__main__":
 
     dataset_name = train_config["dataset"]
     n_classes = dataset_config[dataset_name]["n_classes"]
+    node_data_path = train_config["node_data_path"] if train_config["move_data_to_node"] else None
 
     dataset_type = (
-        "DinoFeatures" if train_config[TRAIN_MODE]["precalculated_fts"] 
-        else "Normal"
+        "DinoFeatures" if train_config[TRAIN_MODE]["precalculated_fts"] else "Normal"
     )
 
     dataset_kwargs = dict(
@@ -241,6 +254,7 @@ if __name__ == "__main__":
         dim_proc=dataset_config[dataset_name]["dim"],
         aug_params=train_config[TRAIN_MODE]["augmentation"],
         load_original=False,
+        node_data_path=node_data_path,
     )
 
     if dataset_type == "DinoFeatures":
@@ -251,25 +265,6 @@ if __name__ == "__main__":
         dataset_kwargs["dino_model"] = train_config[TRAIN_MODE]["dino_model"]
         del dataset_kwargs["aug_params"]
 
-    dataset_kwargs = dict(
-        dataset_name=dataset_name,
-        paths_preprocessed=dataset_config[dataset_name]["paths_preprocessed"],
-        paths_original=dataset_config[dataset_name]["paths_original"],
-        resolution_proc=dataset_config[dataset_name]["resolution_proc"],
-        n_classes=n_classes,
-        dim_proc=dataset_config[dataset_name]["dim"],
-        aug_params=train_config[TRAIN_MODE]["augmentation"],
-        load_original=False,
-    )
-
-    if dataset_type == "DinoFeatures":
-        dataset_kwargs["paths_preprocessed_dino"] = dataset_config[dataset_name][
-            "paths_preprocessed_dino"
-        ]
-        dataset_kwargs["hierarchy_level"] = train_config[TRAIN_MODE]["hierarchy_level"]
-        dataset_kwargs["dino_model"] = train_config[TRAIN_MODE]["dino_model"]
-        del dataset_kwargs["aug_params"]
-        
     # Dataset definition
     train_dataset, val_dataset = get_datasets(
         dataset_type=dataset_type, splits=splits, **dataset_kwargs
@@ -278,7 +273,7 @@ if __name__ == "__main__":
     # Define dataloaders
     batch_size = train_config[TRAIN_MODE]["batch_size"]
     num_workers = train_config[TRAIN_MODE]["num_workers"]
-    
+
     train_dataloader = DataLoader(
         dataset=train_dataset,
         batch_size=batch_size,
@@ -298,8 +293,9 @@ if __name__ == "__main__":
     pca_components = train_config[TRAIN_MODE]["pca_components"]
     epochs = train_config[TRAIN_MODE]["epochs"]
     check_loss_every = train_config[TRAIN_MODE]["check_loss_every"]
+    explained_var_pcs = train_config[TRAIN_MODE]["explained_var_pcs"]
+    checkpoint_every = train_config[TRAIN_MODE]["checkpoint_every"]
 
-    scaler = StandardScaler()
     ipca = IncrementalPCA(n_components=pca_components)
 
     # Define the incremental PCA model
@@ -311,46 +307,48 @@ if __name__ == "__main__":
         for step_i, (x, *_) in enumerate(tqdm(train_dataloader)):
             # Flatten the images from NCHW to (N**H*W)C
             if isinstance(x, torch.Tensor):
-                x_batch = x.view(-1, x.shape[0])
+                x_batch, *_ = flatten_pixels(x)
             elif isinstance(x, list):
-                x_batch = torch.cat([x_i.view(-1, x_i.shape[0]) for x_i in x], dim=0)
-            
+                x_batch = torch.cat([flatten_pixels(x_i)[0] for x_i in x], dim=0)
+            else:
+                raise ValueError("x must be a tensor or a list of tensors")
+
             n_samples += x_batch.shape[0]
 
-            # Convert to numpy array
-            x_batch = torch_to_numpy(x_batch)
-
-            # Normalize the data
-            scaler.partial_fit(x_batch)  # Update running mean and std
-            x_batch_normalized = scaler.transform(x_batch) 
-
             # Fit the IncrementalPCA model
-            ipca.partial_fit(x_batch_normalized)
+            ipca.partial_fit(x_batch)
 
-            if step_i % check_loss_every == 0:
-                train_error = measure_error_on_dataloader(train_dataloader, "train", ipca, scaler)
-                val_error = measure_error_on_dataloader(val_dataloader, "val", ipca, scaler)
+            # Move calculated PCs to device for faster reconstruction
+            ipca.to_device(device)
+
+            if check_loss_every is not None and step_i % check_loss_every == 0:
+                if explained_var_pcs is not None:
+                    num_components = ipca.num_components_to_keep(explained_var_pcs)
+                else:
+                    num_components = None
+
+                train_error = measure_error_on_dataloader(
+                    train_dataloader, "train", ipca, num_components
+                )
+                val_error = measure_error_on_dataloader(
+                    val_dataloader, "val", ipca, num_components
+                )
 
                 if wandb_log:
                     wandb.log({"train_error": train_error, "val_error": val_error})
 
-                print(f"Step: {step_i}, Train error: {train_error}, Val error: {val_error}")
-
-                # Save the model
-                joblib.dump(ipca, os.path.join(logdir, f"ipca_latest_step_{step_i}.pkl"))
-                joblib.dump(scaler, os.path.join(logdir, f"scaler_latest_step_{step_i}.pkl"))
+                print(
+                    f"Step: {step_i}, Train error: {train_error}, Val error: {val_error}"
+                )
 
                 if val_error < best_val_error:
                     best_val_error = val_error
-                    joblib.dump(ipca, os.path.join(logdir, "ipca_best.pkl"))
-                    joblib.dump(scaler, os.path.join(logdir, "scaler_best.pkl"))
-    
+                    ipca.save(os.path.join(logdir, "ipca_best.pkl"))
+
+            if checkpoint_every is not None and step_i % checkpoint_every == 0:
+                ipca.save(os.path.join(logdir, f"ipca_step_{step_i}.pkl"))
+
     print("Training done.")
 
     # Save the final model
-    joblib.dump(ipca, os.path.join(logdir, "ipca_final.pkl"))
-    joblib.dump(scaler, os.path.join(logdir, "scaler_final.pkl"))
-
-
-
-
+    ipca.save(os.path.join(logdir, "ipca_last.pkl"))

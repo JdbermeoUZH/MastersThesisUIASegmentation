@@ -1,3 +1,5 @@
+import os
+import copy
 import random
 from typing import Any, Optional
 
@@ -55,10 +57,36 @@ class DatasetDinoFeatures(Dataset):
 
         super().__init__(split=split, **kwargs)
 
+        # Move data to compute node if path is specified and adjust paths accordingly
+        # :=========================================================================:
+        self._path_preprocessed_dino = paths_preprocessed_dino[dino_model][split]
+
+        if "node_data_path" in kwargs and kwargs["node_data_path"] is not None:
+            breakpoint()
+            node_data_path = kwargs["node_data_path"]
+            old_path_preprocessed_dino = copy.deepcopy(self._path_preprocessed_dino)
+            
+            # Remove $DATA_DIR from the beginning of the paths, if necessary 
+            if "DATA_DIR" in os.environ:
+                data_dir = os.environ['DATA_DIR']
+
+                self._path_preprocessed_dino = self._path_preprocessed_dino[len(data_dir):].lstrip('/')
+
+            self._path_preprocessed_dino = os.path.join(node_data_path, self._path_preprocessed_dino)
+
+            paths = (
+                (old_path_preprocessed_dino, self._path_preprocessed_dino),
+            )
+
+            # Move data to compute node
+            for old_path, new_path in paths:
+                breakpoint()
+                os.makedirs(os.path.dirname(new_path), exist_ok=True)
+                os.system(f'rsync -a --inplace {old_path} {new_path} --progress' )
+
         # Define attributes specific to this class
         # :====================================================================:
         self._hierarchy_level = hierarchy_level
-        self._path_preprocessed_dino = paths_preprocessed_dino[dino_model][split]
 
         with h5py.File(self._path_preprocessed_dino, "r") as h5f:
             self._dino_patch_size: int = h5f.attrs["patch_size"]  # type: ignore

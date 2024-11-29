@@ -73,8 +73,8 @@ class Dataset(data.Dataset):
     def __init__(
         self,
         dataset_name: str,
-        paths_preprocessed: str,
-        paths_original: str,
+        paths_preprocessed: dict[str, str],
+        paths_original: dict[str, str],
         split: str,
         resolution_proc: tuple[float, float, float],
         dim_proc: tuple[int, int, int],
@@ -90,11 +90,13 @@ class Dataset(data.Dataset):
         seed: Optional[int] = None,
         label_names: Optional[dict] = None,
         check_dims_proc_and_orig_match: bool = False,
+        node_data_path: Optional[str] = None,
+
     ):
 
         assert_in(split, "split", ["train", "val", "test"])
         self._dataset_name = dataset_name
-        self._path_preprocessed = os.path.expanduser(paths_preprocessed[split])
+        self._path_preprocessed: str = os.path.expanduser(paths_preprocessed[split])
         self._path_original = os.path.expanduser(paths_original[split])
         self._split = split
         self._load_in_memory = load_in_memory
@@ -112,6 +114,32 @@ class Dataset(data.Dataset):
         self._augment = aug_params is not None
         self._load_original = load_original
         self._seed = seed
+
+        # Move data to compute node if path is specified and adjust paths accordingly
+        # :=========================================================================:
+        if node_data_path is not None:
+            old_paths_preprocessed = copy.deepcopy(self._path_preprocessed)
+            old_paths_original = copy.deepcopy(self._path_original)
+            
+            # Remove $DATA_DIR from the beginning of the paths, if necessary 
+            if "DATA_DIR" in os.environ:
+                data_dir = os.environ['DATA_DIR']
+
+                self._path_preprocessed = self._path_preprocessed[len(data_dir):].lstrip('/')
+                self._path_original = self._path_original[len(data_dir):].lstrip('/')
+
+            self._path_preprocessed = os.path.join(node_data_path, self._path_preprocessed)
+            self._path_original = os.path.join(node_data_path, self._path_original)
+
+            paths = (
+                (old_paths_preprocessed, self._path_preprocessed),
+                (old_paths_original, self._path_original),
+            )
+
+            # Move data to compute node
+            for old_path, new_path in paths:
+                os.makedirs(os.path.dirname(new_path), exist_ok=True)
+                os.system(f'rsync -a --inplace {old_path} {new_path} --progress')
 
         # Load original and preprocessed to memory (if specified) images and labels
         # :=========================================================================:

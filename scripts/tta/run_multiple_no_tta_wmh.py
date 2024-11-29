@@ -21,8 +21,16 @@ classes_of_interest = [str(c) for c in classes_of_interest]
 # :====================================:
 seg_models_path = {
     "umc": (
-        #"$RESULTS_DIR/wmh/segmentation/umc/norm_seg/norm_k_3/bs_32_lr_1em4_grad_clip_1.0",
-        "$RESULTS_DIR/wmh/segmentation/umc/dino/large/hierarchichal_decoder/bs_32_lr_1em4_grad_clip_1.0_hier_2",
+        # "$RESULTS_DIR/wmh/segmentation/umc/norm_seg/norm_k_3/bs_32_lr_1em4_grad_clip_1.0",
+        # "$RESULTS_DIR/wmh/segmentation/umc/dino/large/hierarchichal_decoder/bs_32_lr_1em4_grad_clip_1.0_hier_2",
+        # "$RESULTS_DIR/wmh/segmentation/umc/dino/large/hierarchichal_decoder/fg_only_loss_bs_32_lr_1em4_grad_clip_1.0_hier_2",
+        # "$RESULTS_DIR/wmh/segmentation/umc/dino/large/hierarchichal_decoder/bigger_decoder_4x_bs_32_lr_1em4_grad_clip_1.0_hier_2",
+        # "$RESULTS_DIR/wmh/segmentation/umc/dino/large/hierarchichal_decoder/bs_16_lr_1em3_NO_grad_clip_hier_2",
+        "$RESULTS_DIR/wmh/segmentation/umc/dino/large/hierarchichal_decoder/bs_16_lr_1em3_hier_2_128_64_32_16_adam",
+        "$RESULTS_DIR/wmh/segmentation/umc/dino/large/resnet_decoder/bs_16_lr_1em3_NO_grad_clip_NO_weight_decay_hier_2",
+        "$RESULTS_DIR/wmh/segmentation/umc/dino/large/resnet_decoder/opt_params_kerem_bs_32_dice_loss_decay_hier_0",
+        #"$RESULTS_DIR/wmh/segmentation/umc/dino/large/resnet_decoder/opt_params_kerem_bs_32_CE_loss_decay_hier_0",
+        "$RESULTS_DIR/wmh/segmentation/umc/dino/large/resnet_decoder/bs_16_lr_1em3_NO_grad_clip_NO_weight_decay_hier_0",
     ),
     # "nuhs": (
     #     "$RESULTS_DIR/wmh/segmentation/nuhs/dino/large/hierarchichal_decoder/bs_32_lr_1em4_grad_clip_1.0_hier_2",

@@ -107,7 +107,7 @@ def define_and_possibly_load_dino_seg(
     output_size: tuple[int, ...] = train_dino_cfg["output_size"]
 
     num_channels: Optional[tuple[int, ...]] = decoder_cfg["num_channels"]
-    convs_per_block = decoder_cfg["convs_per_block"]
+    convs_per_block = decoder_cfg["convs_per_block"] if "convs_per_block" in decoder_cfg else 2
 
     if num_channels is None or len(num_channels) == 0:
         num_upsampling = math.ceil(math.log2(dino_fe.patch_size)) + 1

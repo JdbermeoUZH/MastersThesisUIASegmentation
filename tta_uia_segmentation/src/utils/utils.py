@@ -528,7 +528,7 @@ def parse_bool(value: str) -> bool:
     return value.lower() == 'true'
 
 
-def torch_to_numpy(*tensors: torch.Tensor) -> np.ndarray:
+def torch_to_numpy(*tensors: torch.Tensor) -> np.ndarray | tuple[np.ndarray]:
     """
     Convert one or more PyTorch tensors to NumPy arrays.
 
