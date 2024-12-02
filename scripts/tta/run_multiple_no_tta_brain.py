@@ -17,7 +17,7 @@ print_config = False
 # :====================================:
 dataset_type = "subcortical_structures"
 split = "test"
-target_datasets = ["abide_stanford", "abide_caltech", "hcp_t1", "hcp_t2"]
+target_datasets = ["abide_stanford"]#, "abide_caltech", "hcp_t1", "hcp_t2"]
 classes_of_interest = []
 classes_of_interest = [str(c) for c in classes_of_interest]
 
@@ -25,11 +25,20 @@ classes_of_interest = [str(c) for c in classes_of_interest]
 # :====================================:
 seg_models_path = {
     "abide_stanford": (
-        "$RESULTS_DIR/subcortical_structures/segmentation/abide_stanford/dino/large/hierarchichal_decoder/bs_16_lr_1em3_hier_2_128_64_32_16_adam",
-        "$RESULTS_DIR/subcortical_structures/segmentation/abide_stanford/dino/large/resnet_decoder/bs_16_lr_1em3_NO_grad_clip_NO_weight_decay_hier_2",
+        # "$RESULTS_DIR/subcortical_structures/segmentation/abide_stanford/dino/large/resnet_decoder/bs_16_lr_1em3_NO_grad_clip_NO_weight_decay_hier_2",
+        # "$RESULTS_DIR/subcortical_structures/segmentation/abide_stanford/dino/large/resnet_decoder/bs_16_lr_1em3_NO_grad_clip_NO_weight_decay_hier_2_PCA_num_PCA_9",
+        # "$RESULTS_DIR/subcortical_structures/segmentation/abide_stanford/dino/large/resnet_decoder/bs_16_lr_1em3_NO_grad_clip_NO_weight_decay_hier_2_PCA_num_PCA_30",
+        # "$RESULTS_DIR/subcortical_structures/segmentation/abide_stanford/dino/large/resnet_decoder/bs_16_lr_1em3_NO_grad_clip_NO_weight_decay_hier_2_PCA_num_PCA_42",
+        # "$RESULTS_DIR/subcortical_structures/segmentation/abide_stanford/dino/large/resnet_decoder/bs_16_lr_1em3_NO_grad_clip_NO_weight_decay_hier_2_PCA_num_PCA_109",
+        # "$RESULTS_DIR/subcortical_structures/segmentation/abide_stanford/dino/large/resnet_decoder/bs_16_lr_1em3_NO_grad_clip_NO_weight_decay_hier_2_PCA_num_PCA_232",
+        # "$RESULTS_DIR/subcortical_structures/segmentation/abide_stanford/dino/large/resnet_decoder/bs_16_lr_1em3_NO_grad_clip_NO_weight_decay_hier_2_PCA_num_PCA_620",
+        # "$RESULTS_DIR/subcortical_structures/segmentation/abide_stanford/dino/large/resnet_decoder/bs_16_lr_1em3_NO_grad_clip_NO_weight_decay_hier_2_PCA_num_PCA_937",
+        # "$RESULTS_DIR/subcortical_structures/segmentation/abide_stanford/dino/norm_seg/norm_k_3/bs_16_lr_1em3_NO_grad_clip",
         "$RESULTS_DIR/subcortical_structures/segmentation/abide_stanford/dino/large/resnet_decoder/opt_params_kerem_bs_32_CE_loss_decay_hier_0",
-        "$RESULTS_DIR/subcortical_structures/segmentation/abide_stanford/dino/large/resnet_decoder/opt_params_kerem_bs_32_dice_loss_decay_hier_0",
     ),
+    # "hcp_t2": (
+    #     "$RESULTS_DIR/subcortical_structures/segmentation/hcp_t2/dino/norm_seg/norm_k_3/bs_16_lr_1em3_NO_grad_clip",
+    # )
 }
 
 # Command format

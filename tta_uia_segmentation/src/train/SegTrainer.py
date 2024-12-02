@@ -154,7 +154,6 @@ class SegTrainer:
                 # load_time_end = time.time()
                 # forward_time_start = time.time()
                 # print(f"Load time: {load_time_end - load_time_start}")
-
                 if isinstance(x, list):
                     x = [x_i.to(device).float() for x_i in x]
                     batch_size = x[0].shape[0]

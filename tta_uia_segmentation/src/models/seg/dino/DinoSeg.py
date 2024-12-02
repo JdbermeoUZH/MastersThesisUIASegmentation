@@ -7,6 +7,7 @@ import torch.nn.functional as F
 from .DinoV2FeatureExtractor import DinoV2FeatureExtractor
 from .BaseDecoder import BaseDecoder
 from ..BaseSeg import BaseSeg
+from tta_uia_segmentation.src.models.pca.BasePCA import BasePCA
 from tta_uia_segmentation.src.utils.io import save_checkpoint
 
 
@@ -15,6 +16,7 @@ class DinoSeg(BaseSeg):
         self,
         decoder: BaseDecoder,
         dino_fe: Optional[DinoV2FeatureExtractor] = None,
+        pca: Optional[BasePCA] = None,
         dino_model_name: Optional[str] = None,
         precalculated_fts: bool = False,
         hierarchy_level: int = 0,
@@ -23,6 +25,7 @@ class DinoSeg(BaseSeg):
 
         self._decoder = decoder
         self._dino_fe = dino_fe
+        self._pca = pca
         self._hierarchy_level_dino_fe = hierarchy_level
 
         if self._dino_fe is not None:
@@ -120,6 +123,7 @@ class DinoSeg(BaseSeg):
     ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
 
         # Calculate dino features if necessary
+        # :=========================================================================:
         if not self.precalculated_fts:
             # Convert grayscale to RGB, required by DINO
             assert isinstance(
@@ -132,17 +136,23 @@ class DinoSeg(BaseSeg):
             assert (
                 self._dino_fe is not None
             ), "Dino feature extractor is required when features are not precalculated"
+            
             dino_out = self._dino_fe(x, mask, pre, self._hierarchy_level_dino_fe)
-            x = dino_out["patch"].permute(
-                0, 3, 1, 2
-            )  # N x np x np x df -> N x df x np x np
+            x = dino_out["patch"].permute(0, 3, 1, 2)  # N, np, np, df -> N, df, np, np
+
         else:
             assert isinstance(
                 x, list
             ), "If features are precalculated, x must be a list of tensors"
             x = x[self._hierarchy_level_dino_fe]
 
+
         assert isinstance(x, torch.Tensor), "x must be a tensor"
+
+        # Apply PCA if necessary
+        # :=========================================================================:
+        if self._pca is not None:
+            x = self._pca.img_to_pcs(x)
 
         return x, {"Dino Features": x}
 
@@ -218,3 +228,16 @@ class DinoSeg(BaseSeg):
         Returns the trainable parameters of the model.
         """
         return [self._decoder]
+
+    @property
+    def pca_n_components(self) -> Optional[int]:
+        if self._pca is not None:
+            return self._pca.n_components
+        return None
+
+    @pca_n_components.setter
+    def pca_n_components(self, value: Optional[int]):
+        if self._pca is not None:
+            self._pca.n_components = value
+        else:
+            raise ValueError("No PCA model initialized")

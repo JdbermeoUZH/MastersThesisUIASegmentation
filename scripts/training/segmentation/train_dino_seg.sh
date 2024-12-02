@@ -2,7 +2,7 @@
 #SBATCH --output=../../logs/%j_train_dino_seg.out
 #SBATCH --cpus-per-task=4
 #SBATCH --gres=gpu:1
-#SBATCH --constraint='geforce_gtx_titan_x'
+#SBATCH --constraint='titan_xp'
 
 # Setup env and copy necessary files to compute node
 source $REPO_DIR/scripts/utils/start_env_and_data.sh

@@ -2,6 +2,7 @@ import os
 import sys
 import math
 import argparse
+from typing import Literal, Optional
 
 import h5py
 import torch
@@ -31,6 +32,7 @@ from tta_uia_segmentation.src.utils.utils import (
     seed_everything,
     define_device,
     torch_to_numpy,
+    parse_bool,
 )
 from tta_uia_segmentation.src.models.seg.dino.DinoV2FeatureExtractor import (
     DinoV2FeatureExtractor,
@@ -101,6 +103,24 @@ def preprocess_cmd_args() -> argparse.Namespace:
         help="Splits of the dataset to use for training. Default: ['train']",
     )
 
+    parser.add_argument(
+        "--compression",
+        type=str,
+        help="Compression to use for the hdf5 file. Default: None",
+    )
+
+    parser.add_argument(
+        "--chunk_size",
+        type=int,
+        help="Chunk size to use for the hdf5 file. Default: None",
+    )
+
+    parser.add_argument(
+        "--auto_chunk",
+        type=parse_bool,
+        help="Whether to use automatic chunking for the hdf5 file. Default: True",
+    )
+
     # Data augmentation parameters
     # :==================================================:
     parser.add_argument(
@@ -112,9 +132,9 @@ def preprocess_cmd_args() -> argparse.Namespace:
     # I/O parameters
     # :==================================================:
     parser.add_argument(
-        "--logdir",
+        "--out_dir_suffix", 
         type=str,
-        help='Path to directory where logs will be stored. Default: "logs"',
+        help="Suffix to add to the output directory. Default: ''",
     )
 
     args = parser.parse_args()
@@ -151,6 +171,8 @@ def create_hdf5_datasets(
     dino_fe: DinoV2FeatureExtractor,
     n_augmentation_epochs: int,
     dataset_original_size: int,
+    compression: Optional[Literal['gzip', 'lzf'] | int] = None,
+    chunk_size: int | bool = True,
 ) -> h5py.File:
     hdf5_file = h5py.File(h5_path, "w")
 
@@ -170,12 +192,19 @@ def create_hdf5_datasets(
             math.ceil(hierarchy_i_img_w / dino_fe.patch_size),
         )
 
+        if not isinstance(chunk_size, bool) and isinstance(chunk_size, int):
+            chunk_size_fe = (1, chunk_size, *feature_spatial_size[1:])
+        else:
+            chunk_size_fe = True
+
         # N, dino_fe, H * 2^hier, W*2^hier
         hdf5_file.create_dataset(
             f"images_hier_{hierarchy_i}",
             shape=(0, *feature_spatial_size),
             maxshape=(None, *feature_spatial_size),
             dtype=np.float32,
+            compression=compression,
+            chunks=chunk_size_fe,
         )
 
     # Add attributes to the dataset about the Dino model used
@@ -196,6 +225,8 @@ def create_hdf5_datasets(
         shape=(0, *labels_spatial_size),
         maxshape=(None, *labels_spatial_size),
         dtype=np.float32,
+        compression=compression,
+        chunks=True,
     )
 
     return hdf5_file
@@ -312,6 +343,16 @@ if __name__ == "__main__":
     # Write new hdf5 file with precomputed features
     # :=========================================================================:
     hierarchy_level = preproc_config[PREPROCESSING_TYPE]["hierarchy_levels"]
+    chunk_size = preproc_config[PREPROCESSING_TYPE]["chunk_size"]
+    compression = preproc_config[PREPROCESSING_TYPE]["compression"]
+    auto_chunk = preproc_config[PREPROCESSING_TYPE]["auto_chunk"]
+    out_dir_suffix = preproc_config[PREPROCESSING_TYPE]["out_dir_suffix"]
+
+    if auto_chunk:
+        chunk_size = True
+
+    if compression not in ['gzip', 'lzf', None]:
+        compression = int(compression)
     
     for split, dataloader in dataloaders.items():
         print(f"Computing features for {split} split")
@@ -322,7 +363,7 @@ if __name__ == "__main__":
         path_preprocessed = dataloader.dataset.path_preprocessed
         out_dir = os.path.join(
             os.path.dirname(path_preprocessed),
-            'dino_features',
+            f'_dino_features_{out_dir_suffix}',
         )
         os.makedirs(out_dir, exist_ok=True)
         
@@ -338,6 +379,8 @@ if __name__ == "__main__":
             dino_fe,
             num_aug_epochs,
             len(dataloader.dataset),
+            compression=compression,
+            chunk_size=chunk_size,
         )
 
         # Iterate once over the dataset without data augmentation

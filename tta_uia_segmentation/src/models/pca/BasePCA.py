@@ -43,4 +43,15 @@ class BasePCA(ABC):
     def img_to_pcs(self, x: torch.Tensor) -> torch.Tensor:
         pass
 
+    @abstractmethod
+    def img_from_pcs(self, z: torch.Tensor) -> torch.Tensor:
+        pass
+
+    @abstractmethod
+    def img_reconstruct(self, x: torch.Tensor) -> torch.Tensor:
+        pass
+
+    @abstractmethod
+    def to_device(self, device: torch.device | str):
+        pass
     

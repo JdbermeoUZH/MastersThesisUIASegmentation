@@ -1,12 +1,17 @@
+
 import os
 
-# account = 'staff'
-# base_command = f'sbatch --account={account} no_tta_wmh_w_synthseg_labels.sh --wandb_log False --split test --bg_supp_x_norm_eval False --bg_supression_type none --classes_of_interest 16'
+# Logging params
+# :====================================:
+wandb_log = False
 
 # Inference params
 # :====================================:
-batch_size = 2
-save_predicted_vol_as_nifti = True
+slurm_jobs = True
+
+batch_size = 16
+num_workers = 3
+save_predicted_vol_as_nifti = False
 print_config = False
 
 # Datasets
@@ -20,36 +25,48 @@ classes_of_interest = [str(c) for c in classes_of_interest]
 # Trained Models
 # :====================================:
 seg_models_path = {
-    "umc": (
+    #"umc": (
         # "$RESULTS_DIR/wmh/segmentation/umc/norm_seg/norm_k_3/bs_32_lr_1em4_grad_clip_1.0",
         # "$RESULTS_DIR/wmh/segmentation/umc/dino/large/hierarchichal_decoder/bs_32_lr_1em4_grad_clip_1.0_hier_2",
         # "$RESULTS_DIR/wmh/segmentation/umc/dino/large/hierarchichal_decoder/fg_only_loss_bs_32_lr_1em4_grad_clip_1.0_hier_2",
         # "$RESULTS_DIR/wmh/segmentation/umc/dino/large/hierarchichal_decoder/bigger_decoder_4x_bs_32_lr_1em4_grad_clip_1.0_hier_2",
         # "$RESULTS_DIR/wmh/segmentation/umc/dino/large/hierarchichal_decoder/bs_16_lr_1em3_NO_grad_clip_hier_2",
-        "$RESULTS_DIR/wmh/segmentation/umc/dino/large/hierarchichal_decoder/bs_16_lr_1em3_hier_2_128_64_32_16_adam",
-        "$RESULTS_DIR/wmh/segmentation/umc/dino/large/resnet_decoder/bs_16_lr_1em3_NO_grad_clip_NO_weight_decay_hier_2",
-        "$RESULTS_DIR/wmh/segmentation/umc/dino/large/resnet_decoder/opt_params_kerem_bs_32_dice_loss_decay_hier_0",
+        # KEEP THIS ONE "$RESULTS_DIR/wmh/segmentation/umc/dino/large/hierarchichal_decoder/bs_16_lr_1em3_hier_2_128_64_32_16_adam",
+        # KEEP THIS ONE "$RESULTS_DIR/wmh/segmentation/umc/dino/large/resnet_decoder/bs_16_lr_1em3_NO_grad_clip_NO_weight_decay_hier_2",
+        # KEEP THIS ONE "$RESULTS_DIR/wmh/segmentation/umc/dino/large/resnet_decoder/opt_params_kerem_bs_32_dice_loss_decay_hier_0",
         #"$RESULTS_DIR/wmh/segmentation/umc/dino/large/resnet_decoder/opt_params_kerem_bs_32_CE_loss_decay_hier_0",
-        "$RESULTS_DIR/wmh/segmentation/umc/dino/large/resnet_decoder/bs_16_lr_1em3_NO_grad_clip_NO_weight_decay_hier_0",
+        # KEEP THIS ONE "$RESULTS_DIR/wmh/segmentation/umc/dino/large/resnet_decoder/bs_16_lr_1em3_NO_grad_clip_NO_weight_decay_hier_0",
+    #),
+    "nuhs": (
+         "$RESULTS_DIR/wmh/segmentation/nuhs/dino/large/hierarchichal_decoder/bs_16_lr_1em3_hier_2_128_64_32_16_adam",
+         "$RESULTS_DIR/wmh/segmentation/nuhs/dino/large/hierarchichal_decoder/bs_32_lr_1em4_grad_clip_1.0_hier_2",
+         "$RESULTS_DIR/wmh/segmentation/nuhs/dino/large/resnet_decoder/bs_16_lr_1em3_NO_grad_clip_NO_weight_decay_hier_2",
+         "$RESULTS_DIR/wmh/segmentation/nuhs/dino/norm_seg/norm_k_3/bs_16_lr_1em3_NO_grad_clip"
     ),
-    # "nuhs": (
-    #     "$RESULTS_DIR/wmh/segmentation/nuhs/dino/large/hierarchichal_decoder/bs_32_lr_1em4_grad_clip_1.0_hier_2",
-    # ),
-    # "vu": (
-    #     "$RESULTS_DIR/wmh/segmentation/vu/dino/large/dice_loss_smoothing_den_1em10_opt_param_kerem_bs_16",
-    #     "$RESULTS_DIR/wmh/segmentation/vu/dino/large/dice_loss_smoothing_den_1em10_opt_param_kerem_bs_16_grad_acc_2_lr_0.0001",
-    # ),
+    "vu": (
+         "$RESULTS_DIR/wmh/segmentation/vu/dino/large/hierarchichal_decoder/bs_16_lr_1em3_hier_2_128_64_32_16_adam",
+         "$RESULTS_DIR/wmh/segmentation/vu/dino/large/resnet_decoder/bs_16_lr_1em3_NO_grad_clip_NO_weight_decay_hier_2",
+         "$RESULTS_DIR/wmh/segmentation/vu/dino/norm_seg/norm_k_3/bs_16_lr_1em3_NO_grad_clip",
+    ),
 }
 
 # Command format
 # :====================================:
-base_command = (
-    "python no_tta.py "
-    + "$REPO_DIR/config/datasets.yaml "
-    + "$REPO_DIR/config/tta/tta.yaml "
-    + f" --wandb_log False" 
+if slurm_jobs:
+    account = "bmic"
+    base_command = f"sbatch --account={account} no_tta.sh"
+else:
+    base_command = (
+        "python no_tta.py "
+        + "$REPO_DIR/config/datasets.yaml "
+        + "$REPO_DIR/config/tta/tta.yaml "
+    )
+
+base_command += (
+    f" --wandb_log {wandb_log}"
     + f" --split {split}"
     + f" --batch_size {batch_size}"
+    + f" --num_workers {num_workers}"
     + f" --save_predicted_vol_as_nifti {save_predicted_vol_as_nifti}"
     + f" --print_config {print_config}"
     + " --viz_interm_outs "
@@ -82,8 +99,8 @@ for source_dataset, seg_model_paths in seg_models_path.items():
         # use the last to elements in the path as seg_model_exp
         tree_level = seg_model_path.split(os.path.sep).index(source_dataset) + 1
         seg_model_exp = os.path.join(*seg_model_path.split(os.path.sep)[tree_level:])
-        
-        for target_dataset in target_datasets:    
+
+        for target_dataset in target_datasets:
             log_dir = log_dir_base_path.format(
                 source_dataset=source_dataset,
                 target_dataset=target_dataset,
@@ -91,10 +108,11 @@ for source_dataset, seg_model_paths in seg_models_path.items():
             )
 
             print("#" * 70)
-            print("Source Dataset:", source_dataset)    
+            print("Source Dataset:", source_dataset)
             print("Target Dataset:", target_dataset)
-            print("Experiment:", seg_model_exp) 
+            print("Experiment:", seg_model_exp)
             print("#" * 70)
             os.system(
                 f"{base_command} --seg_dir {seg_model_path} --dataset {target_dataset} --logdir {log_dir}"
             )
+

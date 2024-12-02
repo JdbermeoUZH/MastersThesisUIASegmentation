@@ -1,6 +1,7 @@
 import os
 import json
 import math
+import yaml
 from typing import Optional, Union, Literal
 
 import torch
@@ -27,6 +28,9 @@ from .seg.dino.ResNetDecoder import ResNetDecoder
 from .seg.dino.HierarchichalDecoder import HierarchichalDecoder
 from .seg.dino.DinoSeg import DinoSeg
 from .seg.dino.HierarchichalDinoSeg import HierarchichalDinoSeg
+from .pca.BasePCA import BasePCA
+from .pca.IncrementalPCA import IncrementalPCA
+from tta_uia_segmentation.src.utils.utils import default
 
 
 def define_and_possibly_load_norm(
@@ -88,6 +92,28 @@ def define_and_possibly_load_norm_seg(
     return norm_seg
 
 
+def load_pca_from_cpt(
+    cpt_fp: str,
+    num_pca_components: int,
+    device: torch.device,
+) -> BasePCA:
+    params_path = os.path.join(os.path.dirname(cpt_fp), 'params.yaml')
+    cfg = yaml.safe_load(open(params_path, "r"))
+
+    train_mode = cfg['training']["train_mode"]    
+
+    if train_mode == "incremental_pca":
+        pca = IncrementalPCA.load_pca(cpt_fp)
+
+    else:
+        raise ValueError(f"Invalid PCA type: {train_mode}")
+    
+    pca.to_device(device)
+    pca.n_components = num_pca_components
+
+    return pca
+
+
 def define_and_possibly_load_dino_seg(
     train_dino_cfg: dict,
     decoder_cfg: dict,
@@ -105,6 +131,17 @@ def define_and_possibly_load_dino_seg(
     decoder_type = train_dino_cfg["decoder_type"]
     hierarchy_level = train_dino_cfg["hierarchy_level"]
     output_size: tuple[int, ...] = train_dino_cfg["output_size"]
+
+    # Define PCA if given
+    if train_dino_cfg["pca_path"] is not None:
+        pca = load_pca_from_cpt(
+            cpt_fp=train_dino_cfg["pca_path"],
+            num_pca_components=train_dino_cfg["num_pca_components"],
+            device=device
+            )
+        embedding_dim = default(pca.n_components, embedding_dim)
+    else:
+        pca = None
 
     num_channels: Optional[tuple[int, ...]] = decoder_cfg["num_channels"]
     convs_per_block = decoder_cfg["convs_per_block"] if "convs_per_block" in decoder_cfg else 2
@@ -152,6 +189,7 @@ def define_and_possibly_load_dino_seg(
         dino_seg = DinoSeg(
             decoder=decoder,
             dino_fe=dino_fe,
+            pca=pca,
             precalculated_fts=precalculated_fts,
             hierarchy_level=hierarchy_level,
             **extra_kwargs,
@@ -161,6 +199,7 @@ def define_and_possibly_load_dino_seg(
         dino_seg = HierarchichalDinoSeg(
             decoder=decoder,
             dino_fe=dino_fe,
+            pca=pca,
             precalculated_fts=precalculated_fts,
             hierarchy_levels=hierarchy_level,
             **extra_kwargs,

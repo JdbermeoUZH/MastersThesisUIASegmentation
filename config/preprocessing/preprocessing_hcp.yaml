@@ -24,9 +24,17 @@ normalize_with_nn:
 
 precalculate_dino_features:
 
+  out_dir_suffix:   "DELETE_ME"
+
   dino_model: large
   
   hierarchy_levels: 2
+
+  compression: null               # lzf, for gzip a number 0-9 can be specified
+
+  chunk_size: null
+
+  auto_chunk: True
 
   augmentation:
     num_epochs: 5

@@ -15,8 +15,8 @@ dataset:          hcp_t1        # subcortical_structures: hcp_t1, hcp_t2, abide_
                                 # wmh: umc, nuhs, vu
                                 # wmh + synthseg labels: umc_w_synthseg_labels, nuhs_w_synthseg_labels, vu_w_synthseg_labels
 
-move_data_to_node: True
-node_data_path:    /scratch/${USER}/data
+move_data_to_node: False #True
+node_data_path:    null #/scratch/${USER}/data
 
 dae:
   wandb_project:                mt-dae_training

@@ -7,6 +7,7 @@ import torch.nn.functional as F
 from .DinoV2FeatureExtractor import DinoV2FeatureExtractor
 from .DinoSeg import DinoSeg
 from .BaseDecoder import BaseDecoder
+from tta_uia_segmentation.src.models.pca.BasePCA import BasePCA
 from tta_uia_segmentation.src.utils.io import save_checkpoint
 
 
@@ -16,6 +17,7 @@ class HierarchichalDinoSeg(DinoSeg):
         decoder: BaseDecoder,
         hierarchy_levels: int,
         dino_fe: Optional[DinoV2FeatureExtractor] = None,
+        pca: Optional[BasePCA] = None,
         precalculated_fts: bool = False,
         **kwargs,
     ):
@@ -24,6 +26,7 @@ class HierarchichalDinoSeg(DinoSeg):
         super(HierarchichalDinoSeg, self).__init__(
             decoder=decoder,
             dino_fe=dino_fe,
+            pca=pca,
             precalculated_fts=precalculated_fts,
             hierarchy_level=0,
             **kwargs,
@@ -38,6 +41,7 @@ class HierarchichalDinoSeg(DinoSeg):
     ) -> tuple[List[torch.Tensor], dict[str, torch.Tensor]]:
 
         # Calculate dino features if necessary
+        # :=========================================================================:
         if not self.precalculated_fts:
             assert isinstance(
                 x, torch.Tensor
@@ -61,6 +65,11 @@ class HierarchichalDinoSeg(DinoSeg):
             ), "If features are precalculated, x must be a list of tensors"
             x_preproc_list = x
 
+        # Apply PCA if necessary
+        # :=========================================================================:
+        if self._pca is not None:
+            x_preproc_list = [self._pca.img_to_pcs(x) for x in x_preproc_list]
+            
         intermediate_outputs = {
             f"Dino Features (hier {i})": dino_fe
             for i, dino_fe in enumerate(x_preproc_list)

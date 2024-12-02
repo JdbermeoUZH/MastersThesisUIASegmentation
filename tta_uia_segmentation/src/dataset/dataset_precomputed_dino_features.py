@@ -119,8 +119,12 @@ class DatasetDinoFeatures(Dataset):
         """
         Dataset length is forced to be the same as the number of depth-wise slices
         """
-        with h5py.File(self._path_original, "r") as h5f:
-            self._length = h5f["images"].shape[0] * h5f["images"].shape[1]  # type: ignore
+        if self.dataset_name in ['vu', 'vu_w_synthseg_labels']:        
+            with h5py.File(self._path_preprocessed, "r") as h5f:
+                self._length = h5f["images"].shape[0]   # type: ignore
+        else:
+            with h5py.File(self._path_original, "r") as h5f:
+                self._length = h5f["images"].shape[0] * h5f["images"].shape[1]  # type: ignore
 
     def __getitem__(
         self, index
