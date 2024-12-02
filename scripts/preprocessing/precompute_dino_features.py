@@ -22,6 +22,7 @@ sys.path.append(
 )
 
 from tta_uia_segmentation.src.dataset.io import get_datasets
+from tta_uia_segmentation.src.dataset.dataset import Dataset
 import tta_uia_segmentation.src.dataset.utils as du
 from tta_uia_segmentation.src.utils.io import (
     load_config,
@@ -193,11 +194,12 @@ def create_hdf5_datasets(
         )
 
         if not isinstance(chunk_size, bool) and isinstance(chunk_size, int):
-            chunk_size_fe = (1, chunk_size, *feature_spatial_size[1:])
+            chunk_size_fe = (chunk_size, *feature_spatial_size)
         else:
             chunk_size_fe = True
 
         # N, dino_fe, H * 2^hier, W*2^hier
+        breakpoint()
         hdf5_file.create_dataset(
             f"images_hier_{hierarchy_i}",
             shape=(0, *feature_spatial_size),
@@ -245,11 +247,13 @@ def append_to_h5dataset(h5file: h5py.File, dataset_name: str, data: np.ndarray) 
 
 def add_precomputed_dino_features_to_h5(
     hdf5_file: h5py.File,
-    dl: DataLoader,
+    dl: DataLoader[Dataset],
     dino_fe: DinoV2FeatureExtractor,
     hierarchy_level: int,
     device: torch.device,
+    num_aug_epochs: int = 0,
     pbar_desc: str = "",
+
 ) -> None:
     pbar = tqdm(
         dl,
@@ -257,31 +261,38 @@ def add_precomputed_dino_features_to_h5(
     )
     for image, labels, *_ in pbar:
         # Expand to NCHW
-        image = image.to(device)
-        labels = labels.to(device)
+        image_ = image.to(device)
+        labels_ = labels.to(device)
 
         # Convert images to RGB
-        if image.shape[1] == 1:
-            image = du.grayscale_to_rgb(image)
+        if image_.shape[1] == 1:
+            image_ = du.grayscale_to_rgb(image_)
 
-        # Add Dino features to the hdf5 file
-        for hierarchy_i in range(hierarchy_level + 1):
-            # get dino features for each hierarchy level
-            dino_out = dino_fe.forward(image, hierarchy=hierarchy_i)
+        for iter_i in range(num_aug_epochs + 1):
+            ds: Dataset = dl.dataset # type: ignore
+            if iter_i == 0:
+                ds.augment = False
+            else:
+                ds.augment = True
 
-            features_i = x = dino_out["patch"].permute(
-                0, 3, 1, 2
-            )  # N x np x np x df -> N x df x np x np
-            append_to_h5dataset(
-                hdf5_file,
-                f"images_hier_{hierarchy_i}",
-                torch_to_numpy(features_i),
-            )
+            # Add Dino features to the hdf5 file
+            for hierarchy_i in range(hierarchy_level + 1):
+                # get dino features for each hierarchy level
+                dino_out = dino_fe.forward(image_, hierarchy=hierarchy_i)
 
-        # Add labels to the hdf5 file
-        labels = du.onehot_to_class(labels)
-        labels = labels.squeeze(1)  # N x 1 x H x W -> N x H x W
-        append_to_h5dataset(hdf5_file, "labels", torch_to_numpy(labels))
+                features_i = dino_out["patch"].permute(
+                    0, 3, 1, 2
+                )  # N x np x np x df -> N x df x np x np
+                append_to_h5dataset(
+                    hdf5_file,
+                    f"images_hier_{hierarchy_i}",
+                    torch_to_numpy(features_i),
+                )
+
+            # Add labels to the hdf5 file
+            labels = du.onehot_to_class(labels_)
+            labels = labels.squeeze(1)  # N x 1 x H x W -> N x H x W
+            append_to_h5dataset(hdf5_file, "labels", torch_to_numpy(labels))
 
 
 if __name__ == "__main__":
@@ -383,33 +394,16 @@ if __name__ == "__main__":
             chunk_size=chunk_size,
         )
 
-        # Iterate once over the dataset without data augmentation
-        dataloader.dataset.augment = False
-
+        # Iterate over the dataset and add precomputed features to the hdf5 file
         add_precomputed_dino_features_to_h5(
             hdf5_file,
             dataloader,
             dino_fe,
             hierarchy_level,
             device,
-            pbar_desc=f"Computing features without data augmentation for {split} split",
+            num_aug_epochs,
+            pbar_desc=f"Computing features with and without data augmentation for {split} split",
         )
-
-        # Iterate over the dataset with data augmentation for n epochs
-        dataloader.dataset.augment = True
-        print(
-            f"Computing features with data augmentation for {split} split"
-            f" for {num_aug_epochs} epochs"
-        )
-        for epoch in range(num_aug_epochs):
-            add_precomputed_dino_features_to_h5(
-                hdf5_file,
-                dataloader,
-                dino_fe,
-                hierarchy_level,
-                device,
-                pbar_desc=f"Computing features with data augmentation for {split} split, epoch {epoch}",
-            )
 
         hdf5_file.close()
 
