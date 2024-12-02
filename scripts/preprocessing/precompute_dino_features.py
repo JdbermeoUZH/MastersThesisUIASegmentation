@@ -199,7 +199,6 @@ def create_hdf5_datasets(
             chunk_size_fe = True
 
         # N, dino_fe, H * 2^hier, W*2^hier
-        breakpoint()
         hdf5_file.create_dataset(
             f"images_hier_{hierarchy_i}",
             shape=(0, *feature_spatial_size),
