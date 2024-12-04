@@ -130,6 +130,13 @@ def preprocess_cmd_args() -> argparse.Namespace:
         choices=["transposed", "interpolate"],
     )
 
+    parser.add_argument(
+        "--pc_norm_type",
+        type=str,
+        help="Type of normalization to use for the PCA features. Default: None",
+        choices=[None, "bn_layer", "per_img"],
+    )
+    
     # Training loop
     # :=========================================================================:
     parser.add_argument(
@@ -221,7 +228,18 @@ def preprocess_cmd_args() -> argparse.Namespace:
         type=int,
         help="Hierarchy level for DINO dataset. Default: 2",
     )
+    
+    parser.add_argument(
+        "--load_dataset_in_memory",
+        type=parse_bool,
+        help="Whether to load the entire dataset in memory. Default: False",
+    )
 
+    parser.add_argument(
+        "--node_data_path",
+        type=str,
+        help="Path in the compute node where to store the dataset's input data. Default: None",
+    )
     args = parser.parse_args()
 
     return args
@@ -324,13 +342,20 @@ if __name__ == "__main__":
         load_original=False,
     )
 
-    if dataset_type == "DinoFeatures":
+    if dataset_type == "Normal":
+        dataset_kwargs['load_in_memory'] = train_config[TRAIN_MODE]["load_dataset_in_memory"]
+        dataset_kwargs["node_data_path"] = train_config[TRAIN_MODE]["node_data_path"]
+
+    elif dataset_type == "DinoFeatures":
         dataset_kwargs["paths_preprocessed_dino"] = dataset_config[dataset_name][
             "paths_preprocessed_dino"
         ]
         dataset_kwargs["hierarchy_level"] = train_config[TRAIN_MODE]["hierarchy_level"]
         dataset_kwargs["dino_model"] = train_config[TRAIN_MODE]["dino_model"]
         del dataset_kwargs["aug_params"]
+    
+    else:
+        raise ValueError(f"Dataset type {dataset_type} not supported")
 
     # Dataset definition
     train_dataset, val_dataset = get_datasets(
@@ -338,7 +363,6 @@ if __name__ == "__main__":
     )
 
     # Define the dataloaders that will be used for training
-
     batch_size = train_config[TRAIN_MODE]["batch_size"]
     num_workers = train_config[TRAIN_MODE]["num_workers"]
 

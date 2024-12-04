@@ -40,36 +40,19 @@ class HierarchichalDinoSeg(DinoSeg):
         pre: bool = False,
     ) -> tuple[List[torch.Tensor], dict[str, torch.Tensor]]:
 
-        # Calculate dino features if necessary
+        # Get Dino Features
         # :=========================================================================:
-        if not self.precalculated_fts:
-            assert isinstance(
-                x, torch.Tensor
-            ), "If calculating features, x must be a tensor of image(s)"
-            # Convert grayscale to RGB, required by DINO
-            if x.shape[1] == 1:
-                x = x.repeat(1, 3, 1, 1)
-
-            assert (
-                self._dino_fe is not None
-            ), "Dino feature extractor is required when features are not precalculated"
-
-            x_preproc_list = []
-            for hier_i in range(self._hierarchy_levels + 1):
-                x_preproc = self._dino_fe(x, mask, pre, hierarchy=hier_i)
-                x_preproc_list.append(x_preproc["patch"].permute(0, 3, 1, 2))
-
-        else:
-            assert isinstance(
-                x, list
-            ), "If features are precalculated, x must be a list of tensors"
-            x_preproc_list = x
+        x_preproc_list = []
+        for hier_i in range(self._hierarchy_levels + 1):
+            x_preproc_list.append(
+                self._extract_dino_features(x, mask, pre, hierarchy=hier_i)
+            )
 
         # Apply PCA if necessary
         # :=========================================================================:
         if self._pca is not None:
-            x_preproc_list = [self._pca.img_to_pcs(x) for x in x_preproc_list]
-            
+            x_preproc_list = [self._get_pc_dino_features(x) for x in x_preproc_list]
+
         intermediate_outputs = {
             f"Dino Features (hier {i})": dino_fe
             for i, dino_fe in enumerate(x_preproc_list)

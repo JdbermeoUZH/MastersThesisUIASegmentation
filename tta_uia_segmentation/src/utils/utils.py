@@ -1,7 +1,7 @@
 import os
 import gc
 import random
-from typing import Optional, Union, Literal, Tuple
+from typing import Optional, Union, Literal, Tuple, Any
 
 import torch
 import torch.distributed
@@ -552,7 +552,7 @@ def exists(x):
     return x is not None
 
 
-def default(val, d):
+def default(val: Optional[Any], d: Any) -> Any:
     if exists(val):
         return val
     return d() if callable(d) else d
@@ -610,3 +610,13 @@ def nan_sum(*tensors):
     result[all_nan_mask] = float('nan')
     
     return result
+
+
+def min_max_normalize_channelwise(tensor: torch.Tensor, spatial_dims: tuple[int, ...], eps = 1e-8) -> torch.Tensor:
+    min_vals = tensor.amin(dim=spatial_dims, keepdim=True)
+    max_vals = tensor.amax(dim=spatial_dims, keepdim=True)
+    
+    # Perform the min-max normalization
+    normalized_tensor = (tensor - min_vals) / (max_vals - min_vals + eps)  # Add epsilon to avoid division by zero
+    
+    return normalized_tensor

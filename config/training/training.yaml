@@ -107,6 +107,10 @@ segmentation_dino:
   
   pca_path:                     null  # path to pretrained PCA model on dino features
   num_pca_components:           null  # Null for no PCA model
+  pc_norm_type:                 null  # Options are null, 'bn_layer', 'per_img' (min-max normalization per image)
+
+  load_dataset_in_memory:       False # If precalculated features is True, it must be False
+  node_data_path:               null #/scratch/${USER}/data # If not null, it copies the data to the compute node (doesn't work on precalculated features, too big)
 
   decoder_type:                 Hierarchichal # ResNet or Hierarchichal
   hierarchy_level:              2      # Upsamples image by 2^hierarchy_level before obtaining dino features.

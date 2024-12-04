@@ -54,7 +54,7 @@ class UpDecoderBlock(nn.Module):
             else:
                 in_channels = out_channels
 
-            conv_block_list.append(    
+            conv_block_list.append(
                 DoubleConv(
                     in_channels=in_channels,
                     out_channels=out_channels,

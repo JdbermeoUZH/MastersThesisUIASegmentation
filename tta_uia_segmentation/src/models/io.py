@@ -140,8 +140,10 @@ def define_and_possibly_load_dino_seg(
             device=device
             )
         embedding_dim = default(pca.n_components, embedding_dim)
+        pc_norm_type = train_dino_cfg["pc_norm_type"]
     else:
         pca = None
+        pc_norm_type = None
 
     num_channels: Optional[tuple[int, ...]] = decoder_cfg["num_channels"]
     convs_per_block = decoder_cfg["convs_per_block"] if "convs_per_block" in decoder_cfg else 2
@@ -184,7 +186,10 @@ def define_and_possibly_load_dino_seg(
     if load_dino_fe:
         extra_kwargs = dict()
     else:
-        extra_kwargs = dict(dino_model_name=dino_fe.model_name)
+        extra_kwargs = dict(
+            dino_model_name=dino_fe.model_name,
+            dino_emb_dim=dino_fe.emb_dim,
+            )
         dino_fe = None
 
     if decoder_type != "Hierarchichal":
@@ -192,6 +197,7 @@ def define_and_possibly_load_dino_seg(
             decoder=decoder,
             dino_fe=dino_fe,
             pca=pca,
+            pc_norm_type=pc_norm_type,
             precalculated_fts=precalculated_fts,
             hierarchy_level=hierarchy_level,
             **extra_kwargs,
@@ -202,6 +208,7 @@ def define_and_possibly_load_dino_seg(
             decoder=decoder,
             dino_fe=dino_fe,
             pca=pca,
+            pc_norm_type=pc_norm_type,
             precalculated_fts=precalculated_fts,
             hierarchy_levels=hierarchy_level,
             **extra_kwargs,

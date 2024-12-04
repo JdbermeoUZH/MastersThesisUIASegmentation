@@ -1,4 +1,4 @@
-from typing import Optional, List
+from typing import Optional, List, Literal
 
 import torch
 import torch.nn as nn
@@ -9,6 +9,7 @@ from .BaseDecoder import BaseDecoder
 from ..BaseSeg import BaseSeg
 from tta_uia_segmentation.src.models.pca.BasePCA import BasePCA
 from tta_uia_segmentation.src.utils.io import save_checkpoint
+from tta_uia_segmentation.src.utils.utils import min_max_normalize_channelwise, default
 
 
 class DinoSeg(BaseSeg):
@@ -17,7 +18,9 @@ class DinoSeg(BaseSeg):
         decoder: BaseDecoder,
         dino_fe: Optional[DinoV2FeatureExtractor] = None,
         pca: Optional[BasePCA] = None,
+        pc_norm_type: Literal["bn_layer", "per_img", None] = "per_img",
         dino_model_name: Optional[str] = None,
+        dino_emb_dim: Optional[int] = None,
         precalculated_fts: bool = False,
         hierarchy_level: int = 0,
     ):
@@ -29,23 +32,48 @@ class DinoSeg(BaseSeg):
         self._hierarchy_level_dino_fe = hierarchy_level
 
         if self._dino_fe is not None:
-            assert (
-                dino_model_name is None
-            ), "Dino model name is not required when a Dino feature extractor is provided"
+            assert dino_model_name is None, (
+                "Dino model name is not required when a "
+                "Dino feature extractor is provided"
+            )
+            assert dino_emb_dim is None, (
+                "Dino embedding dimension is not required when a "
+                "Dino feature extractor is provided"
+            )
             self._dino_model_name = self._dino_fe.model_name
+            self._dino_emb_dim = self._dino_fe.emb_dim
+
         else:
-            assert (
-                dino_model_name is not None
-            ), "Dino model name is required when a Dino feature extractor is not provided"
+            assert dino_model_name is not None, (
+                "Dino model name is required when a "
+                "Dino feature extractor is not provided"
+            )
+            assert dino_emb_dim is not None, (
+                "Dino embedding dimension is required when a "
+                "Dino feature extractor is not provided"
+            )
+
             self._dino_model_name = dino_model_name
+            self._dino_emb_dim = dino_emb_dim
 
         self._precalculated_fts = precalculated_fts
+
+        self._pc_norm_type = pc_norm_type
+
+        self._bn_dino_features = None
+
+        if self._pc_norm_type is not None:
+            assert self._pca is not None, "PCA model is required if normalization is expected"
+
+            if self._pc_norm_type == "bn_layer":
+                n_components = default(self._pca.n_components, self._dino_emb_dim)
+                self._bn_dino_features = nn.BatchNorm2d(n_components)
 
     def forward(
         self,
         x: torch.Tensor | List[torch.Tensor],
         output_size: Optional[tuple[int, ...]] = None,
-        **preprocess_kwargs
+        **preprocess_kwargs,
     ) -> tuple[torch.Tensor, torch.Tensor, dict[str, torch.Tensor]]:
         """
         Forward pass of the model
@@ -81,7 +109,7 @@ class DinoSeg(BaseSeg):
     def select_necessary_extra_inputs(self, extra_input_dict):
         if not self.precalculated_fts:
             return {}
-        
+
         assert "output_size" in extra_input_dict, "Output size is required"
         assert isinstance(
             extra_input_dict["output_size"], tuple | list
@@ -114,10 +142,13 @@ class DinoSeg(BaseSeg):
         y_logits : torch.Tensor
             Predicted logits.
         """
-
+        
+        if x_preproc.is_inference():
+            x_preproc = x_preproc.clone()
+        
         return self._decoder(x_preproc)
 
-    @torch.inference_mode()
+    @torch.no_grad()
     def _preprocess_x(
         self,
         x: torch.Tensor | List[torch.Tensor],
@@ -126,6 +157,35 @@ class DinoSeg(BaseSeg):
     ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
 
         # Calculate dino features if necessary
+        # :=========================================================================:
+        x = self._extract_dino_features(x, mask, pre)
+
+        # Apply PCA if necessary
+        # :=========================================================================:
+        if self._pca is not None:
+            x = self._get_pc_dino_features(x)
+
+        return x, {"Dino Features": x}
+
+    def _extract_dino_features(
+        self,
+        x: torch.Tensor | List[torch.Tensor],
+        mask: Optional[torch.Tensor] = None,
+        pre: bool = False,
+        hierarchy: Optional[int] = None,
+    ) -> torch.Tensor:
+        """
+        Extract Dino features from a batch of images
+
+        Returns:
+        --------
+        x : torch.Tensor
+            Extracted Dino features.
+        """
+
+        hierarchy_: int = default(hierarchy, self._hierarchy_level_dino_fe)
+
+        # Get Dino Features
         # :=========================================================================:
         if not self.precalculated_fts:
             # Convert grayscale to RGB, required by DINO
@@ -139,25 +199,43 @@ class DinoSeg(BaseSeg):
             assert (
                 self._dino_fe is not None
             ), "Dino feature extractor is required when features are not precalculated"
-            
-            dino_out = self._dino_fe(x, mask, pre, self._hierarchy_level_dino_fe)
-            x = dino_out["patch"].permute(0, 3, 1, 2)  # N, np, np, df -> N, df, np, np
+
+            dino_out = self._dino_fe(x, mask, pre, hierarchy_)
+            x_out = dino_out["patch"].permute(
+                0, 3, 1, 2
+            )  # N, np, np, df -> N, df, np, np
 
         else:
             assert isinstance(
                 x, list
             ), "If features are precalculated, x must be a list of tensors"
-            x = x[self._hierarchy_level_dino_fe]
+            x_out = x[hierarchy_]
 
+        assert isinstance(x_out, torch.Tensor), "x must be a tensor"
 
-        assert isinstance(x, torch.Tensor), "x must be a tensor"
+        return x_out
 
-        # Apply PCA if necessary
-        # :=========================================================================:
-        if self._pca is not None:
-            x = self._pca.img_to_pcs(x)
+    def _get_pc_dino_features(self, x: torch.Tensor) -> torch.Tensor:
+        assert self._pca is not None, "PCA model is required"
 
-        return x, {"Dino Features": x}
+        # Map to principal components
+        x = self._pca.img_to_pcs(x)
+
+        if self._pc_norm_type == "bn_layer":
+            assert (
+                self._bn_dino_features is not None
+            ), "BatchNorm layer was not initialized"
+            x = self._bn_dino_features(x)
+
+        elif self._pc_norm_type == "per_img":
+            x = min_max_normalize_channelwise(x, spatial_dims=(-2, -1))
+
+        elif self._pc_norm_type is not None:
+            pass
+        else:
+            raise ValueError(f"Invalid normalization type: {self._pc_norm_type}")
+
+        return x
 
     def save_checkpoint(self, path: str, **kwargs) -> None:
         save_checkpoint(
