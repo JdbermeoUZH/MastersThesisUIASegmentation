@@ -101,6 +101,20 @@ class BaseSeg(torch.nn.Module, ABC):
         """
         pass
 
+    @abstractmethod
+    def has_normalizer_module(self) -> bool:
+        """
+        Returns whether the model has a normalizer module.
+        """
+        pass
+
+    @abstractmethod
+    def get_normalizer_module(self) -> torch.nn.Module:
+        """
+        Returns the normalizer module of the model.
+        """
+        pass
+
     @property
     @abstractmethod
     def trainable_params(self) -> List[torch.nn.Parameter]:
@@ -117,6 +131,17 @@ class BaseSeg(torch.nn.Module, ABC):
         """
         pass
 
+    def get_bn_layers(self) -> list[torch.nn.Module]:
+        bn_layers = list()
+        for m in self.trainable_modules:
+            if isinstance(m, torch.nn.modules.batchnorm._BatchNorm):
+                bn_layers.append(m)
+
+        return bn_layers
+        
+    def has_bn_layers(self) -> bool:
+        return len(self.get_bn_layers()) > 0
+    
     @torch.inference_mode()
     def predict_mask(self, x: torch.Tensor, **preprocess_kwargs) -> torch.Tensor:
         """
@@ -172,3 +197,5 @@ class BaseSeg(torch.nn.Module, ABC):
         Sets the model to training mode.
         """
         self.train()
+
+    

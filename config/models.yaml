@@ -67,3 +67,4 @@ ddpm_unet_oai:
 resnet_decoder_dino:
   num_channels:                     [128, 64, 32, 16]  # If null, it is automatically determined
   convs_per_block:                  2                  # Number of convolutions per block
+  upsample_type:                    'interpolate'          # 'interpolate', 'transposed'

@@ -145,6 +145,7 @@ def define_and_possibly_load_dino_seg(
 
     num_channels: Optional[tuple[int, ...]] = decoder_cfg["num_channels"]
     convs_per_block = decoder_cfg["convs_per_block"] if "convs_per_block" in decoder_cfg else 2
+    upsample_type = decoder_cfg["upsample_type"] if "upsample_type" in decoder_cfg else "interpolate"
 
     if num_channels is None or len(num_channels) == 0:
         num_upsampling = math.ceil(math.log2(dino_fe.patch_size)) + 1
@@ -159,7 +160,8 @@ def define_and_possibly_load_dino_seg(
             num_channels=num_channels,
             output_size=output_size,
             n_dimensions=2,
-            convs_per_block=convs_per_block
+            convs_per_block=convs_per_block,
+            upsample_type=upsample_type
         ).to(device)
 
     elif decoder_type == "Hierarchichal":

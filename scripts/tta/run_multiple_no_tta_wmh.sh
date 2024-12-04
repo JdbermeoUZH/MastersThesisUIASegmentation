@@ -7,4 +7,6 @@
 source /scratch_net/biwidl319/jbermeo/conda/conda/etc/profile.d/conda.sh
 conda activate /scratch_net/biwidl319/jbermeo/GNN-Domain-Generalization-main/net_scratch/conda_envs/tta_uia_seg
 
+nvidia-smi
+
 python run_multiple_no_tta_wmh.py 

@@ -79,6 +79,9 @@ class DinoSeg(BaseSeg):
         return super().forward(x, **preprocess_kwargs)
 
     def select_necessary_extra_inputs(self, extra_input_dict):
+        if not self.precalculated_fts:
+            return {}
+        
         assert "output_size" in extra_input_dict, "Output size is required"
         assert isinstance(
             extra_input_dict["output_size"], tuple | list
@@ -241,3 +244,9 @@ class DinoSeg(BaseSeg):
             self._pca.n_components = value
         else:
             raise ValueError("No PCA model initialized")
+
+    def has_normalizer_module(self) -> bool:
+        return False
+
+    def get_normalizer_module(self):
+        raise ValueError("Model does not have a normalizer module")

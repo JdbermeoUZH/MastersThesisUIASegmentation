@@ -26,7 +26,7 @@ class NormSeg(BaseSeg):
     
     def _preprocess_x(
         self,
-        x: torch.Tensor,
+        x: torch.Tensor | list[torch.Tensor],
     ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
         """
         Preprocess input tensor
@@ -45,7 +45,7 @@ class NormSeg(BaseSeg):
 
     def _forward(
         self,
-        x_preproc: torch.Tensor,
+        x_preproc: torch.Tensor | list[torch.Tensor],
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Forward pass of the model assuming a preprocessed input.
@@ -116,3 +116,10 @@ class NormSeg(BaseSeg):
         Returns the trainable parameters of the model.
         """
         return [self._norm, self._seg]
+
+    def has_normalizer_module(self) -> bool:
+        return True
+
+    def get_normalizer_module(self) -> torch.nn.Module:
+        return self._norm
+        

@@ -8,7 +8,7 @@ wandb_log = False
 # :====================================:
 slurm_jobs = True
 
-batch_size = 16
+batch_size = 4
 num_workers = 3
 save_predicted_vol_as_nifti = False
 print_config = False
@@ -17,7 +17,7 @@ print_config = False
 # :====================================:
 dataset_type = "subcortical_structures"
 split = "test"
-target_datasets = ["abide_stanford"]#, "abide_caltech", "hcp_t1", "hcp_t2"]
+target_datasets = ["abide_stanford", "abide_caltech", "hcp_t1", "hcp_t2"] 
 classes_of_interest = []
 classes_of_interest = [str(c) for c in classes_of_interest]
 
@@ -34,10 +34,12 @@ seg_models_path = {
         # "$RESULTS_DIR/subcortical_structures/segmentation/abide_stanford/dino/large/resnet_decoder/bs_16_lr_1em3_NO_grad_clip_NO_weight_decay_hier_2_PCA_num_PCA_620",
         # "$RESULTS_DIR/subcortical_structures/segmentation/abide_stanford/dino/large/resnet_decoder/bs_16_lr_1em3_NO_grad_clip_NO_weight_decay_hier_2_PCA_num_PCA_937",
         # "$RESULTS_DIR/subcortical_structures/segmentation/abide_stanford/dino/norm_seg/norm_k_3/bs_16_lr_1em3_NO_grad_clip",
-        "$RESULTS_DIR/subcortical_structures/segmentation/abide_stanford/dino/large/resnet_decoder/opt_params_kerem_bs_32_CE_loss_decay_hier_0",
+        #"$RESULTS_DIR/subcortical_structures/segmentation/abide_stanford/dino/large/resnet_decoder/opt_params_kerem_bs_32_dice_loss_decay_hier_0",
+        "$RESULTS_DIR/subcortical_structures/segmentation/abide_stanford/dino/large/resnet_decoder/opt_params_kerem_bs_32_dice_loss_decay_hier_2_CHECK",
+        #"$RESULTS_DIR/subcortical_structures/segmentation/abide_stanford/norm_seg/norm_k_3/bs_16_lr_1em3_NO_grad_clip",
     ),
     # "hcp_t2": (
-    #     "$RESULTS_DIR/subcortical_structures/segmentation/hcp_t2/dino/norm_seg/norm_k_3/bs_16_lr_1em3_NO_grad_clip",
+    #     "$RESULTS_DIR/subcortical_structures/segmentation/hcp_t2/norm_seg/norm_k_3/bs_16_lr_1em3_NO_grad_clip",
     # )
 }
 
@@ -45,7 +47,10 @@ seg_models_path = {
 # :====================================:
 if slurm_jobs:
     account = "bmic"
-    base_command = f"sbatch --account={account} no_tta.sh"
+    gpu_type = "titan_xp"
+    base_command = f"sbatch --account={account}"
+    base_command += f" --constraint='{gpu_type}'" if gpu_type is not None else ""
+    base_command += " no_tta.sh"
 else:
     base_command = (
         "python no_tta.py "

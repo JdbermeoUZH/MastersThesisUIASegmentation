@@ -37,24 +37,28 @@ seg_models_path = {
         #"$RESULTS_DIR/wmh/segmentation/umc/dino/large/resnet_decoder/opt_params_kerem_bs_32_CE_loss_decay_hier_0",
         # KEEP THIS ONE "$RESULTS_DIR/wmh/segmentation/umc/dino/large/resnet_decoder/bs_16_lr_1em3_NO_grad_clip_NO_weight_decay_hier_0",
     #),
-    "nuhs": (
-         "$RESULTS_DIR/wmh/segmentation/nuhs/dino/large/hierarchichal_decoder/bs_16_lr_1em3_hier_2_128_64_32_16_adam",
-         "$RESULTS_DIR/wmh/segmentation/nuhs/dino/large/hierarchichal_decoder/bs_32_lr_1em4_grad_clip_1.0_hier_2",
-         "$RESULTS_DIR/wmh/segmentation/nuhs/dino/large/resnet_decoder/bs_16_lr_1em3_NO_grad_clip_NO_weight_decay_hier_2",
-         "$RESULTS_DIR/wmh/segmentation/nuhs/dino/norm_seg/norm_k_3/bs_16_lr_1em3_NO_grad_clip"
-    ),
-    "vu": (
-         "$RESULTS_DIR/wmh/segmentation/vu/dino/large/hierarchichal_decoder/bs_16_lr_1em3_hier_2_128_64_32_16_adam",
-         "$RESULTS_DIR/wmh/segmentation/vu/dino/large/resnet_decoder/bs_16_lr_1em3_NO_grad_clip_NO_weight_decay_hier_2",
-         "$RESULTS_DIR/wmh/segmentation/vu/dino/norm_seg/norm_k_3/bs_16_lr_1em3_NO_grad_clip",
-    ),
+    # Last to be commented
+    # "nuhs": (
+    #      "$RESULTS_DIR/wmh/segmentation/nuhs/dino/large/hierarchichal_decoder/bs_16_lr_1em3_hier_2_128_64_32_16_adam",
+    #      "$RESULTS_DIR/wmh/segmentation/nuhs/dino/large/hierarchichal_decoder/bs_32_lr_1em4_grad_clip_1.0_hier_2",
+    #      "$RESULTS_DIR/wmh/segmentation/nuhs/dino/large/resnet_decoder/bs_16_lr_1em3_NO_grad_clip_NO_weight_decay_hier_2",
+    #      "$RESULTS_DIR/wmh/segmentation/nuhs/dino/norm_seg/norm_k_3/bs_16_lr_1em3_NO_grad_clip"
+    # ),
+    # "vu": (
+    #      "$RESULTS_DIR/wmh/segmentation/vu/dino/large/hierarchichal_decoder/bs_16_lr_1em3_hier_2_128_64_32_16_adam",
+    #      "$RESULTS_DIR/wmh/segmentation/vu/dino/large/resnet_decoder/bs_16_lr_1em3_NO_grad_clip_NO_weight_decay_hier_2",
+    #      "$RESULTS_DIR/wmh/segmentation/vu/dino/norm_seg/norm_k_3/bs_16_lr_1em3_NO_grad_clip",
+    # ),
 }
 
 # Command format
 # :====================================:
 if slurm_jobs:
-    account = "bmic"
-    base_command = f"sbatch --account={account} no_tta.sh"
+    account = "staff"
+    gpu_type = None # "titan_xp"
+    base_command = f"sbatch --account={account}"
+    base_command += f" --constraint='{gpu_type}'" if gpu_type is not None else ""
+    base_command += " no_tta.sh"
 else:
     base_command = (
         "python no_tta.py "

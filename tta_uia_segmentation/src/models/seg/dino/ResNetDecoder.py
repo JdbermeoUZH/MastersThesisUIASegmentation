@@ -3,7 +3,6 @@ from typing import Optional, Literal
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 from .BaseDecoder import BaseDecoder
 from ..norm_seg.UNet import get_conv, DoubleConv
@@ -22,6 +21,7 @@ class UpResNetDecoderBlock(nn.Module):
         convs_per_block: int = 2,
         scale_factor: Optional[float | tuple[float, ...]] = None,
         size: Optional[tuple[int, ...]] = None,
+        upsample_type: Literal["transposed", "interpolate"] = "interpolate",
         n_dimensions=2,
     ):
         super().__init__()
@@ -30,31 +30,48 @@ class UpResNetDecoderBlock(nn.Module):
 
         # Upsample module
         # :====================================================================:
-        if n_dimensions == 1:
-            interpolation_mode = "linear"
-        elif n_dimensions == 2:
-            interpolation_mode = "bilinear"
-        else:
-            interpolation_mode = "trilinear"
+        self._upsample_type = upsample_type
 
-        self._up = nn.Upsample(
-            scale_factor=scale_factor,
-            size=size,
-            mode=interpolation_mode,
-            align_corners=True,
-        )
-
-        # Channel reduction module
-        # :====================================================================:
-        if in_channels != out_channels:
-            self._channel_reduction = get_conv(
-                in_channels=in_channels,
-                out_channels=out_channels,
-                kernel_size=1,
-                n_dimensions=n_dimensions,
+        if upsample_type == "transposed":
+            self._up = nn.ConvTranspose2d(
+                in_channels,
+                out_channels,
+                kernel_size=2,
+                stride=2
             )
-        else:
-            self._channel_reduction = None
+        
+        elif upsample_type == "interpolate":
+            
+            if n_dimensions == 1:
+                interpolation_mode = "linear"
+            elif n_dimensions == 2:
+                interpolation_mode = "bilinear"
+            else:
+                interpolation_mode = "trilinear"
+
+            upsample_modules = list()
+
+            upsample_modules.append(
+                nn.Upsample(
+                    scale_factor=scale_factor,
+                    size=size,
+                    mode=interpolation_mode,
+                    align_corners=True,
+                )
+            )
+
+            # Channel reduction module
+            if in_channels != out_channels:
+                upsample_modules.append(
+                    get_conv(
+                        in_channels=in_channels,
+                        out_channels=out_channels,
+                        kernel_size=1,
+                        n_dimensions=n_dimensions,
+                    )
+                )
+            
+            self._up = nn.Sequential(*upsample_modules)
 
         # Convolutional blocks
         # :====================================================================:
@@ -67,19 +84,22 @@ class UpResNetDecoderBlock(nn.Module):
         )
 
     def forward(self, x, scale_factor=None, size=None):
-        if size is not None:
-            self._up.size = size
+        if self._upsample_type == "transposed":
+            assert scale_factor is None and size is None, (
+                "When using transposed convolution, "
+                + "scale_factor and size should not be provided"
+            )
+        elif self._upsample_type == "interpolate":
+            if size is not None:
+                self._up[0].size = size
 
-        if scale_factor is not None:
-            if isinstance(scale_factor, torch.Tensor):
-                scale_factor = scale_factor.cpu().numpy().tolist()
+            if scale_factor is not None:
+                if isinstance(scale_factor, torch.Tensor):
+                    scale_factor = scale_factor.cpu().numpy().tolist()
 
-            self._up.scale_factor = scale_factor
+                self._up[0].scale_factor = scale_factor
 
         x = self._up(x)
-
-        if self._channel_reduction is not None:
-            x = self._channel_reduction(x)
 
         for conv_block in self._conv_blocks:
             x = x + conv_block(x)
@@ -96,6 +116,7 @@ class ResNetDecoder(BaseDecoder):
         output_size: tuple[int, ...],
         n_dimensions: int = 2,
         convs_per_block: int = 2,
+        upsample_type: Literal["transposed", "interpolate"] = "interpolate",
     ):
 
         super(ResNetDecoder, self).__init__(output_size=output_size)
@@ -106,6 +127,7 @@ class ResNetDecoder(BaseDecoder):
         self._num_channels = num_channels
         self._n_dimensions = n_dimensions
         self._in_train_mode = True
+        self._upsample_type = upsample_type
 
         # If number of channels per level is provided, then check it matches the number of levels
         # :====================================================================:
@@ -115,6 +137,7 @@ class ResNetDecoder(BaseDecoder):
         out_ch = None
         for level_i, (in_ch, out_ch) in enumerate(zip(num_ch[:-1], num_ch[1:])):
             scale_factor = 2 if level_i < len(num_ch) - 2 else None
+            upsample_type = self._upsample_type if scale_factor is not None else "interpolate"
             block_list.append(
                 UpResNetDecoderBlock(
                     in_channels=in_ch,
@@ -122,6 +145,7 @@ class ResNetDecoder(BaseDecoder):
                     scale_factor=scale_factor,
                     n_dimensions=n_dimensions,
                     convs_per_block=convs_per_block,
+                    upsample_type=upsample_type,
                 )
             )
 
