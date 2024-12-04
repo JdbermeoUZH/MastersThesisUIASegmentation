@@ -123,6 +123,13 @@ def preprocess_cmd_args() -> argparse.Namespace:
         help="Number of channels for the first layer of the decoder",
     )
 
+    parser.add_argument(
+        "--upsample_type",
+        type=str,
+        help="Type of upsampling to use. Default: interpolate",
+        choices=["transposed", "interpolate"],
+    )
+
     # Training loop
     # :=========================================================================:
     parser.add_argument(
