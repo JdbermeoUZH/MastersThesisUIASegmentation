@@ -78,7 +78,7 @@ class BaseSeg(torch.nn.Module, ABC):
         pass
 
     @abstractmethod
-    def save_checkpoint(self, path: str) -> None:
+    def save_checkpoint(self, path: str, device: Optional[str | torch.device] = None) -> None:
         """
         Save model checkpoint.
 
@@ -90,7 +90,7 @@ class BaseSeg(torch.nn.Module, ABC):
         pass
 
     @abstractmethod
-    def load_checkpoint(self, path: str) -> None:
+    def load_checkpoint(self, path: str, device: Optional[str | torch.device] = None) -> None:
         """
         Load model checkpoint.
 

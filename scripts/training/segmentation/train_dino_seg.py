@@ -386,7 +386,7 @@ if __name__ == "__main__":
     # Define the 2D segmentation model
     # :=========================================================================:
     load_dino_fe = not train_config[TRAIN_MODE]["precalculated_fts"]
-
+    
     dino_seg = define_and_possibly_load_dino_seg(
         train_dino_cfg=train_config[TRAIN_MODE],
         decoder_cfg=model_config[MODEL_TYPE],

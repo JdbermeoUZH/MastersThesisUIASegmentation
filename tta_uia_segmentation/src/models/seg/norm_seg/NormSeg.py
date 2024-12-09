@@ -71,7 +71,7 @@ class NormSeg(BaseSeg):
     def load_checkpoint(
         self,
         path: str,
-        device: Optional[torch.device] = None,
+        device: Optional[str | torch.device] = None,
     ) -> None:
 
         checkpoint = torch.load(path, map_location=device)

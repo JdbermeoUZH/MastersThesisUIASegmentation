@@ -215,10 +215,8 @@ def define_and_possibly_load_dino_seg(
         )
 
     if cpt_fp is not None:
-        dino_seg.load_checkpoint(cpt_fp)
-
-    # Move to device
-    dino_seg = dino_seg.to(device)
+        dino_seg.load_checkpoint(
+            cpt_fp, device=device)
 
     return dino_seg
 

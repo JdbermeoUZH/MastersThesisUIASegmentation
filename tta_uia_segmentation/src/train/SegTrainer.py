@@ -51,7 +51,10 @@ class SegTrainer:
         )
 
         if is_resumed:
-            self._load_checkpoint(os.path.join(logdir, checkpoint_last))
+            self._load_checkpoint(
+                os.path.join(logdir, checkpoint_last),
+                device=device
+                )
         else:
             print("Starting training from scratch.")
             self._best_validation_loss = np.inf
@@ -337,7 +340,7 @@ class SegTrainer:
 
         return validation_loss, validation_score_fg, validation_scores
 
-    def _load_checkpoint(self, checkpoint_path: str):
+    def _load_checkpoint(self, checkpoint_path: str, device: Optional[str | torch.device] = None):
         checkpoint = torch.load(checkpoint_path, map_location=self._device)
 
         print(f'Resuming training at epoch {checkpoint["epoch"] + 1}.')
@@ -349,7 +352,7 @@ class SegTrainer:
         self._best_validation_loss = checkpoint["best_validation_loss"]
 
         # Load model specific attributes
-        self._seg.load_checkpoint(checkpoint_path)
+        self._seg.load_checkpoint(checkpoint_path, device=device)
 
         del checkpoint
 

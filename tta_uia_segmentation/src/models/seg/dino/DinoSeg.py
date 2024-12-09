@@ -248,9 +248,8 @@ class DinoSeg(BaseSeg):
     def load_checkpoint(
         self,
         path: str,
-        device: Optional[torch.device] = None,
+        device: Optional[str | torch.device] = None,
     ) -> None:
-
         checkpoint = torch.load(path, map_location=device)
 
         # Load Model weights
@@ -265,6 +264,9 @@ class DinoSeg(BaseSeg):
         if "dino_model_name" in checkpoint:
             dino_model_name = checkpoint["dino_model_name"]
             self._dino_fe = DinoV2FeatureExtractor(model=dino_model_name)
+
+        if device is not None:
+            self = self.to(device)
 
     @property
     def decoder(self):

@@ -27,6 +27,7 @@ optimizer_type = "adam" # "adamW"
 learning_rate = 1e-3 # 2e-5
 warmup_steps = 0. # 0.05
 weight_decay = 0 # 1e-5
+resume = True
 
 # logging
 wandb_log = True
@@ -60,7 +61,9 @@ base_command = (
     + f"--decoder_type {decoder_type} "
     + f"--num_channels {' '.join(map(str, num_channels))} "
     + f"--pca_path {pca_path} "
+    + f"--resume {str(resume)} "
 )
+
 
 # Training combinations
 # :====================================:
@@ -78,16 +81,16 @@ exps = (
         "pc_norm_type": 'per_img', # 'per_img' or 'bn_layer',
         "exp_name_base":  "bs_16_lr_1em3_NO_grad_clip_NO_weight_decay_hier_2_PCA_num_PCA_{PCA}_min_max_norm_per_img_aug_on_fly"
     },
-    {
-        "dataset_type": "subcortical_structures",
-        "dataset": "abide_stanford",
-        "dino_model": "large",
-        "epochs": 150,
-        "batch_size": 16,
-        "grad_acc_steps": 1,
-        "pc_norm_type": 'bn_layer', # 'per_img' or 'bn_layer',
-        "exp_name_base":  "bs_16_lr_1em3_NO_grad_clip_NO_weight_decay_hier_2_PCA_num_PCA_{PCA}_norm_w_bn_layer_aug_on_fly"
-    },
+    # {
+    #     "dataset_type": "subcortical_structures",
+    #     "dataset": "abide_stanford",
+    #     "dino_model": "large",
+    #     "epochs": 150,
+    #     "batch_size": 16,
+    #     "grad_acc_steps": 1,
+    #     "pc_norm_type": 'bn_layer', # 'per_img' or 'bn_layer',
+    #     "exp_name_base":  "bs_16_lr_1em3_NO_grad_clip_NO_weight_decay_hier_2_PCA_num_PCA_{PCA}_norm_w_bn_layer_aug_on_fly"
+    # },
 )
 
 for exp_dict in exps:
@@ -140,3 +143,4 @@ for exp_dict in exps:
         print(command)
 
         os.system(command)
+
