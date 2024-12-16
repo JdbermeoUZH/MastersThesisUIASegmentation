@@ -121,3 +121,8 @@ class TTAInterface(ABC):
     @abstractmethod
     def _tta_fit_mode(self) -> None:
         pass
+
+    @property
+    @abstractmethod
+    def trainable_params_at_test_time(self) -> list[torch.nn.Parameter]:
+        pass

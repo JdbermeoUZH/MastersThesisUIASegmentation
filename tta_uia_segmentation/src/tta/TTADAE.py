@@ -513,13 +513,14 @@ class TTADAE(BaseTTASeg):
 
         self._state.is_adapted = True
 
-        test_scores_dir = os.path.join(logdir, 'tta_score')
-        
-        self._state.store_test_scores_in_dir(
-            output_dir=test_scores_dir,
-            file_name_prefix=f'{dataset.dataset_name}_{vol_idx:03d}',
-            reduce='mean_accross_iterations'
-        )
+        if logdir is not None:
+            test_scores_dir = os.path.join(logdir, 'tta_score')
+            
+            self._state.store_test_scores_in_dir(
+                output_dir=test_scores_dir,
+                file_name_prefix=f'{dataset.dataset_name}_{vol_idx:03d}',
+                reduce='mean_accross_iterations'
+            )
 
     def evaluate(
         self,
@@ -594,7 +595,7 @@ class TTADAE(BaseTTASeg):
                 self,
                 x_preprocessed=vol_preproc,
                 x_original=vol_orig,
-                y_original_gt=y_gt.float(),
+                y_gt=y_gt.float(),
                 preprocessed_pix_size=dataset.get_processed_pixel_size(),
                 gt_pix_size=dataset.get_original_pixel_size(vol_idx),
                 metrics=self._eval_metrics,
@@ -790,21 +791,6 @@ class TTADAE(BaseTTASeg):
         
         if self._classes_of_interest is not None:
             wandb.define_metric('dice_score_classes_of_interest/*', step_metric='tta_step')
-
-    def _save_checkpoint(self, logdir: str, dataset_name: str, index: int) -> None:
-        cpt_dir = os.path.join(logdir, 'checkpoints')
-        os.makedirs(cpt_dir, exist_ok=True)
-        
-        # Save normalizer weights with the highest agreement with the pseudo label
-        save_checkpoint(
-            os.path.join(cpt_dir, f'checkpoint_tta_{dataset_name}_{index:02d}_best_score.pth'), 
-            **self.get_best_state(as_dict=True, remove_initial_state=True)
-            )
-        
-        save_checkpoint(
-            os.path.join(cpt_dir, f'checkpoint_tta_{dataset_name}_{index:02d}_last_step.pth'),
-            **self.get_current_state(as_dict=True, remove_initial_state=True)
-        )
 
     def load_best_state_norm(self) -> None:
         self._state.reset_to_state(self._state.best_state)

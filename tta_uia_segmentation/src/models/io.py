@@ -97,17 +97,17 @@ def load_pca_from_cpt(
     num_pca_components: int,
     device: torch.device,
 ) -> BasePCA:
-    params_path = os.path.join(os.path.dirname(cpt_fp), 'params.yaml')
+    params_path = os.path.join(os.path.dirname(cpt_fp), "params.yaml")
     cfg = yaml.safe_load(open(params_path, "r"))
 
-    train_mode = cfg['training']["train_mode"]    
+    train_mode = cfg["training"]["train_mode"]
 
     if train_mode == "incremental_pca":
         pca = IncrementalPCA.load_pca(cpt_fp)
 
     else:
         raise ValueError(f"Invalid PCA type: {train_mode}")
-    
+
     pca.to_device(device)
     pca.n_components = num_pca_components
 
@@ -137,8 +137,8 @@ def define_and_possibly_load_dino_seg(
         pca = load_pca_from_cpt(
             cpt_fp=train_dino_cfg["pca_path"],
             num_pca_components=train_dino_cfg["num_pca_components"],
-            device=device
-            )
+            device=device,
+        )
         embedding_dim = default(pca.n_components, embedding_dim)
         pc_norm_type = train_dino_cfg["pc_norm_type"]
     else:
@@ -146,15 +146,21 @@ def define_and_possibly_load_dino_seg(
         pc_norm_type = None
 
     num_channels: Optional[tuple[int, ...]] = decoder_cfg["num_channels"]
-    convs_per_block = decoder_cfg["convs_per_block"] if "convs_per_block" in decoder_cfg else 2
-    upsample_type = decoder_cfg["upsample_type"] if "upsample_type" in decoder_cfg else "interpolate"
+    convs_per_block = (
+        decoder_cfg["convs_per_block"] if "convs_per_block" in decoder_cfg else 2
+    )
+    upsample_type = (
+        decoder_cfg["upsample_type"]
+        if "upsample_type" in decoder_cfg
+        else "interpolate"
+    )
 
     if num_channels is None or len(num_channels) == 0:
         num_upsampling = math.ceil(math.log2(dino_fe.patch_size)) + 1
-        num_channels = tuple([
-            int(dino_fe.emb_dim / (2**i)) for i in range(1, num_upsampling)
-        ])
-    
+        num_channels = tuple(
+            [int(dino_fe.emb_dim / (2**i)) for i in range(1, num_upsampling)]
+        )
+
     if decoder_type == "ResNet":
         decoder = ResNetDecoder(
             embedding_dim=embedding_dim,
@@ -163,7 +169,7 @@ def define_and_possibly_load_dino_seg(
             output_size=output_size,
             n_dimensions=2,
             convs_per_block=convs_per_block,
-            upsample_type=upsample_type
+            upsample_type=upsample_type,
         ).to(device)
 
     elif decoder_type == "Hierarchichal":
@@ -174,7 +180,7 @@ def define_and_possibly_load_dino_seg(
             output_size=output_size,
             hierarchy_level=hierarchy_level,
             n_dimensions=2,
-            convs_per_block=convs_per_block
+            convs_per_block=convs_per_block,
         ).to(device)
 
     else:
@@ -189,7 +195,7 @@ def define_and_possibly_load_dino_seg(
         extra_kwargs = dict(
             dino_model_name=dino_fe.model_name,
             dino_emb_dim=dino_fe.emb_dim,
-            )
+        )
         dino_fe = None
 
     if decoder_type != "Hierarchichal":
@@ -215,8 +221,7 @@ def define_and_possibly_load_dino_seg(
         )
 
     if cpt_fp is not None:
-        dino_seg.load_checkpoint(
-            cpt_fp, device=device)
+        dino_seg.load_checkpoint(cpt_fp, device=device)
 
     return dino_seg
 
@@ -508,7 +513,7 @@ def load_dae_and_atlas_from_configs_and_cpt(
     model_params_dae: dict,
     cpt_fp: str,
     device: torch.device,
-) -> Union[nn.Module, torch.Tensor]:
+) -> tuple[nn.Module, torch.Tensor]:
 
     dae = UNet(
         in_channels=n_classes,

@@ -237,36 +237,36 @@ class DinoSeg(BaseSeg):
 
         return x
 
-    def save_checkpoint(self, path: str, **kwargs) -> None:
-        save_checkpoint(
-            path=path,
+    def checkpoint_as_dict(self, **kwargs) -> dict:
+        """
+        Returns the model checkpoint as a dictionary.
+        """
+        return dict(
             decoder_state_dict=self.decoder.state_dict(),
             dino_model_name=self._dino_model_name,
             **kwargs,
         )
 
-    def load_checkpoint(
+    def load_checkpoint_from_dict(
         self,
-        path: str,
+        checkpoint_dict: dict,
         device: Optional[str | torch.device] = None,
     ) -> None:
-        checkpoint = torch.load(path, map_location=device)
-
         # Load Model weights
-        if "decoder_state_dict" in checkpoint:
-            self._decoder.load_state_dict(checkpoint["decoder_state_dict"])
-        elif "seg_state_dict" in checkpoint:
-            self.load_state_dict(checkpoint["seg_state_dict"])
+        if "decoder_state_dict" in checkpoint_dict:
+            self._decoder.load_state_dict(checkpoint_dict["decoder_state_dict"])
+        elif "seg_state_dict" in checkpoint_dict:
+            self.load_state_dict(checkpoint_dict["seg_state_dict"])
         else:
             raise ValueError("No decoder state dict found in the checkpoint")
 
         # Load Dino feature extractor if specified in the checkpoint
-        if "dino_model_name" in checkpoint:
-            dino_model_name = checkpoint["dino_model_name"]
+        if "dino_model_name" in checkpoint_dict:
+            dino_model_name = checkpoint_dict["dino_model_name"]
             self._dino_fe = DinoV2FeatureExtractor(model=dino_model_name)
 
         if device is not None:
-            self = self.to(device)
+            self = self.to(device)        
 
     @property
     def decoder(self):

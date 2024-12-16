@@ -301,6 +301,7 @@ class Dataset(data.Dataset):
         # Apply augmentations if specified
         # :=========================================================================:
         if self._augment:
+            assert self._aug_params is not None
             images, labels = apply_data_augmentation(
                 images,
                 labels,

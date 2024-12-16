@@ -60,23 +60,19 @@ class NormSeg(BaseSeg):
         """
         return self._seg(x_preproc)
 
-    def save_checkpoint(self, path: str, **kwargs) -> None:
-        save_checkpoint(
-            path=path,
+    def checkpoint_as_dict(self, **kwargs) -> dict:
+        """
+        Returns the model checkpoint as a dictionary.
+        """
+        return dict(
             norm_state_dict=self.norm.state_dict(),
             seg_state_dict=self.seg.state_dict(),
             **kwargs,
         )
 
-    def load_checkpoint(
-        self,
-        path: str,
-        device: Optional[str | torch.device] = None,
-    ) -> None:
-
-        checkpoint = torch.load(path, map_location=device)
-        self.norm.load_state_dict(checkpoint["norm_state_dict"])
-        self.seg.load_state_dict(checkpoint["seg_state_dict"])
+    def load_checkpoint_from_dict(self, checkpoint_dict: dict, device: Optional[str | torch.device] = None) -> None:
+        self.norm.load_state_dict(checkpoint_dict["norm_state_dict"])
+        self.seg.load_state_dict(checkpoint_dict["seg_state_dict"])
 
     @property
     def norm(self):

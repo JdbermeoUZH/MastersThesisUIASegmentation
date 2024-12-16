@@ -128,6 +128,8 @@ def read_csv(path, split_header=False, convert_to_num=False, dtype=float, **kwar
 
 
 def save_checkpoint(path, **kwargs):
+    # Create the directories if they do not exist
+    os.makedirs(os.path.dirname(path), exist_ok=True)
     torch.save(kwargs, path)
 
 
@@ -180,3 +182,18 @@ def save_nii_image(dir, filename, image, affine=None):
     image = nib.Nifti1Image(image, affine)
     nib.save(image, os.path.join(dir, filename))
     
+
+def load_partial_weights(
+    modules_to_update: tuple[torch.nn.Module], partial_state_dict: dict
+) -> None:
+
+    for module in modules_to_update:
+        # Get the module's state_dict keys
+        module_state_dict = {
+            k: v
+            for k, v in partial_state_dict.items()
+            if k.startswith(module._get_name().lower())
+        }
+
+        # Load the state_dict for this module
+        module.load_state_dict(module_state_dict, strict=False)

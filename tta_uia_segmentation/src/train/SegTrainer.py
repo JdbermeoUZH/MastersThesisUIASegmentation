@@ -144,7 +144,8 @@ class SegTrainer:
 
         print("Starting training on epoch", self._epoch)
 
-        pbar = tqdm(range(epochs), desc="Epochs", initial=self._epoch)
+        pbar = tqdm(range(self._epoch, epochs), desc="Epochs",
+                     initial=self._epoch, total=epochs)
 
         for epoch in pbar:
 

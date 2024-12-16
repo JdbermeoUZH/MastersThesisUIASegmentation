@@ -3,6 +3,8 @@ from typing import List, Any, Optional
 
 import torch
 
+from tta_uia_segmentation.src.utils.io import save_checkpoint
+
 
 class BaseSeg(torch.nn.Module, ABC):
     def __init__(self, *args, **kwargs):
@@ -78,26 +80,36 @@ class BaseSeg(torch.nn.Module, ABC):
         pass
 
     @abstractmethod
-    def save_checkpoint(self, path: str, device: Optional[str | torch.device] = None) -> None:
+    def checkpoint_as_dict(self) -> dict:
         """
-        Save model checkpoint.
-
-        Parameters:
-        -----------
-        path : str
-            Path to save the model.
+        Returns the model checkpoint as a dictionary.
         """
         pass
 
+    def save_checkpoint(self, path: str, **kwargs) -> None:
+        save_checkpoint(
+            path=path,
+            **self.checkpoint_as_dict(**kwargs),
+        )
+
+    def load_checkpoint(
+        self,
+        path: str,
+        device: Optional[str | torch.device] = None,
+    ) -> None:
+
+        checkpoint = torch.load(path, map_location=device)
+        self.load_checkpoint_from_dict(checkpoint, device)
+    
     @abstractmethod
-    def load_checkpoint(self, path: str, device: Optional[str | torch.device] = None) -> None:
+    def load_checkpoint_from_dict(self, checkpoint_dict: dict, device: Optional[str | torch.device] = None) -> None:
         """
-        Load model checkpoint.
+        Load model checkpoint from a dictionary.
 
         Parameters:
         -----------
-        path : str
-            Path to load the model.
+        checkpoint_dict : dict
+            Dictionary containing the model checkpoint.
         """
         pass
 
@@ -131,13 +143,20 @@ class BaseSeg(torch.nn.Module, ABC):
         """
         pass
 
-    def get_bn_layers(self) -> list[torch.nn.Module]:
+    def get_bn_layers(self) -> tuple[torch.nn.Module]:
         bn_layers = list()
         for m in self.trainable_modules:
             if isinstance(m, torch.nn.modules.batchnorm._BatchNorm):
                 bn_layers.append(m)
 
-        return bn_layers
+        return tuple(bn_layers)
+
+    def get_bn_layers_state_dict(self) -> dict[str, torch.Tensor]:
+        state_dict = dict()
+        for m in self.get_bn_layers():
+            state_dict.update(m.state_dict())
+
+        return state_dict       
         
     def has_bn_layers(self) -> bool:
         return len(self.get_bn_layers()) > 0

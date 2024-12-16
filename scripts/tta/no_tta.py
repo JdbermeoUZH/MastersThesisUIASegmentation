@@ -8,7 +8,7 @@ import numpy as np
 
 sys.path.append(os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
-from tta_uia_segmentation.src.tta import NoTTASeg
+from tta_uia_segmentation.src.tta import BaseTTASeg
 from tta_uia_segmentation.src.dataset.io import get_datasets
 from tta_uia_segmentation.src.models.io import (
     define_and_possibly_load_norm_seg,
@@ -337,7 +337,7 @@ if __name__ == "__main__":
     # :=========================================================================:
     viz_interm_outs = default(tta_config["viz_interm_outs"], tuple())
 
-    no_tta = NoTTASeg(
+    no_tta = BaseTTASeg(
         seg=seg,
         n_classes=n_classes,
         classes_of_interest=classes_of_interest,
@@ -382,26 +382,51 @@ if __name__ == "__main__":
         cls: copy.deepcopy(dice_scores_fg) for cls in classes_of_interest
     }
 
-    for i in range(start_idx, stop_idx):
+    for vol_idx in range(start_idx, stop_idx):
 
         seed_everything(seed)
-        print(f"processing volume {i}")
+        print(f"processing volume {vol_idx}")
 
-        no_tta.tta(
-            dataset=test_dataset,
-            vol_idx=i,
+        # Get the preprocessed vol for that has the same position as
+        # the original vol (preprocessed vol may have a translation in xy
+        x_preprocessed, *_ = test_dataset.get_preprocessed_original_volume(vol_idx)
+        preprocessed_pix_size = test_dataset.get_processed_pixel_size_w_orientation()
+
+        x_original, y_original_gt = test_dataset.get_original_volume(vol_idx)
+        gt_pix_size = test_dataset.get_original_pixel_size_w_orientation(vol_idx)
+
+        base_file_name = f"{test_dataset.dataset_name}_vol_{vol_idx:03d}"
+
+        eval_metrics = no_tta.evaluate(
+            x_preprocessed=x_preprocessed,
+            x_original=x_original,
+            y_gt=y_original_gt.float(),
+            preprocessed_pix_size=preprocessed_pix_size,
+            gt_pix_size=gt_pix_size,
             batch_size=batch_size,
             num_workers=num_workers,
-            logdir=logdir,
+            classes_of_interest=classes_of_interest,
+            output_dir=logdir,
+            file_name=base_file_name,
+            store_visualization=True,
+            save_predicted_vol_as_nifti=True,
             slice_vols_for_viz=slice_vols_for_viz,
-            save_predicted_vol_as_nifti=save_predicted_vol_as_nifti
         )
+
+        # Print mean dice score of the foreground classes
+        dices_fg_mean = np.mean(eval_metrics["dice_score_fg_classes"]).mean().item()
+        print(f"dice score_fg_classes (vol{vol_idx}): {dices_fg_mean}")
+
+        dices_fg_mean_sklearn = (
+            np.mean(eval_metrics["dice_score_fg_classes_sklearn"]).mean().item()
+        )
+        print(f"dice score_fg_classes_sklearn (vol{vol_idx}): {dices_fg_mean_sklearn}")
 
         # Get evaluation for last iteration with prediction in as Nifti volumes
         os.makedirs(logdir, exist_ok=True)
 
         # Store csv with dice scores for all classes
-        no_tta.write_current_dice_scores(i, logdir, dataset_name, iteration_type="")
+        no_tta.write_current_dice_scores(vol_idx, logdir, dataset_name, iteration_type="")
 
         for dice_score_name in dice_scores_fg:
             dice_scores_fg[dice_score_name].append(

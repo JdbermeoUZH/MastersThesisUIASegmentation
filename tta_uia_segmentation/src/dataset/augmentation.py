@@ -1,9 +1,16 @@
+from typing import Optional
+
 import numpy as np
+import torch
 from scipy.ndimage import map_coordinates, rotate, shift, gaussian_filter
 from skimage import transform
 
 from tta_uia_segmentation.src.utils.io import deep_get, number_or_list_to_array
-from tta_uia_segmentation.src.utils.utils import uniform_interval_sampling
+from tta_uia_segmentation.src.utils.utils import (
+    uniform_interval_sampling,
+    torch_to_numpy,
+    numpy_to_torch,
+)
 
 
 #
@@ -39,13 +46,14 @@ def elastic_transform(image, label, sigma, alpha, rng):  # 3d
             order=1,
             mode="reflect",
         ).reshape(H, W)
-
-        label[i, :, :] = map_coordinates(
-            label[i, :, :],
-            indices,
-            order=0,
-            mode="reflect",
-        ).reshape(H, W)
+    
+        if label is not None:
+            label[i, :, :] = map_coordinates(
+                label[i, :, :],
+                indices,
+                order=0,
+                mode="reflect",
+            ).reshape(H, W)
 
     return image, label
 
@@ -83,12 +91,24 @@ def crop_or_pad_slice_to_size(slice, nx, ny):
         )
 
 
+def get_augmentation_prob(tf_probs, augmentation_type: str, default_aug_prob) -> float:
+    aug_prob = deep_get(
+        tf_probs, augmentation_type, default=default_aug_prob, suppress_warning=True
+    )
+
+    assert (
+        0 <= aug_prob <= 1
+    ), f"Augmentation probability must be in [0, 1], got {aug_prob}"
+
+    return aug_prob
+
+
 #
 # adapted from https://github.com/neerakara/test-time-adaptable-neural-networks-for-domain-generalization/blob/master/train_i2l_mapper.py#L588
 #
 def apply_data_augmentation(
-    images,
-    labels,
+    images: np.ndarray | torch.Tensor,
+    labels: Optional[np.ndarray | torch.Tensor] = None,
     n_dimensions=2,
     da_ratio=0.25,
     p_inversion=0.0,
@@ -110,10 +130,22 @@ def apply_data_augmentation(
     noise_std=0.1,
     rng=None,
     intensity_range=(0, 1),
+    return_torch=False,
 ):
 
-    images_ = np.copy(images)
-    labels_ = np.copy(labels)
+    images_ = (
+        np.copy(images) if isinstance(images, np.ndarray) else torch_to_numpy(images)
+    )
+    assert isinstance(images_, np.ndarray) 
+
+    if labels is not None:
+        labels_ = (
+            np.copy(labels) if isinstance(labels, np.ndarray) else torch_to_numpy(labels)
+        )
+
+        assert isinstance(labels_, np.ndarray)
+    else:
+        labels_ = None
 
     if rng is None:
         rng = np.random.default_rng()
@@ -121,19 +153,13 @@ def apply_data_augmentation(
     # ========
     # image inversion
     # ========
-    if rng.random() < deep_get(
-        tf_probs, "image_inversion", default=p_inversion, suppress_warning=True
-    ):
-
+    if rng.random() < get_augmentation_prob(tf_probs, "image_inversion", p_inversion):
         images_ = 1 - inv_strength * images_
 
     # ========
     # elastic deformation
     # ========
-    if rng.random() < deep_get(
-        tf_probs, "elastic_deformation", default=da_ratio, suppress_warning=True
-    ):
-
+    if rng.random() < get_augmentation_prob(tf_probs, "elastic_deformation", da_ratio):
         images_, labels_ = elastic_transform(
             images_, labels_, sigma=sigma, alpha=alpha, rng=rng
         )
@@ -141,9 +167,7 @@ def apply_data_augmentation(
     # ========
     # translation
     # ========
-    if rng.random() < deep_get(
-        tf_probs, "translation", default=da_ratio, suppress_warning=True
-    ):
+    if rng.random() < get_augmentation_prob(tf_probs, "translation", da_ratio):
 
         random_shift_x = rng.uniform(trans_min, trans_max)
         random_shift_y = rng.uniform(trans_min, trans_max)
@@ -154,15 +178,13 @@ def apply_data_augmentation(
             random_shifts = [random_shift_z] + random_shifts
 
         images_ = shift(images_, shift=(0, *random_shifts), order=1, mode="reflect")
-        labels_ = shift(labels_, shift=(0, *random_shifts), order=0, mode="reflect")
+        if labels_ is not None:
+            labels_ = shift(labels_, shift=(0, *random_shifts), order=0, mode="reflect")
 
     # ========
     # rotation
     # ========
-    if rng.random() < deep_get(
-        tf_probs, "rotation", default=da_ratio, suppress_warning=True
-    ):
-
+    if rng.random() < get_augmentation_prob(tf_probs, "rotation", da_ratio):
         random_angle = rng.uniform(rot_min, rot_max)
 
         images_ = rotate(
@@ -173,21 +195,20 @@ def apply_data_augmentation(
             order=1,
             mode="reflect",
         )
-        labels_ = rotate(
-            labels_,
-            reshape=False,
-            angle=random_angle,
-            axes=(2, 1),
-            order=0,
-            mode="reflect",
-        )
+        if labels_ is not None:
+            labels_ = rotate(
+                labels_,
+                reshape=False,
+                angle=random_angle,
+                axes=(2, 1),
+                order=0,
+                mode="reflect",
+            )
 
     # ========
     # scaling
     # ========
-    if rng.random() < deep_get(
-        tf_probs, "scaling", default=da_ratio, suppress_warning=True
-    ):
+    if rng.random() < get_augmentation_prob(tf_probs, "scaling", da_ratio):
         _, n_x, n_y = images_.shape
         scale_val = np.round(rng.uniform(scale_min, scale_max), 2)
 
@@ -199,26 +220,25 @@ def apply_data_augmentation(
             mode="reflect",
             channel_axis=0,
         )
-
-        labels_i_tmp = transform.rescale(
-            labels_,
-            scale_val,
-            order=0,
-            preserve_range=True,
-            mode="reflect",
-            channel_axis=0,
-        )
-
+        
         images_ = crop_or_pad_slice_to_size(images_i_tmp, n_x, n_y)
-        labels_ = crop_or_pad_slice_to_size(labels_i_tmp, n_x, n_y)
+        
+        if labels_ is not None:        
+            labels_i_tmp = transform.rescale(
+                labels_,
+                scale_val,
+                order=0,
+                preserve_range=True,
+                mode="reflect",
+                channel_axis=0,
+            )
+
+            labels_ = crop_or_pad_slice_to_size(labels_i_tmp, n_x, n_y)
 
     # ========
     # contrast
     # ========
-    if rng.random() < deep_get(
-        tf_probs, "contrast", default=da_ratio, suppress_warning=True
-    ):
-
+    if rng.random() < get_augmentation_prob(tf_probs, "contrast", da_ratio):
         gamma_min = number_or_list_to_array(gamma_min)
         gamma_max = number_or_list_to_array(gamma_max)
 
@@ -232,10 +252,7 @@ def apply_data_augmentation(
     # ========
     # brightness
     # ========
-    if rng.random() < deep_get(
-        tf_probs, "brightness", default=da_ratio, suppress_warning=True
-    ):
-
+    if rng.random() < get_augmentation_prob(tf_probs, "brightness", da_ratio):
         brightness_min = number_or_list_to_array(brightness_min)
         brightness_max = number_or_list_to_array(brightness_max)
 
@@ -248,12 +265,13 @@ def apply_data_augmentation(
     # ========
     # noise
     # ========
-    if rng.random() < deep_get(
-        tf_probs, "noise", default=da_ratio, suppress_warning=True
-    ):
-
+    if rng.random() < get_augmentation_prob(tf_probs, "noise", da_ratio):
         # noise augmentation
         n = np.random.normal(noise_mean, noise_std, size=images_.shape)
         images_ = images_ + n.astype(images_.dtype)
+
+    if return_torch:
+        images_ = numpy_to_torch(images_)
+        labels_ = numpy_to_torch(labels_) if labels_ is not None else None
 
     return images_, labels_

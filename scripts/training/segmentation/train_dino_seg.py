@@ -295,6 +295,7 @@ if __name__ == "__main__":
 
     seed_everything(seed)
     device = define_device(device)
+    print(f"Device: {device}")
 
     # Write or load parameters to/from logdir, used if a run is resumed.
     # :=========================================================================:

@@ -1,7 +1,8 @@
 import os
 import copy
+import wandb
 from functools import partial
-from typing import Optional, Literal, Union, Callable
+from typing import Optional, Literal, Union, Callable, Any
 from collections import OrderedDict, defaultdict
 from dataclasses import dataclass, field, asdict
 
@@ -24,8 +25,14 @@ from tta_uia_segmentation.src.utils.utils import (
     torch_to_numpy,
     from_DCHW_to_NCDHW,
     generate_2D_dl_for_vol,
+    clone_state_dict_to_cpu
 )
-from tta_uia_segmentation.src.utils.io import save_nii_image, write_to_csv
+from tta_uia_segmentation.src.utils.io import (
+    save_nii_image,
+    write_to_csv,
+    save_checkpoint,
+    load_partial_weights,
+)
 from tta_uia_segmentation.src.utils.visualization import export_images
 
 
@@ -59,10 +66,10 @@ EVAL_METRICS = {
 
 
 def _preprocess_volumes_for_viz(
-    *vols,
+    *vols: tuple[torch.Tensor, ...],
     convert_to_categorical: bool = False,
     slice_idxs: Optional[tuple] = None,
-) -> tuple[torch.Tensor]:
+) -> tuple[torch.Tensor, ...]:
     """
     Preprocess volumes for visualization by slicing and squeezing them.
 
@@ -246,25 +253,27 @@ class BaseTTAState(TTAStateInterface):
     is_adapted: bool = False
     iteration: int = 0
     model_selection_score: float = float("-inf")
-    tta_losses: dict[str | int, OrderedDict[int, list | float]] = field(
+    tta_losses: dict[str, OrderedDict[int, list | float]] = field(
         default_factory=dict
     )
-    test_scores: dict[str | int, OrderedDict[int, list | float]] = field(
+    test_scores: dict[str, OrderedDict[int, list | float]] = field(
         default_factory=dict
     )
+    fitted_modules_state_dict: Optional[dict[str, Any]] = field(default=None)
 
     _create_initial_state: bool = field(default=True)
-    _initial_state: Optional[Union["BaseTTAState", dict]] = field(default=None)
-    _best_state: Optional[Union["BaseTTAState", dict]] = field(default=None)
+    _initial_state: Optional["BaseTTAState"] = field(default=None)
+    _best_state: Optional["BaseTTAState"] = field(default=None)
 
     def reset(self) -> None:
         """
         Reset the state of the class to the initial state.
         """
+        assert self._initial_state is not None, "Initial state is not defined."
         self.reset_to_state(self._initial_state)
         self._initial_state = self.current_state
 
-    def reset_to_state(self, state: "BaseTTAState") -> None:
+    def reset_to_state(self, state: Union["BaseTTAState", dict]) -> None:
         """
         Reset the state of the class to the given state.
 
@@ -273,7 +282,10 @@ class BaseTTAState(TTAStateInterface):
         state : BaseTTAState
             The state to reset to.
         """
-        self.__dict__.update(state.__dict__)
+        if isinstance(state, BaseTTAState):
+            self.__dict__.update(state.__dict__)
+        else:
+            self.__dict__.update(state)
 
     def __post_init__(self):
         """Create the initial state of the class."""
@@ -298,19 +310,34 @@ class BaseTTAState(TTAStateInterface):
         BaseTTAState
             The current state.
         """
+        return BaseTTAState(**self.current_state_as_dict)   
+    
+    @property
+    def current_state_as_dict(self) -> dict:
+        """
+        Get the current state of the BaseTTAState as a dictionary.
 
-        # Get the dict of the remaining attributes and deep copy them
+        Returns
+        -------
+        dict
+            The current state as a dictionary.
+        """
+        # Remove the initial and best states from the state_dict
         current_state_dict = asdict(self)
-        current_state_dict["_create_initial_state"] = False
+        current_state_dict['_create_initial_state'] = False
+        
+        # Move the state_dict of the model to CPU
+        model_state_dicts = ['fitted_modules_state_dict']
+        current_state_dict['fitted_modules_state_dict'] = clone_state_dict_to_cpu(
+            current_state_dict['fitted_modules_state_dict'])  
 
+        # Create a deep copy of all other attributes
         current_state_dict = {
-            key: copy.deepcopy(value) for key, value in current_state_dict.items()
-        }
+            key: copy.deepcopy(value) if key not in model_state_dicts else value
+            for key, value in current_state_dict.items()
+            }
 
-        # Create a new BaseTTAState object with the copied attributes
-        current_state = BaseTTAState(**current_state_dict)
-
-        return current_state
+        return current_state_dict
 
     @property
     def initial_state(self) -> "BaseTTAState":
@@ -322,6 +349,9 @@ class BaseTTAState(TTAStateInterface):
         BaseTTAState
             The initial state.
         """
+        if self._initial_state is None:
+            raise ValueError("Initial state is not defined.")
+
         return self._initial_state
 
     @property
@@ -334,6 +364,9 @@ class BaseTTAState(TTAStateInterface):
         BaseTTAState
             The best state.
         """
+        if self._best_state is None:
+            raise ValueError("Best state is not defined.")
+        
         return self._best_state
 
     @property
@@ -346,6 +379,9 @@ class BaseTTAState(TTAStateInterface):
         int
             The iteration number of the best state.
         """
+        if self._best_state is None:
+            raise ValueError("Best state is not defined.")
+        
         return self._best_state.iteration
 
     @property
@@ -358,6 +394,9 @@ class BaseTTAState(TTAStateInterface):
         float
             The model selection score of the best state.
         """
+        if self._best_state is None:
+            raise ValueError("Best state is not defined.")
+        
         return self._best_state.model_selection_score
 
     def add_test_score(self, iteration: int, metric_name: str, score: float | list):
@@ -412,7 +451,7 @@ class BaseTTAState(TTAStateInterface):
             self._best_state = self.current_state
             self._best_state._best_state = None
 
-    def get_loss(self, loss_name: str) -> float | list:
+    def get_loss(self, loss_name: str) -> OrderedDict[int, list | float]:
         """
         Retrieve the loss values for a given loss name.
 
@@ -428,7 +467,7 @@ class BaseTTAState(TTAStateInterface):
         """
         return self.tta_losses[loss_name]
 
-    def get_score(self, score_name: str) -> float | list:
+    def get_score(self, score_name: str) -> OrderedDict[int, list | float]:
         """
         Retrieve the latest score for a given score name.
 
@@ -489,7 +528,7 @@ class BaseTTAState(TTAStateInterface):
 
     def get_all_test_scores_as_df(
         self, name_contains: Optional[str] = None
-    ) -> dict[pd.DataFrame]:
+    ) -> dict[str, pd.DataFrame]:
         """
         Convert all test_scores to pandas DataFrames.
 
@@ -546,7 +585,7 @@ class BaseTTAState(TTAStateInterface):
 
             score_df.to_csv(filepath, index=False, header=False)
 
-    def get_all_losses_as_df(self, name_contains: Optional[str]) -> tuple[pd.DataFrame]:
+    def get_all_losses_as_df(self, name_contains: Optional[str]) -> dict[str, pd.DataFrame]:
         """
         Convert all tta_losses to pandas DataFrames.
 
@@ -582,14 +621,13 @@ class BaseTTASeg(TTAInterface):
         self,
         seg: BaseSeg,
         n_classes: int,
+        fit_at_test_time: Literal["normalizer", "bn_layers", "all"] = "bn_layers",
         classes_of_interest: Optional[tuple[int | str, ...]] = tuple(),
         eval_metrics: dict[str, Callable] = EVAL_METRICS,
         viz_interm_outs: tuple[str, ...] = tuple(),
         wandb_log: bool = False,
         device: str | torch.device = "cuda",
     ):
-        self._state = BaseTTAState()
-
         self._seg = seg
 
         # Information about the problem
@@ -600,8 +638,40 @@ class BaseTTASeg(TTAInterface):
             else classes_of_interest
         )
 
+        # Test-time adaptation settings: which layers to adapt
+        # Check modules to fit at test time are present in the model
+        assert fit_at_test_time in [
+            "normalizer",
+            "bn_layers",
+            "all",
+        ], "fit_at_test_time must be either 'normalizer' or 'bn_layers'."
+
+        fitted_modules_state_dict = None
+
+        if fit_at_test_time == "normalizer":
+            assert (
+                self._seg.has_normalizer_module()
+            ), "Model does not have a normalizer module to fit at test time."
+
+            # get state dict of the normalizer module
+            fitted_modules_state_dict = self._seg.get_normalizer_module().state_dict()
+
+        if fit_at_test_time == "bn_layers":
+            assert (
+                self._seg.has_bn_layers()
+            ), "Model does not have batch normalization layers to fit at test time."
+            fitted_modules_state_dict = self._seg.get_bn_layers_state_dict()
+
+        if fit_at_test_time == "all":
+            fitted_modules_state_dict = self._seg.state_dict()
+
+        self._fit_at_test_time = fit_at_test_time
+
         # Logging settings
         self._wandb_log = wandb_log
+
+        if self._wandb_log:
+            self._define_custom_wandb_metrics()
 
         # Evaluation metrics
         self._eval_metrics = eval_metrics
@@ -611,6 +681,12 @@ class BaseTTASeg(TTAInterface):
 
         # Device
         self._device = device
+
+        # Start the State of the model
+        self._state = BaseTTAState(
+            fitted_modules_state_dict=fitted_modules_state_dict,
+        )
+
 
     @torch.inference_mode()
     def predict(
@@ -641,9 +717,9 @@ class BaseTTASeg(TTAInterface):
 
             # Create a DataLoader for the input volume
             x = generate_2D_dl_for_vol(
-                x, 
-                batch_size=preprocess_kwargs['batch_size'],
-                num_workers=preprocess_kwargs['num_workers']
+                x,
+                batch_size=preprocess_kwargs["batch_size"],
+                num_workers=preprocess_kwargs["num_workers"],
             )
 
         for x_b, *_ in x:
@@ -685,14 +761,15 @@ class BaseTTASeg(TTAInterface):
     @torch.inference_mode()
     def evaluate(
         self,
-        x_preprocessed: torch.Tensor,
-        y_original_gt: torch.Tensor,
+        x_preprocessed: torch.Tensor | DataLoader,
+        y_gt: torch.Tensor,
         preprocessed_pix_size: tuple[float, ...],
         gt_pix_size: tuple[float, ...],
+        iteration: int = -1,
         metrics: Optional[dict[str, Callable]] = None,
         batch_size: Optional[int] = None,
         num_workers: Optional[int] = None,
-        classes_of_interest: tuple[int] = tuple(),
+        classes_of_interest: tuple[int, ...] = tuple(),
         output_dir: Optional[str] = None,
         file_name: Optional[str] = None,
         store_visualization: bool = False,
@@ -745,7 +822,7 @@ class BaseTTASeg(TTAInterface):
         self._evaluation_mode()
 
         # Set default values of arguments if necessary
-        metrics = default(metrics, self._eval_metrics)
+        metrics_: dict = default(metrics, self._eval_metrics)
         classes_of_interest = default(classes_of_interest, self._classes_of_interest)
 
         # Predict segmentation for x_preprocessed
@@ -753,6 +830,9 @@ class BaseTTASeg(TTAInterface):
 
         # Generate a DataLoader if a single volume is provided
         if isinstance(x_preprocessed, torch.Tensor):
+            base_msg = "{arg} must be provided to create a DataLoader for the x Tensor."
+            assert batch_size is not None, base_msg.format(arg="batch_size")
+            assert num_workers is not None, base_msg.format(arg="num_workers")
             x_preprocessed = generate_2D_dl_for_vol(
                 x_preprocessed, batch_size=batch_size, num_workers=num_workers
             )
@@ -769,8 +849,8 @@ class BaseTTASeg(TTAInterface):
         # :===================================================================:
         resize_to_original = partial(
             resize_volume,
-            current_pix_size=preprocessed_pix_size,
-            target_pix_size=gt_pix_size,
+            current_pix_size=preprocessed_pix_size,  # type: ignore
+            target_pix_size=gt_pix_size,  # type: ignore
             target_img_size=None,  # We assume no padding or cropping is needed to match image sizes
             mode="bilinear",
             only_inplane_resample=True,
@@ -781,11 +861,11 @@ class BaseTTASeg(TTAInterface):
 
         # Measure the performance of the model
         # :===================================================================:
-        y_original_gt = y_original_gt.to(y_pred.device)
+        y_gt = y_gt.to(y_pred.device)
 
         metrics_values = {}
-        for metric_name, metric_fn in metrics.items():
-            metric_value = metric_fn(y_pred, y_original_gt)
+        for metric_name, metric_fn in metrics_.items():
+            metric_value = metric_fn(y_pred, y_gt)
 
             if isinstance(metric_value, torch.Tensor):
                 if metric_value.ndim <= 1:
@@ -795,23 +875,26 @@ class BaseTTASeg(TTAInterface):
 
             metrics_values[metric_name] = metric_value
 
+            self.state.add_test_score(
+                iteration=iteration, metric_name=metric_name, score=metric_value
+            )
+
         # Save visualizations
         # :===================================================================:
         if store_visualization:
-            assert (
-                output_dir is not None
-            ), "The output directory must be provided to store visualizations."
-            assert (
-                file_name is not None
-            ), "The file name must be provided to store visualizations."
+            required_args = [output_dir, file_name, x_original]
+            for arg in required_args:
+                assert (
+                    arg is not None
+                ), f"{arg} must be provided to store visualizations"
 
             _visualize_predictions(
-                x_original=x_original,
+                x_original=x_original,  # type: ignore
                 interm_outs=interm_outs,
-                y_original_gt=y_original_gt,
+                y_original_gt=y_gt,
                 y_pred=y_pred,
-                output_dir=output_dir,
-                file_name=file_name,
+                output_dir=output_dir,  # type: ignore
+                file_name=file_name,  # type: ignore
                 other_volumes_to_visualize=other_volumes_to_visualize,
                 save_predicted_vol_as_nifti=save_predicted_vol_as_nifti,
                 slice_idxs=slice_vols_for_viz,
@@ -825,12 +908,12 @@ class BaseTTASeg(TTAInterface):
                 )
 
                 _visualize_predictions(
-                    x_original=x_original,
+                    x_original=x_original,  # type: ignore
                     interm_outs=interm_outs,
-                    y_original_gt=y_original_gt[:, [0] + classes_of_interest],
-                    y_pred=y_pred[:, [0] + classes_of_interest],
-                    output_dir=output_dir,
-                    file_name=file_name,
+                    y_original_gt=y_gt[:, [0] + list(classes_of_interest)],
+                    y_pred=y_pred[:, [0] + list(classes_of_interest)],
+                    output_dir=output_dir,  # type: ignore
+                    file_name=file_name,  # type: ignore
                     output_dir_suffix=output_dir_suffix,
                     other_volumes_to_visualize=other_volumes_to_visualize,
                     save_predicted_vol_as_nifti=save_predicted_vol_as_nifti,
@@ -861,7 +944,7 @@ class BaseTTASeg(TTAInterface):
             Type of iteration (e.g., 'last_iteration', 'best_scoring_iteration').
 
         """
-        test_scores_fg = self._state.get_all_test_scores_as_df(
+        test_scores_fg: dict[str, Any] = self._state.get_all_test_scores_as_df(
             name_contains="dice_score"
         )
 
@@ -902,7 +985,7 @@ class BaseTTASeg(TTAInterface):
         """
         test_scores_df = self._state.get_score_as_df(score_name)
 
-        return np.mean(test_scores_df.iloc[-1].values)
+        return np.mean(test_scores_df.iloc[-1].values) # type: ignore
 
     def get_current_test_score(
         self, score_name: str, class_idx: Optional[int] = None
@@ -921,9 +1004,9 @@ class BaseTTASeg(TTAInterface):
             Dictionary of test scores.
         """
         if class_idx is None:
-            return self._state.get_score_as_df(score_name).iloc[-1].values
+            return self._state.get_score_as_df(score_name).iloc[-1].values # type: ignore
         else:
-            return self._state.get_score_as_df(score_name).iloc[-1, class_idx]
+            return self._state.get_score_as_df(score_name).iloc[-1, class_idx] # type: ignore
 
     @property
     def state(self) -> BaseTTAState:
@@ -987,7 +1070,8 @@ class BaseTTASeg(TTAInterface):
             Path to the file containing the model state.
         """
         state_dict = torch.load(path)
-        self._seg.load_state_dict(state_dict["seg"])
+        self._seg.load_checkpoint_from_dict(state_dict["seg"])
+        self._state.reset_to_state(state_dict["state"])
 
     def save_state(self, path: str) -> None:
         """
@@ -998,20 +1082,61 @@ class BaseTTASeg(TTAInterface):
         path : str
             Path to the file where the model state will be saved.
         """
-        state_dict = {"seg": self._seg.state_dict(), "state": self._state}
-        torch.save(state_dict, path)
+        save_checkpoint(
+            path,
+            seg=self._seg.checkpoint_as_dict(),
+            state=self._state.current_state_as_dict
+        )
 
+
+    def _load_fitted_modules_state_dict(
+            self,
+            fitted_modules_state_dict: dict[str, Any]
+        ) -> None:
+        """
+        Load the state dict of the fitted modules.
+
+        Parameters
+        ----------
+        fitted_modules_state_dict : dict[str, Any]
+            State dict of the fitted modules.
+        """
+        modules_to_load_state: Optional[tuple] = None
+        if self._fit_at_test_time == "normalizer":
+            modules_to_load_state = (self._seg.get_normalizer_module(), )
+        
+        elif self._fit_at_test_time == "bn_layers":
+            modules_to_load_state = self._seg.get_bn_layers()
+        
+        elif self._fit_at_test_time == "all":
+            modules_to_load_state = (self._seg, )
+            
+        assert modules_to_load_state is not None, "No modules to load state."
+
+        load_partial_weights(
+            modules_to_load_state,
+            fitted_modules_state_dict
+        )
+    
     def reset_state(self) -> None:
         """
-        Reset the state of the model.
+        Reset to the inital state of the model.
         """
+        # Reset state
         self._state.reset()
+
+        # Load the initial state of the model
+        if self._state.fitted_modules_state_dict is not None:
+            self._load_fitted_modules_state_dict(self._state.fitted_modules_state_dict)
 
     def load_best_state(self) -> None:
         """
         Load the best state of the model.
         """
         self._state.reset_to_state(self._state.best_state)
+
+        if self._state.fitted_modules_state_dict is not None:
+            self._load_fitted_modules_state_dict(self._state.fitted_modules_state_dict)
 
     @property
     def model_selection_score(self) -> float:
@@ -1022,10 +1147,19 @@ class BaseTTASeg(TTAInterface):
         return self._state.iteration
 
     def get_loss(self, loss_name: str) -> OrderedDict[int, float]:
-        return self._state.get_loss(loss_name)
+        return self._state.get_loss(loss_name) # type: ignore
 
     def get_score(self, metric_name: str) -> OrderedDict[int, float]:
-        return self._state.get_score(metric_name)
+        return self._state.get_score(metric_name) # type: ignore
+
+    def _define_custom_wandb_metrics(self):
+        wandb.define_metric("tta_step")
+        wandb.define_metric('dice_score_fg_sklearn_mean/*', step_metric='tta_step')
+        wandb.define_metric('dice_score_classes_of_interest/*', step_metric='tta_step')
+        wandb.define_metric('tta_loss/*', step_metric='tta_step')
+        
+        if self._classes_of_interest is not None:
+            wandb.define_metric('dice_score_classes_of_interest/*', step_metric='tta_step')
 
     def tta(self, x: torch.Tensor | DataLoader) -> None:
         """
