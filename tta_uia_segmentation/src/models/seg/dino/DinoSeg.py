@@ -8,7 +8,6 @@ from .DinoV2FeatureExtractor import DinoV2FeatureExtractor
 from .BaseDecoder import BaseDecoder
 from ..BaseSeg import BaseSeg
 from tta_uia_segmentation.src.models.pca.BasePCA import BasePCA
-from tta_uia_segmentation.src.utils.io import save_checkpoint
 from tta_uia_segmentation.src.utils.utils import min_max_normalize_channelwise, default
 
 
@@ -302,15 +301,11 @@ class DinoSeg(BaseSeg):
         self._decoder.train_mode()
 
     @property
-    def trainable_params(self) -> List[nn.Parameter]:
-        return list(self._decoder.parameters())
-
-    @property
-    def trainable_modules(self) -> List[torch.nn.Module]:
+    def trainable_modules(self) -> dict[str, torch.nn.Module]:
         """
         Returns the trainable parameters of the model.
         """
-        return [self._decoder]
+        return {"_decoder": self._decoder}
 
     @property
     def pca_n_components(self) -> Optional[int]:

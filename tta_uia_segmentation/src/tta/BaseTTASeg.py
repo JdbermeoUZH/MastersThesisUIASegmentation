@@ -13,6 +13,8 @@ import pandas as pd
 from sklearn.metrics import f1_score
 
 from tta_uia_segmentation.src.models import BaseSeg
+from tta_uia_segmentation.src.dataset.aug_tensor_dataset import AgumentedTensorDataset
+from tta_uia_segmentation.src.dataset.utils import ensure_nd
 from tta_uia_segmentation.src.tta.TTAInterface import TTAInterface, TTAStateInterface
 from tta_uia_segmentation.src.utils.loss import (
     dice_score,
@@ -21,11 +23,13 @@ from tta_uia_segmentation.src.utils.loss import (
 )
 from tta_uia_segmentation.src.utils.utils import (
     default,
+    get_seed,
     resize_volume,
     torch_to_numpy,
     from_DCHW_to_NCDHW,
+    from_NCDHW_to_DCHW,
     generate_2D_dl_for_vol,
-    clone_state_dict_to_cpu
+    clone_state_dict_to_cpu,
 )
 from tta_uia_segmentation.src.utils.io import (
     save_nii_image,
@@ -253,13 +257,11 @@ class BaseTTAState(TTAStateInterface):
     is_adapted: bool = False
     iteration: int = 0
     model_selection_score: float = float("-inf")
-    tta_losses: dict[str, OrderedDict[int, list | float]] = field(
-        default_factory=dict
+    tta_losses: dict[str, OrderedDict[int, list | float]] = field(default_factory=dict)
+    test_scores: dict[str, OrderedDict[int, list | float]] = field(default_factory=dict)
+    fitted_modules_state_dict: Optional[dict[str, OrderedDict[str, torch.Tensor]]] = (
+        field(default=None)
     )
-    test_scores: dict[str, OrderedDict[int, list | float]] = field(
-        default_factory=dict
-    )
-    fitted_modules_state_dict: Optional[dict[str, Any]] = field(default=None)
 
     _create_initial_state: bool = field(default=True)
     _initial_state: Optional["BaseTTAState"] = field(default=None)
@@ -310,8 +312,8 @@ class BaseTTAState(TTAStateInterface):
         BaseTTAState
             The current state.
         """
-        return BaseTTAState(**self.current_state_as_dict)   
-    
+        return BaseTTAState(**self.current_state_as_dict)
+
     @property
     def current_state_as_dict(self) -> dict:
         """
@@ -324,18 +326,20 @@ class BaseTTAState(TTAStateInterface):
         """
         # Remove the initial and best states from the state_dict
         current_state_dict = asdict(self)
-        current_state_dict['_create_initial_state'] = False
-        
-        # Move the state_dict of the model to CPU
-        model_state_dicts = ['fitted_modules_state_dict']
-        current_state_dict['fitted_modules_state_dict'] = clone_state_dict_to_cpu(
-            current_state_dict['fitted_modules_state_dict'])  
+        current_state_dict["_create_initial_state"] = False
+
+        # Move the state_dicts of a torch module that are fitted/changed to CPU
+        modules_to_fit = default(current_state_dict["fitted_modules_state_dict"], {})
+        for module_name, module_state_dict in modules_to_fit.items():
+            current_state_dict["fitted_modules_state_dict"][module_name] = (
+                clone_state_dict_to_cpu(module_state_dict)
+            )
 
         # Create a deep copy of all other attributes
         current_state_dict = {
-            key: copy.deepcopy(value) if key not in model_state_dicts else value
+            key: copy.deepcopy(value) if key != "fitted_modules_state_dict" else value
             for key, value in current_state_dict.items()
-            }
+        }
 
         return current_state_dict
 
@@ -366,7 +370,7 @@ class BaseTTAState(TTAStateInterface):
         """
         if self._best_state is None:
             raise ValueError("Best state is not defined.")
-        
+
         return self._best_state
 
     @property
@@ -381,7 +385,7 @@ class BaseTTAState(TTAStateInterface):
         """
         if self._best_state is None:
             raise ValueError("Best state is not defined.")
-        
+
         return self._best_state.iteration
 
     @property
@@ -396,7 +400,7 @@ class BaseTTAState(TTAStateInterface):
         """
         if self._best_state is None:
             raise ValueError("Best state is not defined.")
-        
+
         return self._best_state.model_selection_score
 
     def add_test_score(self, iteration: int, metric_name: str, score: float | list):
@@ -585,7 +589,9 @@ class BaseTTAState(TTAStateInterface):
 
             score_df.to_csv(filepath, index=False, header=False)
 
-    def get_all_losses_as_df(self, name_contains: Optional[str]) -> dict[str, pd.DataFrame]:
+    def get_all_losses_as_df(
+        self, name_contains: Optional[str]
+    ) -> dict[str, pd.DataFrame]:
         """
         Convert all tta_losses to pandas DataFrames.
 
@@ -621,30 +627,26 @@ class BaseTTASeg(TTAInterface):
         self,
         seg: BaseSeg,
         n_classes: int,
-        fit_at_test_time: Literal["normalizer", "bn_layers", "all"] = "bn_layers",
-        classes_of_interest: Optional[tuple[int | str, ...]] = tuple(),
+        fit_at_test_time: Literal["normalizer", "bn_layers", "all", None] = "bn_layers",
+        aug_params: Optional[dict] = None,
+        classes_of_interest: Optional[tuple[int, ...]] = tuple(),
         eval_metrics: dict[str, Callable] = EVAL_METRICS,
+        eval_metrics_to_log: tuple[str, ...] = ('dice_score_fg_classes_sklearn',),
         viz_interm_outs: tuple[str, ...] = tuple(),
         wandb_log: bool = False,
         device: str | torch.device = "cuda",
+        seed: Optional[int] = None,
     ):
         self._seg = seg
 
         # Information about the problem
         self._n_classes = n_classes
+        self._aug_params = aug_params
         self._classes_of_interest = (
             (classes_of_interest,)
             if isinstance(classes_of_interest, int)
             else classes_of_interest
         )
-
-        # Test-time adaptation settings: which layers to adapt
-        # Check modules to fit at test time are present in the model
-        assert fit_at_test_time in [
-            "normalizer",
-            "bn_layers",
-            "all",
-        ], "fit_at_test_time must be either 'normalizer' or 'bn_layers'."
 
         fitted_modules_state_dict = None
 
@@ -656,25 +658,20 @@ class BaseTTASeg(TTAInterface):
             # get state dict of the normalizer module
             fitted_modules_state_dict = self._seg.get_normalizer_module().state_dict()
 
-        if fit_at_test_time == "bn_layers":
+        elif fit_at_test_time == "bn_layers":
             assert (
                 self._seg.has_bn_layers()
             ), "Model does not have batch normalization layers to fit at test time."
             fitted_modules_state_dict = self._seg.get_bn_layers_state_dict()
 
-        if fit_at_test_time == "all":
+        elif fit_at_test_time == "all":
             fitted_modules_state_dict = self._seg.state_dict()
 
         self._fit_at_test_time = fit_at_test_time
 
-        # Logging settings
-        self._wandb_log = wandb_log
-
-        if self._wandb_log:
-            self._define_custom_wandb_metrics()
-
         # Evaluation metrics
         self._eval_metrics = eval_metrics
+        self._eval_metrics_to_log = eval_metrics_to_log
 
         # Visualization settings
         self._viz_interm_outs = viz_interm_outs
@@ -682,11 +679,19 @@ class BaseTTASeg(TTAInterface):
         # Device
         self._device = device
 
+        # Seed
+        self._seed = default(seed, get_seed())
+
         # Start the State of the model
         self._state = BaseTTAState(
             fitted_modules_state_dict=fitted_modules_state_dict,
         )
 
+        # Logging settings
+        self._wandb_log = wandb_log
+
+        if self._wandb_log:
+            self._define_custom_wandb_metrics()
 
     @torch.inference_mode()
     def predict(
@@ -767,6 +772,7 @@ class BaseTTASeg(TTAInterface):
         gt_pix_size: tuple[float, ...],
         iteration: int = -1,
         metrics: Optional[dict[str, Callable]] = None,
+        metrics_to_log: tuple[str, ...] = tuple(),
         batch_size: Optional[int] = None,
         num_workers: Optional[int] = None,
         classes_of_interest: tuple[int, ...] = tuple(),
@@ -875,9 +881,39 @@ class BaseTTASeg(TTAInterface):
 
             metrics_values[metric_name] = metric_value
 
-            self.state.add_test_score(
+            self._state.add_test_score(
                 iteration=iteration, metric_name=metric_name, score=metric_value
             )
+
+        # Print and log in wandb
+        # :===================================================================:
+        for metric_to_log in self._eval_metrics_to_log:
+            assert metric_to_log in metrics_values, (
+                f"{metric_to_log} must be present in the metrics_values "
+                "to log it in Weights and Biases."
+            )  
+
+            metric_value = metrics_values[metric_to_log].mean().item()
+
+            print(f"Iteration {iteration} - {metric_to_log} - {file_name}: {metric_value}")
+
+            if self._wandb_log:
+                wandb.log({
+                    f"{metric_to_log}/{file_name}": metric_value,
+                    'tta_step': iteration,
+                })
+
+            if self._classes_of_interest is not None and len(self._classes_of_interest) > 0:
+                classes_of_interest = [int(cls - 1) for cls in self._classes_of_interest] # type: ignore
+                metric_value_cls_intst = metrics_values[metric_to_log][classes_of_interest].mean()   
+                
+                print(f"Iteration {iteration} - {metric_to_log} - {file_name}: {metric_value_cls_intst}")
+
+                if self._wandb_log:
+                    wandb.log({
+                        f"{metric_to_log}_classes_of_interest/{file_name}": metric_value_cls_intst,
+                        'tta_step': iteration,
+                    })
 
         # Save visualizations
         # :===================================================================:
@@ -985,7 +1021,7 @@ class BaseTTASeg(TTAInterface):
         """
         test_scores_df = self._state.get_score_as_df(score_name)
 
-        return np.mean(test_scores_df.iloc[-1].values) # type: ignore
+        return np.mean(test_scores_df.iloc[-1].values)  # type: ignore
 
     def get_current_test_score(
         self, score_name: str, class_idx: Optional[int] = None
@@ -1004,9 +1040,9 @@ class BaseTTASeg(TTAInterface):
             Dictionary of test scores.
         """
         if class_idx is None:
-            return self._state.get_score_as_df(score_name).iloc[-1].values # type: ignore
+            return self._state.get_score_as_df(score_name).iloc[-1].values  # type: ignore
         else:
-            return self._state.get_score_as_df(score_name).iloc[-1, class_idx] # type: ignore
+            return self._state.get_score_as_df(score_name).iloc[-1, class_idx]  # type: ignore
 
     @property
     def state(self) -> BaseTTAState:
@@ -1085,14 +1121,12 @@ class BaseTTASeg(TTAInterface):
         save_checkpoint(
             path,
             seg=self._seg.checkpoint_as_dict(),
-            state=self._state.current_state_as_dict
+            state=self._state.current_state_as_dict,
         )
 
-
     def _load_fitted_modules_state_dict(
-            self,
-            fitted_modules_state_dict: dict[str, Any]
-        ) -> None:
+        self, fitted_modules_state_dict: dict[str, Any]
+    ) -> None:
         """
         Load the state dict of the fitted modules.
 
@@ -1101,23 +1135,22 @@ class BaseTTASeg(TTAInterface):
         fitted_modules_state_dict : dict[str, Any]
             State dict of the fitted modules.
         """
-        modules_to_load_state: Optional[tuple] = None
+        modules_to_load_state: Optional[dict[str, torch.nn.Module]] = None
         if self._fit_at_test_time == "normalizer":
-            modules_to_load_state = (self._seg.get_normalizer_module(), )
-        
-        elif self._fit_at_test_time == "bn_layers":
-            modules_to_load_state = self._seg.get_bn_layers()
-        
-        elif self._fit_at_test_time == "all":
-            modules_to_load_state = (self._seg, )
-            
-        assert modules_to_load_state is not None, "No modules to load state."
+            self._seg.get_normalizer_module().load_state_dict(fitted_modules_state_dict)
 
-        load_partial_weights(
-            modules_to_load_state,
-            fitted_modules_state_dict
-        )
-    
+        elif self._fit_at_test_time == "bn_layers":
+            load_partial_weights(
+                self._seg.get_bn_layers(),
+                fitted_modules_state_dict
+            )
+
+        elif self._fit_at_test_time == "all":
+            self._seg.load_state_dict(fitted_modules_state_dict)
+
+        else:
+            raise ValueError(f"Unknown fit_at_test_time: {self._fit_at_test_time}")
+        
     def reset_state(self) -> None:
         """
         Reset to the inital state of the model.
@@ -1127,7 +1160,9 @@ class BaseTTASeg(TTAInterface):
 
         # Load the initial state of the model
         if self._state.fitted_modules_state_dict is not None:
-            self._load_fitted_modules_state_dict(self._state.fitted_modules_state_dict)
+            self._load_fitted_modules_state_dict(
+                self._state.fitted_modules_state_dict # type: ignore
+            )  
 
     def load_best_state(self) -> None:
         """
@@ -1147,20 +1182,67 @@ class BaseTTASeg(TTAInterface):
         return self._state.iteration
 
     def get_loss(self, loss_name: str) -> OrderedDict[int, float]:
-        return self._state.get_loss(loss_name) # type: ignore
+        return self._state.get_loss(loss_name)  # type: ignore
 
     def get_score(self, metric_name: str) -> OrderedDict[int, float]:
-        return self._state.get_score(metric_name) # type: ignore
+        return self._state.get_score(metric_name)  # type: ignore
 
     def _define_custom_wandb_metrics(self):
         wandb.define_metric("tta_step")
-        wandb.define_metric('dice_score_fg_sklearn_mean/*', step_metric='tta_step')
-        wandb.define_metric('dice_score_classes_of_interest/*', step_metric='tta_step')
-        wandb.define_metric('tta_loss/*', step_metric='tta_step')
-        
-        if self._classes_of_interest is not None:
-            wandb.define_metric('dice_score_classes_of_interest/*', step_metric='tta_step')
+        wandb.define_metric("tta_loss/*", step_metric="tta_step")
+     
+        for eval_metric_to_log in self._eval_metrics_to_log:  
+            wandb.define_metric(
+                f"{eval_metric_to_log}/*",
+                step_metric="tta_step"
+            )
+            if self._classes_of_interest is not None:
+                wandb.define_metric(
+                    f"{eval_metric_to_log}_classes_of_interest/*",
+                    step_metric="tta_step"
+                )
 
+    def convert_volume_to_DCHW_dl(
+        self,
+        x: torch.Tensor,
+        batch_size: int,
+        num_workers: int,
+    ) -> DataLoader[AgumentedTensorDataset]:
+        """
+        Convert a volume (NCDHW) to a DataLoader with the DCHW format.
+
+        Parameters
+        ----------
+        x : torch.Tensor
+            Volume to convert to a DataLoader.
+        batch_size : int
+            Batch size of the DataLoader.
+        num_workers : int
+            Number of workers for the DataLoader.
+        
+        Returns
+        -------
+        DataLoader
+            DataLoader with the DCHW format. (batched over depth)
+        """
+        x_ = ensure_nd(5, x) 
+
+        # Convert from NCDHW to DCHW
+        x_ = from_NCDHW_to_DCHW(x_) # type: ignore
+
+        # Create Dataloader of augmented TensorDataset
+        x_ = DataLoader(
+                AgumentedTensorDataset(
+                    x_,
+                    aug_params=self._aug_params,
+                    seed=self._seed
+                ),
+                batch_size=batch_size,
+                num_workers=num_workers,
+            )
+
+        return x_
+    
     def tta(self, x: torch.Tensor | DataLoader) -> None:
         """
         Perform test-time adaptation on the input data.
@@ -1188,3 +1270,9 @@ class BaseTTASeg(TTAInterface):
             Dataset for evaluation.
         """
         raise NotImplementedError("The method 'evaluate_dataset' is not implemented.")
+
+    @property
+    def trainable_params_at_test_time(self) -> list[torch.nn.Parameter]:
+        raise NotImplementedError(
+            "The method 'trainable_params_at_test_time' is not implemented."
+        )

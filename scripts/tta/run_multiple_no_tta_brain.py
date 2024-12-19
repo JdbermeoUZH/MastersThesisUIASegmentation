@@ -57,8 +57,10 @@ seg_models_path = {
         # "$RESULTS_DIR/subcortical_structures/segmentation/abide_stanford/dino/large/bs_16_lr_1em3_NO_grad_clip_NO_weight_decay_hier_2_PCA_num_PCA_937_min_max_norm_per_img_aug_on_fly",
 
         # "$RESULTS_DIR/subcortical_structures/segmentation/abide_stanford/dino/large/bs_16_lr_1em3_NO_grad_clip_NO_weight_decay_hier_2_aug_on_fly_num_ch_128_64",
-        #"$RESULTS_DIR/subcortical_structures/segmentation/abide_stanford/dino/large/bs_16_lr_1em3_NO_grad_clip_NO_weight_decay_hier_2_aug_on_fly_num_ch_128_64_32_16",
-        "$RESULTS_DIR/subcortical_structures/segmentation/abide_stanford/dino/large/bs_16_lr_1em3_NO_grad_clip_NO_weight_decay_hier_2_aug_on_fly_num_ch_128_64_32_16_upsample_type_transposed",
+        # "$RESULTS_DIR/subcortical_structures/segmentation/abide_stanford/dino/large/bs_16_lr_1em3_NO_grad_clip_NO_weight_decay_hier_2_aug_on_fly_num_ch_128_64_32_16",
+        # "$RESULTS_DIR/subcortical_structures/segmentation/abide_stanford/dino/large/bs_16_lr_1em3_NO_grad_clip_NO_weight_decay_hier_2_aug_on_fly_num_ch_128_64_32_16_upsample_type_transposed",
+        "$RESULTS_DIR/subcortical_structures/segmentation/abide_stanford/dino/large/resnet_decoder/opt_params_kerem_bs_32_dice_loss_decay_hier_2_aug_on_fly_new_EXP_new_attempt",
+        # "$RESULTS_DIR/subcortical_structures/segmentation/abide_stanford/dino/large/resnet_decoder/opt_params_kerem_bs_32_dice_loss_decay_hier_2_aug_on_fly_new_EXP_up_transposed",
     ),
 
     # "hcp_t2": (

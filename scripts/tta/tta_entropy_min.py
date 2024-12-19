@@ -3,14 +3,15 @@ import sys
 import copy
 import argparse
 
+import torch
 import wandb
-import numpy as np
 
 sys.path.append(os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
-from tta_uia_segmentation.src.tta import BaseTTASeg
+from tta_uia_segmentation.src.tta import TTAEntropyMin
 from tta_uia_segmentation.src.tta.utils import write_summary
 from tta_uia_segmentation.src.dataset.io import get_datasets
+from tta_uia_segmentation.src.dataset.utils import ensure_nd
 from tta_uia_segmentation.src.models.io import (
     define_and_possibly_load_norm_seg,
     define_and_possibly_load_dino_seg,
@@ -31,7 +32,7 @@ from tta_uia_segmentation.src.utils.utils import (
 from tta_uia_segmentation.src.utils.logging import setup_wandb
 
 
-TTA_MODE = "no_tta"
+TTA_MODE = "entropy_min"
 
 
 def preprocess_cmd_args() -> argparse.Namespace:
@@ -90,6 +91,12 @@ def preprocess_cmd_args() -> argparse.Namespace:
         help="Path to directory where logs and checkpoints are saved. Default: logs",
     )
 
+    parser.add_argument(
+        "--wandb_run_name",
+        type=str,
+        help="Name of wandb run. Default: None",
+    )
+
     parser.add_argument("--classes_of_interest", type=int, nargs="+")
 
     parser.add_argument(
@@ -108,15 +115,97 @@ def preprocess_cmd_args() -> argparse.Namespace:
     # :================================================================================================:
     # Optimization parameters
     parser.add_argument(
+        "--num_steps",
+        type=int,
+        help="Number of steps to take in TTA loop. Default: 100",
+    )
+
+    parser.add_argument(
+        "--fit_at_test_time",
+        type=str,
+        choices=["bn_layers", "all", "normalizer"],
+        help="Fit at test time. Default: None",
+    )
+
+    parser.add_argument(
+        "--learning_rate", type=float, help="Learning rate for optimizer. Default: 1e-5"
+    )
+    parser.add_argument(
+        "--weight_decay", type=float, help="Weight decay for optimizer. Default: 1e-4"
+    )
+
+    parser.add_argument(
         "--batch_size", type=int, help="Batch size for tta. Default: 64"
     )
+    parser.add_argument(
+        "--gradient_acc_steps",
+        type=int,
+        help="Number of gradient accumulation steps. Default: 1",
+    )
+
+    parser.add_argument(
+        "--lr_decay", type=parse_bool, help="Use lr decay. Default: True"
+    )
+
+    parser.add_argument(
+        "--lr_scheduler_step_size",
+        type=int,
+        help="Step size for lr scheduler. Default: 20",
+    )
+
+    parser.add_argument(
+        "--lr_scheduler_gamma",
+        type=float,
+        help="Gamma for lr scheduler. Default: 0.7",
+    )
+
     parser.add_argument(
         "--num_workers", type=int, help="Number of workers for dataloader. Default: 2"
     )
     parser.add_argument(
+        "--evaluate_every",
+        type=int,
+        help="Evaluate model every n steps. Default: 25",
+    )
+    parser.add_argument(
         "--save_predicted_vol_as_nifti",
         type=parse_bool,
-        help="Save predicted volume as nifti. Default True"
+        help="Save predicted volume as nifti. Default True",
+    )
+
+    # Entropy Min Loss function params
+    parser.add_argument(
+        "--class_prior_type",
+        type=str,
+        choices=["uniform", "data"],
+        help="Type of class prior to use for entropy min loss. Default: data",
+    )
+    parser.add_argument(
+        "--use_kl_loss",
+        type=parse_bool,
+        help="Use KL loss in entropy min loss. Default: True",
+    )
+    parser.add_argument(
+        "--weighted_loss",
+        type=parse_bool,
+        help="Use weighted loss in entropy min loss. Default: True",
+    )
+    parser.add_argument(
+        "--clases_to_exclude_ent_term",
+        type=int,
+        nargs="+",
+        help="Classes to exclude from entropy term. Default: []",
+    )
+    parser.add_argument(
+        "--classes_to_exclude_kl_term",
+        type=int,
+        nargs="+",
+        help="Classes to exclude from KL term. Default: [0]",
+    )
+    parser.add_argument(
+        "--filter_low_support_classes",
+        type=parse_bool,
+        help="Set probability of low support classes to 0 in KL term. Default: True",
     )
 
     # Dataset and its transformations to use for TTA
@@ -130,6 +219,11 @@ def preprocess_cmd_args() -> argparse.Namespace:
         "--rescale_factor",
         type=float,
         help="Rescale factor for images in dataset. Default: None",
+    )
+    parser.add_argument(
+        "--load_dataset_in_memory",
+        type=parse_bool,
+        help="Whether to load the entire dataset in memory. Default: False",
     )
 
     args = parser.parse_args()
@@ -150,7 +244,6 @@ def get_configuration_arguments() -> tuple[dict, dict]:
         tta_config[TTA_MODE], args, f"tta, {TTA_MODE}"
     )
 
-
     return dataset_config, tta_config
 
 
@@ -164,7 +257,7 @@ if __name__ == "__main__":
 
     seg_dir = tta_config["seg_dir"]
     classes_of_interest = default(tta_config["classes_of_interest"], tuple())
-    classes_of_interest: tuple[int, ...] = tuple(classes_of_interest)
+    classes_of_interest: tuple[int | str, ...] = tuple(classes_of_interest)
 
     params_seg = load_config(os.path.join(seg_dir, "params.yaml"))
     train_params_seg = params_seg["training"]
@@ -212,6 +305,7 @@ if __name__ == "__main__":
     dataset_type = tta_config["dataset_type"]
 
     n_classes = dataset_config[dataset_name]["n_classes"]
+    aug_params = tta_config[TTA_MODE]["augmentation"]
 
     dataset_kwargs = dict(
         dataset_name=dataset_name,
@@ -220,16 +314,15 @@ if __name__ == "__main__":
         resolution_proc=dataset_config[dataset_name]["resolution_proc"],
         n_classes=n_classes,
         dim_proc=dataset_config[dataset_name]["dim"],
-        aug_params=None,
+        aug_params=aug_params,
         load_original=True,
     )
 
     if dataset_type == "Normal":
-        dataset_kwargs["mode"] = ( # type: ignore
-            train_params_seg["seg_model_mode"]
-            if "seg_model_mode" in train_params_seg
-            else "2D"
-        ) 
+        dataset_kwargs['load_in_memory'] = tta_config["load_dataset_in_memory"]
+        dataset_kwargs["node_data_path"] = tta_config["node_data_path"]
+
+        dataset_kwargs["mode"] = tta_config["dataset_mode"]
         dataset_kwargs["load_in_memory"] = tta_config["load_in_memory"]
         dataset_kwargs["orientation"] = tta_config["eval_orientation"]
         assert_in(
@@ -277,28 +370,39 @@ if __name__ == "__main__":
             device=device,
             load_dino_fe=True,
         )
-        seg.precalculated_fts = False # We will calculate them on the fly
+        seg.precalculated_fts = False  # We will calculate them on the fly
     else:
         raise ValueError(f"Invalid segmentation model train mode: {train_mode}")
 
     # Define the TTADAE object that does the test time adapatation
     # :=========================================================================:
     viz_interm_outs = default(tta_config["viz_interm_outs"], tuple())
-
-    no_tta = BaseTTASeg(
-        seg=seg,
-        n_classes=n_classes,
-        fit_at_test_time=None,
-        classes_of_interest=classes_of_interest,
-        viz_interm_outs=viz_interm_outs,
-        wandb_log=wandb_log,
-        device=device,
+    entropy_min_loss_kwargs = dict(
+        use_kl_loss=tta_config[TTA_MODE]["use_kl_loss"],
+        weighted_loss=tta_config[TTA_MODE]["weighted_loss"],
+        clases_to_exclude_ent_term=tta_config[TTA_MODE]["clases_to_exclude_ent_term"],
+        classes_to_exclude_kl_term=tta_config[TTA_MODE]["classes_to_exclude_kl_term"],
+        filter_low_support_classes=tta_config[TTA_MODE]["filter_low_support_classes"],
     )
 
-    # Evaluate the dice score per volume
-    # :=========================================================================:
-    batch_size = tta_config[TTA_MODE]["batch_size"]
-    num_workers = tta_config["num_workers"]
+    entropy_min_tta = TTAEntropyMin(
+        seg=seg,
+        n_classes=n_classes,
+        classes_of_interest=classes_of_interest,
+        class_prior_type=tta_config[TTA_MODE]["class_prior_type"],
+        fit_at_test_time=tta_config[TTA_MODE]["fit_at_test_time"],
+        learning_rate=tta_config[TTA_MODE]["learning_rate"],
+        weight_decay=tta_config[TTA_MODE]["weight_decay"],
+        lr_decay=tta_config[TTA_MODE]["lr_decay"],
+        lr_scheduler_step_size=tta_config[TTA_MODE]["lr_scheduler_step_size"],
+        lr_scheduler_gamma=tta_config[TTA_MODE]["lr_scheduler_gamma"],
+        entropy_min_loss_kwargs=entropy_min_loss_kwargs,
+        viz_interm_outs=viz_interm_outs,
+        aug_params=aug_params,
+        wandb_log=wandb_log,
+        device=device,
+        seed=seed,
+    )
 
     # Arguments related to visualization of the results
     # :=========================================================================:
@@ -315,8 +419,22 @@ if __name__ == "__main__":
         else tta_config["stop"]
     )
 
-
     save_predicted_vol_as_nifti = tta_config["save_predicted_vol_as_nifti"]
+
+    # Calculate the class ratios on the source domain if class_prior_type is data
+    if tta_config[TTA_MODE]["class_prior_type"] == "data":
+        sd_dataset = train_params_seg["dataset"]
+        sd_split = "train"
+        dataset_kwargs['dataset_name'] = sd_dataset
+        dataset_kwargs['paths_preprocessed'] = dataset_config[sd_dataset]["paths_preprocessed"]
+        dataset_kwargs['paths_original'] = dataset_config[sd_dataset]["paths_original"]
+        dataset_kwargs['resolution_proc'] = dataset_config[sd_dataset]["resolution_proc"]
+        dataset_kwargs['dim_proc'] = dataset_config[sd_dataset]["dim"]
+        
+        (source_dataset, ) = get_datasets(
+            dataset_type=dataset_type, splits=[split], **dataset_kwargs
+        )
+        entropy_min_tta.fit_class_prior(source_dataset)
 
     print("---------------------TTA---------------------")
     print("start vol_idx:", start_idx)
@@ -335,6 +453,10 @@ if __name__ == "__main__":
 
         seed_everything(seed)
         print(f"processing volume {vol_idx}")
+        # Get the volume on which to run the adapation
+        x, *_ = test_dataset[vol_idx]
+        x = ensure_nd(5, x) # type: ignore
+        assert isinstance(x, torch.Tensor)
 
         # Get the preprocessed vol for that has the same position as
         # the original vol (preprocessed vol may have a translation in xy
@@ -344,9 +466,62 @@ if __name__ == "__main__":
         x_original, y_original_gt = test_dataset.get_original_volume(vol_idx)
         gt_pix_size = test_dataset.get_original_pixel_size_w_orientation(vol_idx)
 
-        base_file_name = f"{test_dataset.dataset_name}_vol_{vol_idx:03d}"
+        base_file_name = f"{test_dataset.dataset_name}_{split}_vol_{vol_idx:03d}"
 
-        eval_metrics = no_tta.evaluate(
+        # Run Adaptation
+        # :=========================================================================:
+        num_steps = tta_config[TTA_MODE]["num_steps"]
+        batch_size = tta_config[TTA_MODE]["batch_size"]
+        num_workers = tta_config["num_workers"]
+    
+        entropy_min_tta.tta(
+            x=x,
+            num_steps=num_steps,
+            gradient_acc_steps=tta_config[TTA_MODE]["gradient_acc_steps"],
+            evaluate_every=tta_config[TTA_MODE]["evaluate_every"],
+            registered_x_preprocessed=x_preprocessed,
+            x_original=x_original,
+            y_gt=y_original_gt.float(),
+            preprocessed_pix_size=preprocessed_pix_size,
+            gt_pix_size=gt_pix_size,
+            batch_size=batch_size,
+            num_workers=num_workers,
+            classes_of_interest=classes_of_interest,  # type: ignore
+            output_dir=logdir,
+            file_name=base_file_name,
+            store_visualization=True,
+            save_predicted_vol_as_nifti=False,
+            slice_vols_for_viz=slice_vols_for_viz,
+        )
+
+        # Persist results of adaptation run
+        os.makedirs(logdir, exist_ok=True)
+
+        # Store csv with dice scores for all classes
+        entropy_min_tta.write_current_dice_scores(
+            vol_idx, logdir, dataset_name, iteration_type=""
+        )
+
+        for dice_score_name in dice_scores_fg:
+            dice_scores_fg[dice_score_name].append(
+                entropy_min_tta.get_current_average_test_score(dice_score_name)
+            )
+
+        for cls in classes_of_interest:
+            for dice_score_name in dice_scores_fg:
+                dice_scores_classes_of_interest[cls][dice_score_name].append(
+                    entropy_min_tta.get_current_test_score(
+                        dice_score_name, cls - 1 if "fg" in dice_score_name else cls  # type: ignore
+                    )
+                )
+
+        # Store results of the last iteration
+        # :=========================================================================:
+        print("\nEvaluating last iteration")
+        last_iter_dir = os.path.join(logdir, "last_iteration")
+        os.makedirs(last_iter_dir, exist_ok=True)
+
+        entropy_min_tta.evaluate(
             x_preprocessed=x_preprocessed,
             x_original=x_original,
             y_gt=y_original_gt.float(),
@@ -358,37 +533,14 @@ if __name__ == "__main__":
             output_dir=logdir,
             file_name=base_file_name,
             store_visualization=True,
-            save_predicted_vol_as_nifti=True,
+            save_predicted_vol_as_nifti=save_predicted_vol_as_nifti,
             slice_vols_for_viz=slice_vols_for_viz,
         )
 
-        # Print mean dice score of the foreground classes
-        dices_fg_mean = np.mean(eval_metrics["dice_score_fg_classes"]).mean().item()
-        print(f"dice score_fg_classes (vol{vol_idx}): {dices_fg_mean}")
-
-        dices_fg_mean_sklearn = (
-            np.mean(eval_metrics["dice_score_fg_classes_sklearn"]).mean().item()
-        )
-        print(f"dice score_fg_classes_sklearn (vol{vol_idx}): {dices_fg_mean_sklearn}")
-
-        # Get evaluation for last iteration with prediction in as Nifti volumes
-        os.makedirs(logdir, exist_ok=True)
-
         # Store csv with dice scores for all classes
-        no_tta.write_current_dice_scores(vol_idx, logdir, dataset_name, iteration_type="")
-
-        for dice_score_name in dice_scores_fg:
-            dice_scores_fg[dice_score_name].append(
-                no_tta.get_current_average_test_score(dice_score_name)
-            )
-
-        for cls in classes_of_interest:
-            for dice_score_name in dice_scores_fg:
-                dice_scores_classes_of_interest[cls][dice_score_name].append(
-                    no_tta.get_current_test_score(
-                        dice_score_name, cls - 1 if "fg" in dice_score_name else cls
-                    )
-                )
+        entropy_min_tta.write_current_dice_scores(
+            num_steps, last_iter_dir, dataset_name, iteration_type="last_iteration"
+        )
 
         print("--------------------------------------------")
 

@@ -128,34 +128,44 @@ class BaseSeg(torch.nn.Module, ABC):
         pass
 
     @property
-    @abstractmethod
     def trainable_params(self) -> List[torch.nn.Parameter]:
-        """
-        Returns the trainable parameters of the model.
-        """
-        pass
+        return [param for m in self.trainable_modules.values() for param in m.parameters()]
+
 
     @property
     @abstractmethod
-    def trainable_modules(self) -> List[torch.nn.Module]:
+    def trainable_modules(self) -> dict[str, torch.nn.Module]:
         """
         Returns the trainable parameters of the model.
         """
         pass
 
-    def get_bn_layers(self) -> tuple[torch.nn.Module]:
-        bn_layers = list()
-        for m in self.trainable_modules:
-            if isinstance(m, torch.nn.modules.batchnorm._BatchNorm):
-                bn_layers.append(m)
+    def get_bn_layers(self) -> dict[str, torch.nn.Module]:
+        """
+        Retrieve all nested BatchNorm layers with their module tree paths preserved.
+        
+        Returns:
+            List of tuples containing the module path and the BatchNorm layer.
+        """
+        bn_layers = dict()
 
-        return tuple(bn_layers)
+        def traverse(module: torch.nn.Module, path: str):
+            for name, sub_module in module.named_children():
+                current_path = f"{path}.{name}" if path else name
+                if isinstance(sub_module, torch.nn.modules.batchnorm._BatchNorm):
+                    bn_layers[current_path] = sub_module
+                elif isinstance(sub_module, torch.nn.Module):
+                    traverse(sub_module, current_path)
 
-    def get_bn_layers_state_dict(self) -> dict[str, torch.Tensor]:
+        for module_name, module in self.trainable_modules.items():
+            traverse(module, module_name)
+
+        return bn_layers
+
+    def get_bn_layers_state_dict(self) -> dict[str, Any]:
         state_dict = dict()
-        for m in self.get_bn_layers():
-            state_dict.update(m.state_dict())
-
+        for layer_name, m in self.get_bn_layers().items():
+            state_dict[layer_name] = m.state_dict()
         return state_dict       
         
     def has_bn_layers(self) -> bool:

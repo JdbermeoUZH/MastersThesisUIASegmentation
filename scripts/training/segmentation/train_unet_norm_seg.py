@@ -376,7 +376,7 @@ if __name__ == "__main__":
             os.path.join(wandb_dir, trainer.last_checkpoint_name),  # type: ignore
             base_path=wandb_dir,
         )
-        wandb.watch(norm_seg.trainable_modules, trainer.loss_function, log="all")
+        wandb.watch(list(norm_seg.trainable_modules.values()), trainer.loss_function, log="all")
 
     # Start training
     # :=========================================================================:

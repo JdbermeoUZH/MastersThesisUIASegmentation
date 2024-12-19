@@ -184,16 +184,9 @@ def save_nii_image(dir, filename, image, affine=None):
     
 
 def load_partial_weights(
-    modules_to_update: tuple[torch.nn.Module], partial_state_dict: dict
+    modules_to_update: dict[str, torch.nn.Module], partial_state_dict: dict
 ) -> None:
-
-    for module in modules_to_update:
-        # Get the module's state_dict keys
-        module_state_dict = {
-            k: v
-            for k, v in partial_state_dict.items()
-            if k.startswith(module._get_name().lower())
-        }
-
-        # Load the state_dict for this module
-        module.load_state_dict(module_state_dict, strict=False)
+    for module_name, module in modules_to_update.items():
+        assert module_name in partial_state_dict, f"Module {module_name} not found in the partial_state_dict"
+        module.load_state_dict(partial_state_dict[module_name])
+        

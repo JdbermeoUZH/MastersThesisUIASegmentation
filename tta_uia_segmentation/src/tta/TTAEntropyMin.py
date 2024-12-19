@@ -1,5 +1,5 @@
 import os
-import copy
+from collections import defaultdict 
 from tqdm import tqdm
 from typing import Optional, Callable, Literal, Any
 from dataclasses import asdict, dataclass, field
@@ -11,16 +11,15 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader, TensorDataset
 
 from tta_uia_segmentation.src.dataset import Dataset
-from tta_uia_segmentation.src.dataset.aug_tensor_dataset import AgumentedTensorDataset
 from tta_uia_segmentation.src.dataset.utils import onehot_to_class, class_to_onehot
-from tta_uia_segmentation.src.tta.BaseTTASeg import BaseTTASeg, EVAL_METRICS, BaseTTAState
+from tta_uia_segmentation.src.tta.BaseTTASeg import BaseTTASeg, EVAL_METRICS
+from tta_uia_segmentation.src.tta.utils import norm_soft_size
 from tta_uia_segmentation.src.models import BaseSeg
 from tta_uia_segmentation.src.utils.utils import (
     default,
     get_seed,
-    clone_state_dict_to_cpu
+    seed_everything
 )
-from tta_uia_segmentation.src.utils.loss import one_hot_score_to_onehot_pred
 
 
 def quadratic_penalty_function(m1, m2):
@@ -162,11 +161,23 @@ class TTASLoss(torch.nn.Module):
 @torch.jit.script
 def softmax_entropy(logits: torch.Tensor, weights: Optional[torch.Tensor] = None) -> torch.Tensor:
     """Entropy of softmax distribution from logits."""
-    if weights is not None:
-        return -(weights * logits.softmax(1) * logits.log_softmax(1)).sum(1)
-    else:
-        return -(logits.softmax(1) * logits.log_softmax(1)).sum(1)
+    probs = logits.softmax(1)
 
+    if weights is not None:
+        probs = weights * probs
+    
+    return -(probs * logits.log_softmax(1)).sum(1)
+
+@torch.jit.script
+def entropy(probs: torch.Tensor, weights: Optional[torch.Tensor] = None, eps: float = 1e-10) -> torch.Tensor:
+    """Entropy directly from probabilities."""
+    log_probs = (probs + eps).log()
+
+    if weights is not None:
+        probs = weights * probs
+    
+    return -(probs * log_probs).nansum(1)
+      
 
 class EntropyMinLoss(torch.nn.Module):
     def __init__(
@@ -181,6 +192,7 @@ class EntropyMinLoss(torch.nn.Module):
     ):
         super().__init__()
 
+        self._source_class_ratios = source_class_ratios
         self._use_kl_loss = use_kl_loss
         self._filter_low_support_classes = filter_low_support_classes
         self._classes_to_exclude_ent_term = clases_to_exclude_ent_term
@@ -189,10 +201,7 @@ class EntropyMinLoss(torch.nn.Module):
 
         if use_kl_loss:
             assert source_class_ratios is not None, "Source class ratios must be provided if KL loss is used."
-            self._source_class_ratios = source_class_ratios
-        else:
-            self._source_class_ratios = None
-            
+
         if weighted_loss:
             assert self._source_class_ratios is not None, "Source class ratios must be provided if weighted loss is used."
             weights = 1 / self._source_class_ratios
@@ -207,10 +216,13 @@ class EntropyMinLoss(torch.nn.Module):
         probs: Optional[torch.Tensor] = None,
         pseudo_labels: Optional[torch.Tensor] = None,
         sum_prob_support_threshold: int = 10,
-    ):
+        return_indv_loss_terms: bool = False
+    ) -> torch.Tensor | tuple[torch.Tensor, dict[str, torch.Tensor]]:
         assert logits is not None or probs is not None, "Either logits or probs must be provided."
         assert logits is None or probs is None, "Only one of logits or probs must be provided."
-        
+
+        loss_dict = {}
+
         if logits is not None:
             N, C, H, W = logits.shape
             probs = logits.softmax(1)
@@ -229,22 +241,29 @@ class EntropyMinLoss(torch.nn.Module):
         idx_slice = (slice(None), class_mask_ent_term, ...)
 
         if logits is not None:
+            logits_slice = logits[idx_slice]
+            weights_slice = weights[idx_slice]
             entropy_term = softmax_entropy(
-                logits[idx_slice],
-                weights[idx_slice]
+                logits_slice,
+                weights_slice
             )
         else:
             weights_ = weights[idx_slice]
             probs_ = probs[idx_slice]
-            entropy_term = - weights_ * probs_ * (probs_ + self._eps).log() 
-            entropy_term = entropy_term.nansum(1).nanmean(0) + self._eps
-      
-        total_loss = entropy_term
+            entropy_term = entropy(
+                probs_,
+                weights_,
+                self._eps
+            )
+        
+        total_loss = entropy_term.nanmean() + self._eps
+        loss_dict['entropy_min_loss'] = total_loss.item()
 
         # KL Divergence loss
         # :============================================================================:
         if self._use_kl_loss:
             # Define mask of classes to filter out, if the option is chosen
+            # -------------------------------------------------------------
             class_mask_kl_term = torch.ones(C, device=probs.device).bool()
 
             if self._classes_to_exclude_kl_term is not None:
@@ -253,9 +272,9 @@ class EntropyMinLoss(torch.nn.Module):
             idx_slice = (slice(None), class_mask_kl_term, ...)
 
             assert self._source_class_ratios is not None, "Source class ratios must be provided if KL loss is used."
-            source_class_ratios = torch.stack([self._source_class_ratios] * N)
             
-            # Define mask of classes to filter out, if the option is chosen
+            # Define classes with probabilities so small they should be zeroed out
+            # ---------------------------------------------------------------------
             if self._filter_low_support_classes:
                 if pseudo_labels is not None:
                     # They are at least present in the pseudo label map
@@ -266,23 +285,47 @@ class EntropyMinLoss(torch.nn.Module):
             else:
                 low_supp = torch.zeros(C, device=probs.device).bool()
                 
+            # Preprocess the source class probabilities
+            # -----------------------------------------
+            source_class_ratios = torch.stack([self._source_class_ratios] * N)
+
             # Set the class ratio to 0 for classes with very small support in 
             #  the pseudo label map or the predicted probabilities
-            source_class_ratios[low_supp] = 0
-            source_class_ratios += self.eps
+            source_class_ratios[:, low_supp] = 0
+            #source_class_ratios = torch.where(low_supp.unsqueeze(0), torch.tensor(0.0, device=source_class_ratios.device), source_class_ratios)
+
+            # Exclude classes indicated by argument
+            source_class_ratios = source_class_ratios[idx_slice]
+            
+            # Renormalize in case some probs are set to zero or they ar excluded
+            source_class_ratios = source_class_ratios / source_class_ratios.sum(1, keepdim=True) 
+            source_class_ratios = source_class_ratios + self._eps
+
+            # Calculate and preprocess the probabilities per image per class
+            # ---------------------------------------------------------------
+            # Get estimated probability per image per class
+            probs_per_img_per_class = norm_soft_size(probs, 1).squeeze(2)
+
+            # Exclude classes indicated by argument
+            probs_per_img_per_class = probs_per_img_per_class[idx_slice]
+
+            # Renormalize in case some probs are excluded
+            probs_per_img_per_class = probs_per_img_per_class / probs_per_img_per_class.sum(1, keepdim=True)
 
             # Calculate kl divergence terms as KL(probs || source_class_ratios)
-            #  and average over the batch
+            # -----------------------------------------------------------------
             log_class_ratio = (source_class_ratios + self._eps).log()
-            log_probs = (probs + self._eps).log() if logits is None else logits.log_softmax(1)
-            kl_batch = probs * (log_probs - log_class_ratio)
-
-            kl_term = kl_batch[idx_slice].sum() / N # Exclude background class
+            log_probs_per_img_per_class = (probs_per_img_per_class + self._eps).log() 
+            kl_batch = probs_per_img_per_class * (log_probs_per_img_per_class - log_class_ratio)
+            kl_term = kl_batch.sum(1).mean() # Exclude background class
 
             total_loss += kl_term
+            loss_dict['kl_reg_loss'] = kl_term.item()
 
-        return total_loss
-
+        if not return_indv_loss_terms:
+            return total_loss
+        else:
+            return total_loss, loss_dict
 
 class TTAEntropyMin(BaseTTASeg):
 
@@ -298,8 +341,9 @@ class TTAEntropyMin(BaseTTASeg):
         lr_scheduler_step_size: int = 20,
         lr_scheduler_gamma: float = 0.7,
         aug_params: Optional[dict] = None,
-        classes_of_interest: Optional[tuple[int | str, ...]] = None,
+        classes_of_interest: Optional[tuple[int, ...]] = None,
         eval_metrics: dict[str, Callable] = EVAL_METRICS,
+        eval_metrics_to_log: tuple[str, ...] = ('dice_score_fg_classes_sklearn', ),
         viz_interm_outs: tuple[str, ...] = tuple(),
         wandb_log: bool = False,
         device: str | torch.device = "cuda",
@@ -315,17 +359,19 @@ class TTAEntropyMin(BaseTTASeg):
         ], "fit_at_test_time must be either 'normalizer' or 'bn_layers'."
 
         super().__init__(
-            seg,
-            n_classes,
-            fit_at_test_time,
-            classes_of_interest,
-            eval_metrics,
-            viz_interm_outs,
-            wandb_log,
-            device,
+            seg=seg,
+            n_classes=n_classes,
+            fit_at_test_time=fit_at_test_time,
+            aug_params=aug_params,
+            classes_of_interest=classes_of_interest,
+            eval_metrics=eval_metrics,
+            eval_metrics_to_log=eval_metrics_to_log,
+            viz_interm_outs=viz_interm_outs,
+            wandb_log=wandb_log,
+            device=device,
+            seed=seed,
         )
 
-        self._aug_params = aug_params
         self._entrop_min_loss_kwargs = entropy_min_loss_kwargs
         self._seed = default(seed, get_seed())
 
@@ -347,10 +393,10 @@ class TTAEntropyMin(BaseTTASeg):
         self._learning_rate = learning_rate
         self._weight_decay = weight_decay
         self._optimizer = torch.optim.Adam(
-                self.trainable_params_at_test_time,
-                lr=learning_rate,
-                weight_decay=weight_decay,
-            )
+            self.trainable_params_at_test_time,
+            lr=learning_rate,
+            weight_decay=weight_decay,
+        )
         
         if lr_decay:
             self._lr_scheduler_step_size = lr_scheduler_step_size
@@ -396,6 +442,8 @@ class TTAEntropyMin(BaseTTASeg):
         class_counts = torch.zeros(self._n_classes, device=self._device)
 
         for _, y, *_ in source_domain_data:
+            y = y.to(self._device)
+
             # Convert to class indices
             y = onehot_to_class(y, class_dim=1)
 
@@ -428,7 +476,7 @@ class TTAEntropyMin(BaseTTASeg):
             self._seg.eval_mode()
 
             # Set the batch normalization layers to train mode
-            for m in self._seg.get_bn_layers():
+            for _, m in self._seg.get_bn_layers().items():
                 m.train()
 
         elif self._fit_at_test_time == "all":
@@ -443,14 +491,14 @@ class TTAEntropyMin(BaseTTASeg):
         evaluate_every: Optional[int] = None,
         registered_x_preprocessed: Optional[torch.Tensor] = None,
         x_original: Optional[torch.Tensor] = None,
-        y_original_gt: Optional[torch.Tensor] = None,
+        y_gt: Optional[torch.Tensor] = None,
         preprocessed_pix_size: Optional[tuple[float, ...]] = None,
         gt_pix_size: Optional[tuple[float, ...]] = None,
         metrics: Optional[dict[str, Callable]] = EVAL_METRICS,
         batch_size: Optional[int] = None,
         num_workers: Optional[int] = None,
         classes_of_interest: tuple[int] = tuple(),
-        logdir: Optional[str] = None,
+        output_dir: Optional[str] = None,
         save_checkpoints: bool = True,
         slice_vols_for_viz: Optional[
             tuple[tuple[int, int], tuple[int, int], tuple[int, int]]
@@ -459,6 +507,8 @@ class TTAEntropyMin(BaseTTASeg):
         store_visualization: bool = True,
         save_predicted_vol_as_nifti: bool = False,
     ) -> None:
+        seed_everything(self._seed)
+
         # Check if prior exists or is fitted (happens for 'data' type prior)
         if self._class_prior_type == "data" and self._class_prior is None:
             raise ValueError(
@@ -477,12 +527,11 @@ class TTAEntropyMin(BaseTTASeg):
             base_msg = "{arg} must be provided to create a DataLoader for the x Tensor."
             assert batch_size is not None, base_msg.format(arg="batch_size")
             assert num_workers is not None, base_msg.format(arg="num_workers")
-
-            x = DataLoader(
-                AgumentedTensorDataset(x, aug_params=self._aug_params, seed=self._seed),
-                batch_size=batch_size,
-                num_workers=num_workers,
+            x = self.convert_volume_to_DCHW_dl(
+                x, batch_size=batch_size, num_workers=num_workers
             )
+
+        assert isinstance(x, DataLoader), "x must be a dataloader that iterates over a volume"
 
         # If evaluate_every is provided, verify the required args for eval are provided
         if evaluate_every is not None:
@@ -490,8 +539,8 @@ class TTAEntropyMin(BaseTTASeg):
             assert registered_x_preprocessed is not None, base_msg.format(
                 arg="registered_x_preprocessed", eval_every=evaluate_every
             )
-            assert y_original_gt is not None, base_msg.format(
-                arg="y_original_gt", eval_every=evaluate_every
+            assert y_gt is not None, base_msg.format(
+                arg="y_gt", eval_every=evaluate_every
             )
             assert preprocessed_pix_size is not None, base_msg.format(
                 arg="preprocessed_pix_size", eval_every=evaluate_every
@@ -506,10 +555,10 @@ class TTAEntropyMin(BaseTTASeg):
         for iter_i in pbar:
             # Check if it is the checkpoint to evaluate the model
             if evaluate_every is not None and iter_i % evaluate_every == 0:
-                self.evaluate(
+                _ = self.evaluate(
                     x_preprocessed=registered_x_preprocessed,  # type: ignore
                     x_original=x_original,
-                    y_gt=y_original_gt.float(),  # type: ignore
+                    y_gt=y_gt.float(),  # type: ignore
                     preprocessed_pix_size=preprocessed_pix_size,  # type: ignore
                     gt_pix_size=gt_pix_size,  # type: ignore
                     iteration=iter_i,
@@ -517,7 +566,7 @@ class TTAEntropyMin(BaseTTASeg):
                     batch_size=batch_size,
                     num_workers=num_workers,
                     classes_of_interest=classes_of_interest,
-                    output_dir=logdir,
+                    output_dir=output_dir,
                     file_name=file_name,  # type: ignore
                     store_visualization=store_visualization,
                     save_predicted_vol_as_nifti=save_predicted_vol_as_nifti,
@@ -525,19 +574,23 @@ class TTAEntropyMin(BaseTTASeg):
                 )
 
             step_loss = 0
+            step_loss_terms = defaultdict(int)
             n_samples = 0
 
             # Backpropagation on entropy min loss
             self._tta_fit_mode()
 
-            for step, (x_batch, ) in enumerate(x):
+            for step, x_batch in enumerate(x):
                 x_batch = x_batch.to(self._device)
                 
                 # Forward pass
                 _, y_logits, _ = self._seg(x_batch)
 
                 # Calculate loss
-                loss = loss_fn(logits=y_logits)
+                loss, tta_loss_terms = loss_fn(
+                    logits=y_logits,
+                    return_indv_loss_terms=True
+                )
 
                 # Backpropagate
                 loss.backward()
@@ -547,10 +600,14 @@ class TTAEntropyMin(BaseTTASeg):
                     # Update the weights
                     self._optimizer.step()
                     self._optimizer.zero_grad()
-
+                    
                 # Track the loss
                 with torch.no_grad():
                     step_loss += loss.item() * x_batch.shape[0]
+                    step_loss_terms = {
+                        loss_name: step_loss_terms[loss_name] + loss_value * x_batch.shape[0]
+                        for loss_name, loss_value in tta_loss_terms.items()
+                    }
                     n_samples += x_batch.shape[0]
 
             # Update the learning rate
@@ -558,26 +615,30 @@ class TTAEntropyMin(BaseTTASeg):
                 self._secheduler.step()    
 
             tta_loss = step_loss / n_samples
+            tta_loss_terms = {loss_name: loss_value / n_samples for loss_name, loss_value in step_loss_terms.items()}
 
             self._state.add_test_loss(
                 iteration=iter_i, loss_name='tta_loss', loss_value=tta_loss)
 
             if self._wandb_log:
                 wandb.log({f'tta_loss/{file_name}': tta_loss, 'tta_step': iter_i})
+
+                for loss_name, loss_value in tta_loss_terms.items():
+                    wandb.log({f'{loss_name}/{file_name}': loss_value, 'tta_step': iter_i})
     
         self._state.is_adapted = True
 
         if save_checkpoints:
-            assert logdir is not None, "logdir must be provided to save the checkpoints."
+            assert output_dir is not None, "logdir must be provided to save the checkpoints."
             assert file_name is not None, "file_name must be provided to save the checkpoints."
             self.save_state(
-                path=os.path.join(logdir, f"tta_entropy_min_{file_name}_last.pth")
+                path=os.path.join(output_dir, f"tta_entropy_min_{file_name}_last.pth")
             )
 
-        if logdir is not None:
+        if output_dir is not None:
             assert file_name is not None, "file_name must be provided to store the test scores."
             self._state.store_test_scores_in_dir(
-                output_dir=os.path.join(logdir, 'tta_score'),
+                output_dir=os.path.join(output_dir, 'tta_score'),
                 file_name_prefix=file_name,
                 reduce='mean_accross_iterations'
             )          
@@ -592,7 +653,7 @@ class TTAEntropyMin(BaseTTASeg):
 
         elif self._fit_at_test_time == "bn_layers":
             return [
-                param for ly in self._seg.get_bn_layers() for param in list(ly.parameters())]
+                param for ly in self._seg.get_bn_layers().values() for param in list(ly.parameters())]
 
         elif self._fit_at_test_time == "all":
             # Set everything in the model to train mode
@@ -620,3 +681,8 @@ class TTAEntropyMin(BaseTTASeg):
 
         # Reset state of the class and its fitted modules 
         super().reset_state()
+
+    def _define_custom_wandb_metrics(self):
+        super()._define_custom_wandb_metrics()
+        wandb.define_metric("entropy_min_loss/*", step_metric="tta_step")
+        wandb.define_metric("kl_reg_loss/*", step_metric="tta_step")

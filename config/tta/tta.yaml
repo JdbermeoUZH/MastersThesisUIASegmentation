@@ -11,6 +11,10 @@ dataset_type: Normal          # Normal, DinoFeatures
 split:   test                 # val, test
 eval_orientation: depth       # depth, width, or height
 load_in_memory: True          # If True, it will load the entire dataset in memory
+dataset_mode: 3D              # 3D, 2D
+load_dataset_in_memory: False
+node_data_path: /scratch/${USER}/data # If not null, it copies the data to the compute node (doesn't work on precalculated features, too big)
+
 
 start: null                   # Index of the test dataset to start at
 stop:  null                   # Index of the test dataset to stop at
@@ -19,7 +23,7 @@ seg_dir: $MODEL_DIR/subcortical_structures/segmentation/hcp_t1/no_bg_supp_norm_w
 load_best_cpt: True
 classes_of_interest: null
 
-num_workers: 0
+num_workers: 2
 device: cuda
 seed: 0
 
@@ -32,17 +36,6 @@ no_tta:
 
   batch_size: 64
     
-  # Supress background x_norm 
-  bg_supp_x_norm_eval: False
-  bg_suppression_opts:
-    type: none  # possible values: fixed_value, random_value, (none if not used)
-    bg_value: -0.5
-    bg_value_min: -0.5
-    bg_value_max: 1
-    mask_source: thresholding  # possible values: thresholding, ground_truth
-    thresholding: otsu  # possible values: isodata, li, mean, minimum, otsu, triangle, yen
-    hole_filling: True
-
 dae:
   wandb_project: tta-dae # mt-tta-subcortical_structures-hcp_t2
   logdir: $RESULTS_DIR/subcortical_structures/tta/debugging/dae_only/9_06/reproduce_previous_results
@@ -326,3 +319,54 @@ diffusionTTA_and_DAE:
     brightness_max: 0.1
     noise_mean: 0.0
     noise_std: 0.0
+
+
+entropy_min:
+  wandb_project: tta-entropy_min 
+  logdir: $RESULTS_DIR/subcortical_structures/tta/debugging/entropy_min/12_16/DELETE_ME
+
+  # Loss function
+  class_prior_type: uniform # uniform, data
+  use_kl_loss: true
+  weighted_loss: true
+
+  clases_to_exclude_ent_term: null
+  classes_to_exclude_kl_term: null #[0]
+
+  filter_low_support_classes: false
+
+  # Optimization parameters
+  num_steps: 500
+
+  fit_at_test_time: bn_layers  # Options: bn_layers, all, normalizer
+
+  learning_rate: 0.000001
+  weight_decay: 0.001
+  
+  batch_size: 32
+  gradient_acc_steps: 1
+
+  lr_decay: True
+  lr_scheduler_step_size: 20
+  lr_scheduler_gamma: 0.7
+
+  evaluate_every: 25
+
+  augmentation:
+    da_ratio: 0.25
+    sigma: 20
+    alpha: 0
+    trans_min: 0
+    trans_max: 0
+    rot_min: 0
+    rot_max: 0
+    scale_min: 1.0
+    scale_max: 1.0
+    gamma_min: 0.5
+    gamma_max: 2.0
+    brightness_min: 0.0
+    brightness_max: 0.1
+    noise_mean: 0.0
+    noise_std: 0.1
+
+  

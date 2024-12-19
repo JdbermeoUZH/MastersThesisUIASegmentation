@@ -7,7 +7,6 @@ import torch.nn.functional as F
 from .normalization import Normalization
 from .UNet import UNet
 from ..BaseSeg import BaseSeg
-from tta_uia_segmentation.src.utils.io import save_checkpoint
 
 
 class NormSeg(BaseSeg):
@@ -103,15 +102,14 @@ class NormSeg(BaseSeg):
         self._norm.train()
 
     @property
-    def trainable_params(self) -> list[nn.Parameter]:
-        return list(self._norm.parameters()) + list(self._seg.parameters())
-    
-    @property
-    def trainable_modules(self) -> list[torch.nn.Module]:
+    def trainable_modules(self) -> dict[str, torch.nn.Module]:
         """
         Returns the trainable parameters of the model.
         """
-        return [self._norm, self._seg]
+        return {
+            "_norm": self._norm,
+            "_seg": self._seg
+        }
 
     def has_normalizer_module(self) -> bool:
         return True
