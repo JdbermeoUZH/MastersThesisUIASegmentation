@@ -1,4 +1,3 @@
-
 import os
 
 # Logging params
@@ -9,7 +8,7 @@ wandb_log = False
 # :====================================:
 slurm_jobs = True
 
-batch_size = 16
+batch_size = 4
 num_workers = 3
 save_predicted_vol_as_nifti = False
 print_config = False
@@ -25,7 +24,7 @@ classes_of_interest = [str(c) for c in classes_of_interest]
 # Trained Models
 # :====================================:
 seg_models_path = {
-    #"umc": (
+    "umc": (
         # "$RESULTS_DIR/wmh/segmentation/umc/norm_seg/norm_k_3/bs_32_lr_1em4_grad_clip_1.0",
         # "$RESULTS_DIR/wmh/segmentation/umc/dino/large/hierarchichal_decoder/bs_32_lr_1em4_grad_clip_1.0_hier_2",
         # "$RESULTS_DIR/wmh/segmentation/umc/dino/large/hierarchichal_decoder/fg_only_loss_bs_32_lr_1em4_grad_clip_1.0_hier_2",
@@ -36,14 +35,17 @@ seg_models_path = {
         # KEEP THIS ONE "$RESULTS_DIR/wmh/segmentation/umc/dino/large/resnet_decoder/opt_params_kerem_bs_32_dice_loss_decay_hier_0",
         #"$RESULTS_DIR/wmh/segmentation/umc/dino/large/resnet_decoder/opt_params_kerem_bs_32_CE_loss_decay_hier_0",
         # KEEP THIS ONE "$RESULTS_DIR/wmh/segmentation/umc/dino/large/resnet_decoder/bs_16_lr_1em3_NO_grad_clip_NO_weight_decay_hier_0",
-    #),
+        "$RESULTS_DIR/wmh/segmentation/umc/norm_dino/large/resnet_decoder/bs_16_lr_1em3_NO_grad_clip_NO_weight_decay_hier_2_aug_on_fly_num_ch_128_64_32_16",
+
+    ),
     # Last to be commented
-    # "nuhs": (
-    #      "$RESULTS_DIR/wmh/segmentation/nuhs/dino/large/hierarchichal_decoder/bs_16_lr_1em3_hier_2_128_64_32_16_adam",
-    #      "$RESULTS_DIR/wmh/segmentation/nuhs/dino/large/hierarchichal_decoder/bs_32_lr_1em4_grad_clip_1.0_hier_2",
-    #      "$RESULTS_DIR/wmh/segmentation/nuhs/dino/large/resnet_decoder/bs_16_lr_1em3_NO_grad_clip_NO_weight_decay_hier_2",
-    #      "$RESULTS_DIR/wmh/segmentation/nuhs/dino/norm_seg/norm_k_3/bs_16_lr_1em3_NO_grad_clip"
-    # ),
+    "nuhs": (
+        #  "$RESULTS_DIR/wmh/segmentation/nuhs/dino/large/hierarchichal_decoder/bs_16_lr_1em3_hier_2_128_64_32_16_adam",
+        #  "$RESULTS_DIR/wmh/segmentation/nuhs/dino/large/hierarchichal_decoder/bs_32_lr_1em4_grad_clip_1.0_hier_2",
+        #  "$RESULTS_DIR/wmh/segmentation/nuhs/dino/large/resnet_decoder/bs_16_lr_1em3_NO_grad_clip_NO_weight_decay_hier_2",
+        #  "$RESULTS_DIR/wmh/segmentation/nuhs/dino/norm_seg/norm_k_3/bs_16_lr_1em3_NO_grad_clip"
+        "$RESULTS_DIR/wmh/segmentation/nuhs/norm_dino/large/resnet_decoder/bs_16_lr_1em3_NO_grad_clip_NO_weight_decay_hier_2_aug_on_fly_num_ch_128_64_32_16",
+    ),
     # "vu": (
     #      "$RESULTS_DIR/wmh/segmentation/vu/dino/large/hierarchichal_decoder/bs_16_lr_1em3_hier_2_128_64_32_16_adam",
     #      "$RESULTS_DIR/wmh/segmentation/vu/dino/large/resnet_decoder/bs_16_lr_1em3_NO_grad_clip_NO_weight_decay_hier_2",
@@ -53,9 +55,11 @@ seg_models_path = {
 
 # Command format
 # :====================================:
+viz_interm_outs = "Normalized\ Image"
+
 if slurm_jobs:
-    account = "staff"
-    gpu_type = None # "titan_xp"
+    account = "bmic"
+    gpu_type = "titan_xp|geforce_rtx_2080_ti|geforce_gtx_1080_ti|titan_x"
     base_command = f"sbatch --account={account}"
     base_command += f" --constraint='{gpu_type}'" if gpu_type is not None else ""
     base_command += " no_tta.sh"
@@ -73,7 +77,7 @@ base_command += (
     + f" --num_workers {num_workers}"
     + f" --save_predicted_vol_as_nifti {save_predicted_vol_as_nifti}"
     + f" --print_config {print_config}"
-    + " --viz_interm_outs "
+    + f" --viz_interm_outs {viz_interm_outs} "
 )
 
 base_command += (
@@ -116,7 +120,7 @@ for source_dataset, seg_model_paths in seg_models_path.items():
             print("Target Dataset:", target_dataset)
             print("Experiment:", seg_model_exp)
             print("#" * 70)
+
             os.system(
                 f"{base_command} --seg_dir {seg_model_path} --dataset {target_dataset} --logdir {log_dir}"
             )
-

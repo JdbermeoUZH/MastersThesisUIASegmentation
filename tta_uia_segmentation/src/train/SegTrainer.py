@@ -8,10 +8,15 @@ import torch
 import numpy as np
 from torch.utils.data import DataLoader
 from torch.optim.lr_scheduler import LinearLR, PolynomialLR, SequentialLR
+from torch.cuda.amp import GradScaler
 
 from tta_uia_segmentation.src.models import BaseSeg
 from tta_uia_segmentation.src.utils.loss import DiceLoss, dice_score
-from tta_uia_segmentation.src.utils.utils import nan_sum, default
+from tta_uia_segmentation.src.utils.utils import (
+    nan_sum,
+    default,
+    autocast_if_enabled
+)
 
 
 class SegTrainer:
@@ -26,6 +31,7 @@ class SegTrainer:
         weight_decay: float = 1e-5,
         grad_acc_steps: int = 1,
         max_grad_norm: Optional[float] = None,
+        use_amp: bool = False,
         is_resumed: bool = False,
         checkpoint_last: str = "checkpoint_last.pth",
         checkpoint_best: str = "checkpoint_best.pth",
@@ -65,6 +71,9 @@ class SegTrainer:
 
         self._grad_acc_steps = grad_acc_steps
         self._max_grad_norm = max_grad_norm
+
+        self._use_amp = use_amp
+        self._scaler = GradScaler(enabled=use_amp) if use_amp else None
 
         self._training_losses = []
         self._validation_losses = []
@@ -153,11 +162,8 @@ class SegTrainer:
             n_samples_train = 0
 
             self._seg.train()
-            # load_time_start = time.time()
+            
             for step, (x, y, extra_inputs) in enumerate(train_dataloader):
-                # load_time_end = time.time()
-                # forward_time_start = time.time()
-                # print(f"Load time: {load_time_end - load_time_start}")
                 if isinstance(x, list):
                     x = [x_i.to(device).float() for x_i in x]
                     batch_size = x[0].shape[0]
@@ -169,11 +175,15 @@ class SegTrainer:
 
                 extra_inputs = self._seg.select_necessary_extra_inputs(extra_inputs)
 
-                y_pred, *_ = self._seg(x, **extra_inputs)
+                with autocast_if_enabled(self._use_amp, str(device)):
+                    y_pred, *_ = self._seg(x, **extra_inputs)
 
-                loss = self._loss_func(y_pred, y) / self._grad_acc_steps
+                    loss = self._loss_func(y_pred, y) / self._grad_acc_steps
 
-                loss.backward()
+                if self._use_amp:
+                    self._scaler.scale(loss).backward() # type: ignore
+                else:
+                    loss.backward()
 
                 # Update parameters every grad_acc_steps
                 if (step + 1) % self._grad_acc_steps == 0 or (step + 1) == len(
@@ -181,20 +191,25 @@ class SegTrainer:
                 ):
                     # Gradient clipping
                     if self._max_grad_norm is not None:
+                        if self._use_amp:
+                            self._scaler.unscale_(self._optimizer) # type: ignore
+
                         torch.nn.utils.clip_grad_norm_(
                             self._seg.trainable_params, self._max_grad_norm
                         )
 
                     # Update parameters
-                    self._optimizer.step()
+                    if self._use_amp:
+                        self._scaler.step(self._optimizer) # type: ignore
+                        self._scaler.update() # type: ignore
+                    else:
+                        self._optimizer.step()
+
                     self._optimizer.zero_grad()
 
                     # Update learning rate
                     if scheduler is not None:
                         scheduler.step()
-
-                # forward_time_end = time.time()
-                # print(f"Forward time: {forward_time_end - forward_time_start}")
 
                 with torch.no_grad():
                     training_loss += loss.detach() * batch_size * self._grad_acc_steps
@@ -311,9 +326,9 @@ class SegTrainer:
 
             extra_inputs = self._seg.select_necessary_extra_inputs(extra_inputs)
 
-            y_pred, *_ = self._seg(x, **extra_inputs)
-
-            loss = self._loss_func(y_pred, y)
+            with autocast_if_enabled(self._use_amp, str(device)):
+                y_pred, *_ = self._seg(x, **extra_inputs)
+                loss = self._loss_func(y_pred, y)
 
             # Get mean dice score per class
             dices = dice_score(

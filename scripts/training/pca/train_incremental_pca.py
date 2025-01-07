@@ -17,6 +17,9 @@ sys.path.append(
 
 from tta_uia_segmentation.src.models.pca.IncrementalPCA import IncrementalPCA
 from tta_uia_segmentation.src.models.pca.utils import flatten_pixels
+from tta_uia_segmentation.src.models.seg.dino.DinoV2FeatureExtractor import (
+    DinoV2FeatureExtractor,
+)
 from tta_uia_segmentation.src.dataset.io import get_datasets
 from tta_uia_segmentation.src.utils.io import (
     load_config,
@@ -28,7 +31,6 @@ from tta_uia_segmentation.src.utils.utils import (
     seed_everything,
     define_device,
     parse_bool,
-    torch_to_numpy,
 )
 from tta_uia_segmentation.src.utils.logging import setup_wandb
 
@@ -114,6 +116,11 @@ def preprocess_cmd_args() -> argparse.Namespace:
         "--batch_size", type=int, help="Batch size for training. Default: 10"
     )
     parser.add_argument(
+        "--mini_batch_size",
+        type=int,
+        help="Mini batch size for calculating loss. Default: None",
+    )
+    parser.add_argument(
         "--num_workers",
         type=int,
         help="Number of workers for dataloader. Default: 1",
@@ -132,6 +139,11 @@ def preprocess_cmd_args() -> argparse.Namespace:
         "--move_data_to_node",
         type=parse_bool,
         help="Move data to node before training. Default: True",
+    )
+    parser.add_argument(
+        "--load_dataset_in_memory",
+        type=parse_bool,
+        help="Whether to load the entire dataset in memory. Default: False",
     )
 
     args = parser.parse_args()
@@ -161,29 +173,43 @@ def measure_error_on_dataloader(
     dataloader: DataLoader,
     split: str,
     ipca: IncrementalPCA,
+    dino: Optional[DinoV2FeatureExtractor] = None,
     num_components_recosntruct: Optional[int] = None,
+    mini_batch_size: Optional[int] = None,
 ) -> float:
     n_samples = 0
     error = 0
     pbar = tqdm(dataloader, desc=f"Measuring error on {split} set")
 
     for x, *_ in pbar:
-        # Flatten the images from NCHW to (N**H*W)C
-        if isinstance(x, torch.Tensor):
-            x_batch, *_ = flatten_pixels(x)
-        elif isinstance(x, list):
-            x_batch = torch.cat([flatten_pixels(x_i)[0] for x_i in x], dim=0)
-        else:
-            raise ValueError("x must be a tensor or a list of tensors")
-        n_samples += x_batch.shape[0]
+        x = x.to(ipca.device)
+        if dino is not None:
+            if x.shape[1] == 1:
+                x = x.repeat(1, 3, 1, 1)
+            x = x.to(ipca.device)
+            x = dino(x)["patch"].permute(0, 3, 1, 2)
 
-        x_batch_recon = ipca.reconstruct(x_batch, num_components_recosntruct)
- 
-        batch_mse = mse_loss(
-            x_batch.to(x_batch_recon.device), x_batch_recon
-        )
+        if mini_batch_size is None:
+            mini_batch_size = x.shape[0]
 
-        error += float(batch_mse)
+        assert isinstance(mini_batch_size, int), "mini_batch_size must be an integer"
+        assert 0 < mini_batch_size <= x.shape[0], "mini_batch_size must be within bounds of [0, batch_size]"
+
+        for i in range(0, x.shape[0], mini_batch_size):
+            # Flatten the images from NCHW to (N**H*W)C
+            if isinstance(x, torch.Tensor):
+                x_mini_batch, *_ = flatten_pixels(x[i:i+mini_batch_size])
+            elif isinstance(x, list):
+                x_mini_batch = torch.cat([flatten_pixels(x_i)[0][i:i+mini_batch_size] for x_i in x], dim=0)
+            else:
+                raise ValueError("x must be a tensor or a list of tensors")
+            n_samples += x_mini_batch.shape[0]
+
+            x_mini_batch_recon = ipca.reconstruct(x_mini_batch, num_components_recosntruct)
+            batch_mse = mse_loss(
+                x_mini_batch.to(x_mini_batch_recon.device), x_mini_batch_recon
+            )
+            error += float(batch_mse)
 
     return error / n_samples
 
@@ -241,9 +267,9 @@ if __name__ == "__main__":
     n_classes = dataset_config[dataset_name]["n_classes"]
     node_data_path = train_config["node_data_path"] if train_config["move_data_to_node"] else None
 
-    dataset_type = (
-        "DinoFeatures" if train_config[TRAIN_MODE]["precalculated_fts"] else "Normal"
-    )
+    use_precalc_dino_fts = train_config[TRAIN_MODE]["precalculated_fts"]
+    
+    dataset_type = "DinoFeatures" if use_precalc_dino_fts else "Normal"
 
     dataset_kwargs = dict(
         dataset_name=dataset_name,
@@ -257,13 +283,20 @@ if __name__ == "__main__":
         node_data_path=node_data_path,
     )
 
-    if dataset_type == "DinoFeatures":
+    if dataset_type == "Normal":
+        dataset_kwargs['load_in_memory'] = train_config[TRAIN_MODE]["load_dataset_in_memory"]
+        dataset_kwargs["node_data_path"] = train_config[TRAIN_MODE]["node_data_path"]
+
+    elif dataset_type == "DinoFeatures":
         dataset_kwargs["paths_preprocessed_dino"] = dataset_config[dataset_name][
             "paths_preprocessed_dino"
         ]
         dataset_kwargs["hierarchy_level"] = train_config[TRAIN_MODE]["hierarchy_level"]
         dataset_kwargs["dino_model"] = train_config[TRAIN_MODE]["dino_model"]
         del dataset_kwargs["aug_params"]
+
+    else:
+        raise ValueError(f"Unknown dataset type: {dataset_type}")
 
     # Dataset definition
     train_dataset, val_dataset = get_datasets(
@@ -298,13 +331,31 @@ if __name__ == "__main__":
 
     ipca = IncrementalPCA(n_components=pca_components)
 
+    if not use_precalc_dino_fts:
+        dino = DinoV2FeatureExtractor(
+            train_config[TRAIN_MODE]["dino_model"],
+            inference_mode=True
+        ).to(device)
+    else:
+        dino = None
+
     # Define the incremental PCA model
     # :=========================================================================:
+    mini_batch_size = train_config[TRAIN_MODE]["mini_batch_size"]
+
     best_val_error = np.inf
     for epoch in range(epochs):
         print(f"Epoch {epoch}")
         n_samples = 0
         for step_i, (x, *_) in enumerate(tqdm(train_dataloader)):
+            # If not using precalculated Dino Features, calculate them
+            if not use_precalc_dino_fts:
+                assert dino is not None, "DINO model must be defined if not using precalculated features"
+                if x.shape[1] == 1:
+                    x = x.repeat(1, 3, 1, 1)
+                x = x.to(device)
+                x = dino(x)["patch"].permute(0, 3, 1, 2)  # N, np, np, df -> N, df, np, np
+
             # Flatten the images from NCHW to (N**H*W)C
             if isinstance(x, torch.Tensor):
                 x_batch, *_ = flatten_pixels(x)
@@ -317,21 +368,29 @@ if __name__ == "__main__":
 
             # Fit the IncrementalPCA model
             ipca.partial_fit(x_batch)
+            del x_batch
 
             # Move calculated PCs to device for faster reconstruction
             ipca.to_device(device)
 
-            if check_loss_every is not None and step_i % check_loss_every == 0:
+            if check_loss_every is not None and (
+                step_i % check_loss_every == 0 or step_i == len(train_dataloader) - 1):
                 if explained_var_pcs is not None:
                     num_components = ipca.num_components_to_keep(explained_var_pcs)
                 else:
                     num_components = None
 
                 train_error = measure_error_on_dataloader(
-                    train_dataloader, "train", ipca, num_components
+                    train_dataloader, "train", 
+                    ipca, dino, 
+                    num_components_recosntruct=num_components,
+                    mini_batch_size=mini_batch_size
                 )
                 val_error = measure_error_on_dataloader(
-                    val_dataloader, "val", ipca, num_components
+                    val_dataloader, "val",
+                    ipca, dino, 
+                    num_components_recosntruct=num_components,
+                    mini_batch_size=mini_batch_size
                 )
 
                 if wandb_log:

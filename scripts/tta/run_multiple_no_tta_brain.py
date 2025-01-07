@@ -8,8 +8,8 @@ wandb_log = False
 # :====================================:
 slurm_jobs = True
 
-batch_size = 4
-num_workers = 3
+batch_size = 1
+num_workers = 2
 save_predicted_vol_as_nifti = False
 print_config = False
 
@@ -59,12 +59,42 @@ seg_models_path = {
         # "$RESULTS_DIR/subcortical_structures/segmentation/abide_stanford/dino/large/bs_16_lr_1em3_NO_grad_clip_NO_weight_decay_hier_2_aug_on_fly_num_ch_128_64",
         # "$RESULTS_DIR/subcortical_structures/segmentation/abide_stanford/dino/large/bs_16_lr_1em3_NO_grad_clip_NO_weight_decay_hier_2_aug_on_fly_num_ch_128_64_32_16",
         # "$RESULTS_DIR/subcortical_structures/segmentation/abide_stanford/dino/large/bs_16_lr_1em3_NO_grad_clip_NO_weight_decay_hier_2_aug_on_fly_num_ch_128_64_32_16_upsample_type_transposed",
-        "$RESULTS_DIR/subcortical_structures/segmentation/abide_stanford/dino/large/resnet_decoder/opt_params_kerem_bs_32_dice_loss_decay_hier_2_aug_on_fly_new_EXP_new_attempt",
+        # "$RESULTS_DIR/subcortical_structures/segmentation/abide_stanford/dino/large/resnet_decoder/opt_params_kerem_bs_32_dice_loss_decay_hier_2_aug_on_fly_new_EXP_new_attempt",
         # "$RESULTS_DIR/subcortical_structures/segmentation/abide_stanford/dino/large/resnet_decoder/opt_params_kerem_bs_32_dice_loss_decay_hier_2_aug_on_fly_new_EXP_up_transposed",
+        
+        # "$RESULTS_DIR/subcortical_structures/segmentation/abide_stanford/dino/small/resnet_decoder/bs_16_lr_1em3_NO_grad_clip_NO_weight_decay_hier_2_aug_on_fly_num_ch_128_64_32_16",
+        # "$RESULTS_DIR/subcortical_structures/segmentation/abide_stanford/dino/base/resnet_decoder/bs_16_lr_1em3_NO_grad_clip_NO_weight_decay_hier_2_aug_on_fly_num_ch_128_64_32_16",
+        
+        # $RESULTS_DIR/subcortical_structures/segmentation/abide_stanford/norm_dino/base/norm_dino_seg/resnet_decoder/bs_16_lr_1em3_NO_grad_clip_NO_weight_decay_hier_2_aug_on_fly_num_ch_128_64_32_16",
+        # "$RESULTS_DIR/subcortical_structures/segmentation/abide_stanford/norm_dino/base/norm_dino_seg/resnet_decoder/bs_16_lr_1em3_NO_grad_clip_NO_weight_decay_hier_2_aug_on_fly_num_ch_128_64_32_16_full_jacobian",
+
+        #"$RESULTS_DIR/subcortical_structures/segmentation/abide_stanford/dino/giant/resnet_decoder/bs_16_lr_1em3_NO_grad_clip_NO_weight_decay_hier_2_aug_on_fly_num_ch_128_64_32_16",
+        #"$RESULTS_DIR/subcortical_structures/segmentation/abide_stanford/norm_dino/giant/resnet_decoder/bs_16_lr_1em3_NO_grad_clip_NO_weight_decay_hier_2_aug_on_fly_num_ch_128_64_32_16",
+        # "$RESULTS_DIR/subcortical_structures/segmentation/abide_stanford/dino/small/resnet_decoder/bs_16_lr_1em3_hier_2_aug_on_fly_num_ch_128_64_32_16_PCA_21_PCs",
+        # "$RESULTS_DIR/subcortical_structures/segmentation/abide_stanford/dino/small/resnet_decoder/bs_16_lr_1em3_hier_2_aug_on_fly_num_ch_128_64_32_16_PCA_29_PCs",
+        # "$RESULTS_DIR/subcortical_structures/segmentation/abide_stanford/dino/small/resnet_decoder/bs_16_lr_1em3_hier_2_aug_on_fly_num_ch_128_64_32_16_PCA_71_PCs"
+
+
+        # "$RESULTS_DIR/subcortical_structures/segmentation/abide_stanford/dino/large/resnet_decoder/bs_16_lr_1em3_hier_2_aug_on_fly_num_ch_128_64_32_16_PCA_30_PCs",
+        # "$RESULTS_DIR/subcortical_structures/segmentation/abide_stanford/dino/large/resnet_decoder/bs_16_lr_1em3_hier_2_aug_on_fly_num_ch_128_64_32_16_PCA_46_PCs",
+        # "$RESULTS_DIR/subcortical_structures/segmentation/abide_stanford/dino/large/resnet_decoder/bs_16_lr_1em3_hier_2_aug_on_fly_num_ch_128_64_32_16_PCA_67_PCs",
+        # "$RESULTS_DIR/subcortical_structures/segmentation/abide_stanford/dino/large/resnet_decoder/bs_16_lr_1em3_hier_2_aug_on_fly_num_ch_128_64_32_16_PCA_183_PCs",
+
+        "$RESULTS_DIR/subcortical_structures/segmentation/abide_stanford/dino/base/resnet_decoder/bs_16_lr_1em3_hier_2_aug_on_fly_num_ch_128_64_32_16_PCA_31_PCs",
+        "$RESULTS_DIR/subcortical_structures/segmentation/abide_stanford/dino/base/resnet_decoder/bs_16_lr_1em3_hier_2_aug_on_fly_num_ch_128_64_32_16_PCA_46_PCs",
+        "$RESULTS_DIR/subcortical_structures/segmentation/abide_stanford/dino/base/resnet_decoder/bs_16_lr_1em3_hier_2_aug_on_fly_num_ch_128_64_32_16_PCA_127_PCs"
     ),
 
     # "hcp_t2": (
     #     "$RESULTS_DIR/subcortical_structures/segmentation/hcp_t2/norm_seg/norm_k_3/bs_16_lr_1em3_NO_grad_clip",
+    # )
+
+    # "hcp_t1": (
+    #     "$RESULTS_DIR/subcortical_structures/segmentation/hcp_t1/norm_seg/norm_k_3/bs_16_lr_1em3_NO_grad_clip",
+    # ),
+
+    # "abide_caltech": (
+    #     "$RESULTS_DIR/subcortical_structures/segmentation/abide_caltech/norm_seg/norm_k_3/bs_16_lr_1em3_NO_grad_clip",
     # )
 }
 
@@ -72,7 +102,7 @@ seg_models_path = {
 # :====================================:
 if slurm_jobs:
     account = "bmic"
-    gpu_type = "titan_xp|geforce_rtx_2080_ti|geforce_gtx_1080_ti|titan_x"
+    gpu_type = "titan_xp|titan_x" #"titan_xp|geforce_rtx_2080_ti|geforce_gtx_1080_ti|titan_x"
     base_command = f"sbatch --account={account}"
     base_command += f" --constraint='{gpu_type}'" if gpu_type is not None else ""
     base_command += " no_tta.sh"

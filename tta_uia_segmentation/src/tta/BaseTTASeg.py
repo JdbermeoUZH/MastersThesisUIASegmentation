@@ -656,7 +656,7 @@ class BaseTTASeg(TTAInterface):
             ), "Model does not have a normalizer module to fit at test time."
 
             # get state dict of the normalizer module
-            fitted_modules_state_dict = self._seg.get_normalizer_module().state_dict()
+            fitted_modules_state_dict = self._seg.get_normalizer_state_dict()
 
         elif fit_at_test_time == "bn_layers":
             assert (
@@ -665,7 +665,10 @@ class BaseTTASeg(TTAInterface):
             fitted_modules_state_dict = self._seg.get_bn_layers_state_dict()
 
         elif fit_at_test_time == "all":
-            fitted_modules_state_dict = self._seg.state_dict()
+            fitted_modules_state_dict = {
+                k: v.state_dict() 
+                for k, v in self._seg.trainable_modules.items()
+            }
 
         self._fit_at_test_time = fit_at_test_time
 
@@ -924,13 +927,15 @@ class BaseTTASeg(TTAInterface):
                     arg is not None
                 ), f"{arg} must be provided to store visualizations"
 
+            output_file_name = file_name + f"_iteration_{iteration:04d}" # type: ignore
+
             _visualize_predictions(
                 x_original=x_original,  # type: ignore
                 interm_outs=interm_outs,
                 y_original_gt=y_gt,
                 y_pred=y_pred,
                 output_dir=output_dir,  # type: ignore
-                file_name=file_name,  # type: ignore
+                file_name=output_file_name,  # type: ignore
                 other_volumes_to_visualize=other_volumes_to_visualize,
                 save_predicted_vol_as_nifti=save_predicted_vol_as_nifti,
                 slice_idxs=slice_vols_for_viz,
@@ -949,7 +954,7 @@ class BaseTTASeg(TTAInterface):
                     y_original_gt=y_gt[:, [0] + list(classes_of_interest)],
                     y_pred=y_pred[:, [0] + list(classes_of_interest)],
                     output_dir=output_dir,  # type: ignore
-                    file_name=file_name,  # type: ignore
+                    file_name=output_file_name,  # type: ignore
                     output_dir_suffix=output_dir_suffix,
                     other_volumes_to_visualize=other_volumes_to_visualize,
                     save_predicted_vol_as_nifti=save_predicted_vol_as_nifti,

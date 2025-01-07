@@ -108,6 +108,11 @@ def preprocess_cmd_args() -> argparse.Namespace:
         "--wandb_log", type=parse_bool, help="Log tta to wandb. Default: False."
     )
     parser.add_argument(
+        "--start_new_exp",
+        type=parse_bool,
+        help="Start a new wandb experiment. Default: False",
+    )
+    parser.add_argument(
         "--device", type=str, help='Device to use for training. Default: "cuda"'
     )
 
@@ -184,6 +189,11 @@ def preprocess_cmd_args() -> argparse.Namespace:
         "--use_kl_loss",
         type=parse_bool,
         help="Use KL loss in entropy min loss. Default: True",
+    )
+    parser.add_argument(
+        "--kl_loss_weight",
+        type=float,
+        help="Weight of KL loss in entropy min loss. Default: 1.0",
     )
     parser.add_argument(
         "--weighted_loss",
@@ -292,7 +302,12 @@ if __name__ == "__main__":
     # Setup wandb logging
     # :=========================================================================:
     if wandb_log:
-        wandb_dir = setup_wandb(params, logdir, wandb_project, run_name=wandb_run_name)
+        wandb_dir = setup_wandb(
+            params=params,
+            logdir=logdir,
+            wandb_project=wandb_project,
+            start_new_exp=start_new_exp,
+            run_name=wandb_run_name)
     else:
         wandb_dir = None
 
@@ -362,15 +377,27 @@ if __name__ == "__main__":
             device=device,
         )
     elif train_mode == "segmentation_dino":
+        with_norm = (
+            train_params_seg["segmentation_dino"]["with_norm_module"]
+            if "with_norm_module" in train_params_seg["segmentation_dino"]
+            else False
+        )
+        if with_norm:
+            norm_cfg = model_params_seg["normalization_2D"]
+        else:
+            norm_cfg = None
+        
+        train_params_seg["segmentation_dino"]["precalculated_fts"] = False
+        
         seg = define_and_possibly_load_dino_seg(
             train_dino_cfg=train_params_seg["segmentation_dino"],
             decoder_cfg=model_params_seg["resnet_decoder_dino"],
+            norm_cfg=norm_cfg,
             n_classes=n_classes,
             cpt_fp=cpt_seg_fp,
             device=device,
             load_dino_fe=True,
         )
-        seg.precalculated_fts = False  # We will calculate them on the fly
     else:
         raise ValueError(f"Invalid segmentation model train mode: {train_mode}")
 
@@ -379,6 +406,7 @@ if __name__ == "__main__":
     viz_interm_outs = default(tta_config["viz_interm_outs"], tuple())
     entropy_min_loss_kwargs = dict(
         use_kl_loss=tta_config[TTA_MODE]["use_kl_loss"],
+        kl_loss_weight=tta_config[TTA_MODE]["kl_loss_weight"], 
         weighted_loss=tta_config[TTA_MODE]["weighted_loss"],
         clases_to_exclude_ent_term=tta_config[TTA_MODE]["clases_to_exclude_ent_term"],
         classes_to_exclude_kl_term=tta_config[TTA_MODE]["classes_to_exclude_kl_term"],

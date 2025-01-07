@@ -183,6 +183,7 @@ class EntropyMinLoss(torch.nn.Module):
     def __init__(
         self,
         use_kl_loss: bool = False,
+        kl_loss_weight: float = 1.0,
         source_class_ratios: Optional[torch.Tensor] = None,
         weighted_loss: bool = False,
         filter_low_support_classes: bool = False,
@@ -194,6 +195,7 @@ class EntropyMinLoss(torch.nn.Module):
 
         self._source_class_ratios = source_class_ratios
         self._use_kl_loss = use_kl_loss
+        self._kl_loss_weight = kl_loss_weight
         self._filter_low_support_classes = filter_low_support_classes
         self._classes_to_exclude_ent_term = clases_to_exclude_ent_term
         self._classes_to_exclude_kl_term = classes_to_exclude_kl_term
@@ -283,7 +285,8 @@ class EntropyMinLoss(torch.nn.Module):
                     # They have at least some support
                     low_supp = probs.sum((-2, -1)) < sum_prob_support_threshold  
             else:
-                low_supp = torch.zeros(C, device=probs.device).bool()
+                # Generate matrix of zeros of shape N, C
+                low_supp = torch.zeros(N, C, device=probs.device).bool()
                 
             # Preprocess the source class probabilities
             # -----------------------------------------
@@ -291,8 +294,7 @@ class EntropyMinLoss(torch.nn.Module):
 
             # Set the class ratio to 0 for classes with very small support in 
             #  the pseudo label map or the predicted probabilities
-            source_class_ratios[:, low_supp] = 0
-            #source_class_ratios = torch.where(low_supp.unsqueeze(0), torch.tensor(0.0, device=source_class_ratios.device), source_class_ratios)
+            source_class_ratios[low_supp] = 0
 
             # Exclude classes indicated by argument
             source_class_ratios = source_class_ratios[idx_slice]
@@ -317,7 +319,7 @@ class EntropyMinLoss(torch.nn.Module):
             log_class_ratio = (source_class_ratios + self._eps).log()
             log_probs_per_img_per_class = (probs_per_img_per_class + self._eps).log() 
             kl_batch = probs_per_img_per_class * (log_probs_per_img_per_class - log_class_ratio)
-            kl_term = kl_batch.sum(1).mean() # Exclude background class
+            kl_term = self._kl_loss_weight * kl_batch.sum(1).mean() # Exclude background class
 
             total_loss += kl_term
             loss_dict['kl_reg_loss'] = kl_term.item()

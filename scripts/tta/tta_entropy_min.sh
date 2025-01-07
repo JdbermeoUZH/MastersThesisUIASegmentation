@@ -12,3 +12,5 @@ python tta_entropy_min.py \
  $REPO_DIR/config/datasets.yaml \
  $REPO_DIR/config/tta/tta.yaml \
  "$@"  
+
+source $REPO_DIR/scripts/utils/clean_up.sh

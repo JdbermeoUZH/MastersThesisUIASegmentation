@@ -90,15 +90,14 @@ normIN1K = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0
 
 class DinoV2FeatureExtractor(nn.Module):
 
-    def __init__(self, model="base_reg", **kwargs):
+    def __init__(self, model="base_reg", inference_mode=True):
         self.model_name = model
         super(DinoV2FeatureExtractor, self).__init__()
-        self.model = self._initialize_dino(model, pretrained=True, **kwargs)
-
+        self.model = self._initialize_dino(model)
         self.model.eval()
+        self._inference_mode = inference_mode
 
-    @torch.inference_mode()
-    def forward(self, image, mask=None, pre=True, hierarchy: int = 0):
+    def _forward(self, image, mask=None, pre=True, hierarchy: int = 0):
 
         if hierarchy > 0:
             image = F.interpolate(
@@ -131,6 +130,13 @@ class DinoV2FeatureExtractor(nn.Module):
             output["pre_patch"] = pre_patch.reshape(-1, nph, npw, pre_patch.size(-1))
 
         return output
+
+    def forward(self, image, mask=None, pre=True, hierarchy: int = 0):
+        if self._inference_mode:
+            with torch.inference_mode():
+                return self._forward(image, mask, pre, hierarchy)
+        else:
+            return self._forward(image, mask, pre, hierarchy)
 
     def forward_hierarchically(self, image, mask=None, pre=True, hierarchy=[0, 1]):
 
@@ -184,7 +190,7 @@ class DinoV2FeatureExtractor(nn.Module):
 
         return output
 
-    def _initialize_dino(self, model, pretrained=True, **kwargs):
+    def _initialize_dino(self, model) -> nn.Module:
         repo_or_dir = "facebookresearch/dinov2"
         if model == "small":
             model = torch.hub.load(repo_or_dir, "dinov2_vits14")
@@ -218,6 +224,17 @@ class DinoV2FeatureExtractor(nn.Module):
     @property
     def emb_dim(self):
         return self.model.patch_embed.proj.out_channels
+
+    @property
+    def inference_mode(self):
+        return self._inference_mode
+
+    @inference_mode.setter
+    def inference_mode(self, in_inference_mode):
+        self._inference_mode = in_inference_mode
+
+    def freeze(self):
+        self.requires_grad_(False)
 
 
 def patch2rgb(patch, maps=["umap", "tsne", "pca"]):

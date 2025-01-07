@@ -6,6 +6,7 @@
 
 # Setup env and copy necessary files to compute node
 source $REPO_DIR/scripts/utils/start_env_and_data.sh
+echo $ENV_DIR
 
 python train_dino_seg.py \
  /scratch_net/biwidl319/jbermeo/MastersThesisUIASegmentation/config/datasets.yaml \

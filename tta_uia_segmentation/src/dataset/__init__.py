@@ -1,5 +1,4 @@
 from tta_uia_segmentation.src.dataset.dataset import Dataset
-from tta_uia_segmentation.src.dataset.dataset_in_memory import DatasetInMemory
-from tta_uia_segmentation.src.dataset.dataset_in_memory_for_ddpm import (
-    DatasetInMemoryForDDPM,
-)
+from tta_uia_segmentation.src.dataset.aug_tensor_dataset import AgumentedTensorDataset
+from tta_uia_segmentation.src.dataset.dataset_precomputed_dino_features import DatasetDinoFeatures
+from tta_uia_segmentation.src.dataset.dataset_in_memory_for_ddpm import DatasetInMemoryForDDPM

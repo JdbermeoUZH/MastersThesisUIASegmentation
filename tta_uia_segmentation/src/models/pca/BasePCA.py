@@ -32,6 +32,15 @@ class BasePCA(ABC):
         pass
 
     @abstractmethod
+    def serialize_to_dict(self) -> dict:	
+        pass
+    
+    @classmethod
+    @abstractmethod
+    def load_pipeline_from_dict(cls, serialized_pipeline: dict) -> "BasePCA":
+        pass
+
+    @abstractmethod
     def reconstruct(self, x: torch.Tensor) -> torch.Tensor:
         pass
 

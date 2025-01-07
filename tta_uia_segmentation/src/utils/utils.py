@@ -1,12 +1,14 @@
 import os
 import gc
 import random
+from contextlib import nullcontext  # For no-op context manager
 from typing import Optional, Union, Literal, Tuple, Any
 
 import torch
 import torch.distributed
 import torch.nn.functional as F
 from torch.utils.data import TensorDataset
+from torch.amp import autocast
 import numpy as np
 import nibabel as nib
 import nibabel.processing as nibp
@@ -25,6 +27,15 @@ def define_device(device: str, print_device: bool = False) -> torch.device:
 
     return device  # type: ignore
 
+
+def autocast_if_enabled(use_amp: bool, device, *args, **kwargs):
+    return autocast(device, *args, **kwargs) if use_amp else nullcontext() 
+
+def inference_mode_if_enabled(inference_mode: bool):
+    return torch.inference_mode() if inference_mode else nullcontext()
+
+def no_grad_if_enabled(no_grad: bool):
+    return torch.no_grad() if no_grad else nullcontext()
 
 def assert_in(value, name, possible_values):
     assert (

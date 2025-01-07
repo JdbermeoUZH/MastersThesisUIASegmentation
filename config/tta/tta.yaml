@@ -328,6 +328,7 @@ entropy_min:
   # Loss function
   class_prior_type: uniform # uniform, data
   use_kl_loss: true
+  kl_loss_weight: 1.0
   weighted_loss: true
 
   clases_to_exclude_ent_term: null

@@ -8,8 +8,11 @@ from .DinoV2FeatureExtractor import DinoV2FeatureExtractor
 from .BaseDecoder import BaseDecoder
 from ..BaseSeg import BaseSeg
 from tta_uia_segmentation.src.models.pca.BasePCA import BasePCA
-from tta_uia_segmentation.src.utils.utils import min_max_normalize_channelwise, default
-
+from tta_uia_segmentation.src.utils.utils import (
+    min_max_normalize_channelwise,
+    inference_mode_if_enabled,
+    default
+)
 
 class DinoSeg(BaseSeg):
     def __init__(
@@ -22,6 +25,8 @@ class DinoSeg(BaseSeg):
         dino_emb_dim: Optional[int] = None,
         precalculated_fts: bool = False,
         hierarchy_level: int = 0,
+        encoder_inference_mode: bool = True,
+        return_intermediate_outputs: bool = False,
     ):
         super().__init__()
 
@@ -56,10 +61,14 @@ class DinoSeg(BaseSeg):
             self._dino_emb_dim = dino_emb_dim
 
         self._precalculated_fts = precalculated_fts
+        
+        self._encoder_inference_mode = encoder_inference_mode
 
         self._pc_norm_type = pc_norm_type
 
         self._bn_dino_features = None
+
+        self._return_intermediate_outputs = return_intermediate_outputs
 
         if self._pc_norm_type is not None:
             assert self._pca is not None, "PCA model is required if normalization is expected"
@@ -89,7 +98,7 @@ class DinoSeg(BaseSeg):
             Dictionary containing intermediate outputs of preprocessing.
         """
 
-        if not self.precalculated_fts:
+        if not self._precalculated_fts:
             assert isinstance(
                 x, torch.Tensor
             ), "If calculating features, x must be a tensor of image(s)"
@@ -106,7 +115,7 @@ class DinoSeg(BaseSeg):
         return super().forward(x, **preprocess_kwargs)
 
     def select_necessary_extra_inputs(self, extra_input_dict):
-        if not self.precalculated_fts:
+        if not self._precalculated_fts:
             return {}
 
         assert "output_size" in extra_input_dict, "Output size is required"
@@ -144,27 +153,31 @@ class DinoSeg(BaseSeg):
         
         if x_preproc.is_inference():
             x_preproc = x_preproc.clone()
-        
+                
         return self._decoder(x_preproc)
 
-    @torch.no_grad()
     def _preprocess_x(
         self,
         x: torch.Tensor | List[torch.Tensor],
         mask: Optional[torch.Tensor] = None,
         pre: bool = False,
     ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        with inference_mode_if_enabled(self._encoder_inference_mode):
+            # Calculate dino features if necessary
+            # :=====================================================================:
+            x = self._extract_dino_features(x, mask, pre)
 
-        # Calculate dino features if necessary
-        # :=========================================================================:
-        x = self._extract_dino_features(x, mask, pre)
+            # Apply PCA if necessary
+            # :=====================================================================:
+            if self._pca is not None:
+                x = self._get_pc_dino_features(x)
 
-        # Apply PCA if necessary
-        # :=========================================================================:
-        if self._pca is not None:
-            x = self._get_pc_dino_features(x)
+        if self._return_intermediate_outputs:
+            interm_outs = {"Dino Features": x}
+        else:
+            interm_outs = {}
 
-        return x, {"Dino Features": x}
+        return x, interm_outs
 
     def _extract_dino_features(
         self,
@@ -186,7 +199,7 @@ class DinoSeg(BaseSeg):
 
         # Get Dino Features
         # :=========================================================================:
-        if not self.precalculated_fts:
+        if not self._precalculated_fts:
             # Convert grayscale to RGB, required by DINO
             assert isinstance(
                 x, torch.Tensor
@@ -219,7 +232,6 @@ class DinoSeg(BaseSeg):
 
         # Map to principal components
         x = self._pca.img_to_pcs(x)
-
         if self._pc_norm_type == "bn_layer":
             assert (
                 self._bn_dino_features is not None
@@ -323,5 +335,8 @@ class DinoSeg(BaseSeg):
     def has_normalizer_module(self) -> bool:
         return False
 
-    def get_normalizer_module(self):
+    def get_normalizer_module(self) -> nn.Module:
+        raise ValueError("Model does not have a normalizer module")
+
+    def get_normalizer_state_dict(self) -> dict[str, torch.Tensor]:
         raise ValueError("Model does not have a normalizer module")

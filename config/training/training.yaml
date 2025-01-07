@@ -103,11 +103,14 @@ segmentation:
 
 segmentation_dino:
   dino_model:                   base  # small, base, large, gigantic
-  precalculated_fts:            True
+  precalculated_fts:            False
   
   pca_path:                     null  # path to pretrained PCA model on dino features
   num_pca_components:           null  # Null for no PCA model
   pc_norm_type:                 null  # Options are null, 'bn_layer', 'per_img' (min-max normalization per image)
+  use_torch_pca:                True  # Whether to use PCA from torch or sklearn
+
+  with_norm_module:             False # Whether to use normalization module in the decoder  
 
   load_dataset_in_memory:       False # If precalculated features is True, it must be False
   node_data_path:               null #/scratch/${USER}/data # If not null, it copies the data to the compute node (doesn't work on precalculated features, too big)
@@ -122,12 +125,13 @@ segmentation_dino:
   optimizer_type:               adam  # adam, adamW
   weight_decay:                 0
   max_grad_norm:                null 
+  use_amp:                      False
 
   epochs:                       150   # 150 for subcortical_structures, 1000 for WMH (nuhs, umc)
   batch_size:                   16
   grad_acc_steps:               1
   num_workers:                  1
-  validate_every:               3
+  validate_every:               5
   warmup_steps:                 0. # 0.05 for 5% of the total number of steps
   lr_decay:                     False
   logdir:                       $RESULTS_DIR/subcortical_structures/segmentation/hcp_t1/dino_seg/debug
@@ -170,6 +174,7 @@ incremental_pca:
 
   epochs:                       1
   batch_size:                   10
+  mini_batch_size:              null
   num_workers:                  1
   precalculated_fts:            True
   aug_params:                   null
@@ -178,7 +183,10 @@ incremental_pca:
   explained_var_pcs:            0.95  # Use 0.95 for 95% explained variance components, which are use to measure reconstruction error
   checkpoint_every:             100  
 
-  precalculated_fts:            True
+  precalculated_fts:            False
+  load_dataset_in_memory:       True
+  node_data_path:               /scratch/${USER}/data
+
   augmentation:                       # Not used if precalculated_fts is True
     da_ratio:           0.25
     sigma:              20

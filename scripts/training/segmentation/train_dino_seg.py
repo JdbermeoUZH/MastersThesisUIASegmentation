@@ -31,7 +31,8 @@ from tta_uia_segmentation.src.utils.logging import setup_wandb
 
 
 TRAIN_MODE = "segmentation_dino"
-MODEL_TYPE = "resnet_decoder_dino"
+MODEL_TYPE_RESNET = "resnet_decoder_dino"
+MODEL_TYPE_NORM = "normalization_2D"
 
 
 def preprocess_cmd_args() -> argparse.Namespace:
@@ -100,10 +101,17 @@ def preprocess_cmd_args() -> argparse.Namespace:
         type=str,
         choices=["ResNet", "Hierarchichal"],
     )
+
+    parser.add_argument(
+        "--with_norm_module",
+        type=parse_bool,
+        help="Whether to use a normalization module. Default: True",
+    )
     parser.add_argument("--pca_path", type=str, help="Path to SVD model. Default: None")
     parser.add_argument(
         "--num_pca_components", type=int, help="Number of PCA components"
     )
+    parser.add_argument("--use_torch_pca", type=parse_bool, help="Do PCA transformations with torch. Default: False")
     parser.add_argument(
         "--precalculated_fts",
         type=parse_bool,
@@ -193,6 +201,11 @@ def preprocess_cmd_args() -> argparse.Namespace:
         type=str,
         help="Device to use for training. Default cuda",
     )
+    parser.add_argument(
+        "--use_amp",
+        type=parse_bool,
+        help="Whether to use automatic mixed precision. Default: False",
+    )
 
     # Loss function
     parser.add_argument(
@@ -259,8 +272,8 @@ def get_configuration_arguments() -> tuple[dict, dict, dict]:
 
     train_config["train_mode"] = TRAIN_MODE
 
-    model_config[MODEL_TYPE] = rewrite_config_arguments(
-        model_config[MODEL_TYPE], args, f"model, {MODEL_TYPE}"
+    model_config[MODEL_TYPE_RESNET] = rewrite_config_arguments(
+        model_config[MODEL_TYPE_RESNET], args, f"model, {MODEL_TYPE_RESNET}"
     )
 
     train_config[TRAIN_MODE] = rewrite_config_arguments(
@@ -328,6 +341,10 @@ if __name__ == "__main__":
 
     dataset_name = train_config["dataset"]
     n_classes = dataset_config[dataset_name]["n_classes"]
+    with_norm_module = train_config[TRAIN_MODE]["with_norm_module"]
+    if with_norm_module:
+        train_config[TRAIN_MODE]["precalculated_fts"] = False
+
     dataset_type = (
         "DinoFeatures" if train_config[TRAIN_MODE]["precalculated_fts"] else "Normal"
     )
@@ -387,12 +404,14 @@ if __name__ == "__main__":
     # Define the 2D segmentation model
     # :=========================================================================:
     load_dino_fe = not train_config[TRAIN_MODE]["precalculated_fts"]
-    
+    norm_cfg = model_config[MODEL_TYPE_NORM] if with_norm_module else None
+
     dino_seg = define_and_possibly_load_dino_seg(
         train_dino_cfg=train_config[TRAIN_MODE],
-        decoder_cfg=model_config[MODEL_TYPE],
+        decoder_cfg=model_config[MODEL_TYPE_RESNET],
         n_classes=n_classes,
         device=device,
+        norm_cfg=norm_cfg,
         cpt_fp=cpt_fp,
         load_dino_fe=load_dino_fe,
     )
@@ -423,6 +442,7 @@ if __name__ == "__main__":
         weight_decay=float(train_config[TRAIN_MODE]["weight_decay"]),
         grad_acc_steps=train_config[TRAIN_MODE]["grad_acc_steps"],
         max_grad_norm=train_config[TRAIN_MODE]["max_grad_norm"],
+        use_amp=train_config[TRAIN_MODE]["use_amp"],
         checkpoint_best=train_config["checkpoint_best"],
         checkpoint_last=train_config["checkpoint_last"],
         device=device,

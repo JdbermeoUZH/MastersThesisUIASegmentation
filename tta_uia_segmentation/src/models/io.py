@@ -18,6 +18,7 @@ from . import (
     ConditionalGaussianDiffusion,
     ConditionalLatentGaussianDiffusion,
     DinoSeg,
+    NormDinoSeg,
     NormSeg,
     DomainStatistics,
 )
@@ -96,6 +97,7 @@ def load_pca_from_cpt(
     cpt_fp: str,
     num_pca_components: int,
     device: torch.device,
+    use_torch: bool = False,
 ) -> BasePCA:
     params_path = os.path.join(os.path.dirname(cpt_fp), "params.yaml")
     cfg = yaml.safe_load(open(params_path, "r"))
@@ -108,7 +110,11 @@ def load_pca_from_cpt(
     else:
         raise ValueError(f"Invalid PCA type: {train_mode}")
 
-    pca.to_device(device)
+    pca.use_torch = use_torch
+    
+    if use_torch:
+        pca.to_device(device)
+    
     pca.n_components = num_pca_components
 
     return pca
@@ -119,6 +125,7 @@ def define_and_possibly_load_dino_seg(
     decoder_cfg: dict,
     n_classes: int,
     device: torch.device,
+    norm_cfg: Optional[dict] = None,
     cpt_fp: Optional[str] = None,
     load_dino_fe: bool = True,
 ) -> DinoSeg:
@@ -134,10 +141,12 @@ def define_and_possibly_load_dino_seg(
 
     # Define PCA if given
     if train_dino_cfg["pca_path"] is not None:
+        use_torch = True if "use_torch_pca" not in train_dino_cfg else train_dino_cfg["use_torch_pca"]
         pca = load_pca_from_cpt(
             cpt_fp=train_dino_cfg["pca_path"],
             num_pca_components=train_dino_cfg["num_pca_components"],
             device=device,
+            use_torch=use_torch,
         )
         embedding_dim = default(pca.n_components, embedding_dim)
         pc_norm_type = train_dino_cfg["pc_norm_type"]
@@ -199,15 +208,25 @@ def define_and_possibly_load_dino_seg(
         dino_fe = None
 
     if decoder_type != "Hierarchichal":
-        dino_seg = DinoSeg(
+        dino_seg_kwargs = dict(
             decoder=decoder,
             dino_fe=dino_fe,
             pca=pca,
             pc_norm_type=pc_norm_type,
-            precalculated_fts=precalculated_fts,
             hierarchy_level=hierarchy_level,
             **extra_kwargs,
         )
+        if norm_cfg is not None:
+            norm = define_and_possibly_load_norm(norm_cfg, device=device)
+            dino_seg = NormDinoSeg(
+                norm=norm,
+                **dino_seg_kwargs # type: ignore
+            )
+        else:
+            dino_seg = DinoSeg(
+                precalculated_fts=precalculated_fts,
+                **dino_seg_kwargs # type: ignore
+            ) 
 
     else:
         dino_seg = HierarchichalDinoSeg(

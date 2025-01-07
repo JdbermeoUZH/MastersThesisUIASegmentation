@@ -269,15 +269,23 @@ if __name__ == "__main__":
             device=device,
         )
     elif train_mode == "segmentation_dino":
+        train_dino_cfg = train_params_seg["segmentation_dino"]
+        train_dino_cfg["precalculated_fts"] = False # We will calculate them on the fly
+        if train_dino_cfg["with_norm_module"]: 
+            norm_cfg = model_params_seg["normalization_2D"]
+        else:
+            norm_cfg = None
+
         seg = define_and_possibly_load_dino_seg(
-            train_dino_cfg=train_params_seg["segmentation_dino"],
+            train_dino_cfg=train_dino_cfg,
             decoder_cfg=model_params_seg["resnet_decoder_dino"],
             n_classes=n_classes,
             cpt_fp=cpt_seg_fp,
             device=device,
+            norm_cfg=norm_cfg,
             load_dino_fe=True,
         )
-        seg.precalculated_fts = False # We will calculate them on the fly
+        
     else:
         raise ValueError(f"Invalid segmentation model train mode: {train_mode}")
 

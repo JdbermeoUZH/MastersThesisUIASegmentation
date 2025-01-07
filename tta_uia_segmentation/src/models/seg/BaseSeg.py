@@ -127,6 +127,13 @@ class BaseSeg(torch.nn.Module, ABC):
         """
         pass
 
+    @abstractmethod
+    def get_normalizer_state_dict(self) -> dict[str, Any]:
+        """
+        Returns the state dictionary of the normalizer module.
+        """
+        pass
+
     @property
     def trainable_params(self) -> List[torch.nn.Parameter]:
         return [param for m in self.trainable_modules.values() for param in m.parameters()]

@@ -12,6 +12,38 @@ from .utils import flatten_pixels, unflatten_pixels
 from tta_uia_segmentation.src.utils.utils import torch_to_numpy, default
 
 
+import time
+
+def time_it(func, *args, **kwargs):
+    """
+    Wraps a function call and measures its execution time.
+    
+    Parameters:
+        func (callable): The function to be timed.
+        *args: Positional arguments to pass to the function.
+        **kwargs: Keyword arguments to pass to the function.
+        
+    Returns:
+        result: The result of the function call.
+        elapsed_time: The time taken to execute the function in seconds.
+    """
+    start_time = time.time()
+    result = func(*args, **kwargs)
+    elapsed_time = time.time() - start_time
+    print(f"Execution time for {func.__name__}: {elapsed_time:.4f} seconds")
+    return result, elapsed_time
+
+@torch.jit.script
+def _compiled_to_pcs_with_torch(
+    x: torch.Tensor,
+    mean: torch.Tensor,
+    scale: torch.Tensor,
+    principal_components: torch.Tensor,
+) -> torch.Tensor:
+    # Normalize with the scalers information
+    x = (x - mean) / scale
+
+    return torch.mm(x, principal_components.t())
 class IncrementalPCA(BasePCA):
     def __init__(self, n_components: Optional[int] = None):
         self._pca = Pipeline(
@@ -70,18 +102,26 @@ class IncrementalPCA(BasePCA):
                 )
 
     def to_pcs(self, x: torch.Tensor) -> torch.Tensor:
+
         if not self._use_torch:
+            device, dtype = x.device, x.dtype
             x_np = torch_to_numpy(x)
-            return torch.from_numpy(self._pca.transform(x_np))[:, : self.n_components]
+            return torch.tensor(
+                self._pca.transform(x_np), 
+                device=device,
+                dtype=dtype
+            )[:, : self.n_components]
         else:
             assert isinstance(
                 self._principal_components, torch.Tensor
             ), "The principal components must be a torch.Tensor to use torch"
 
-            # Normalize with the scalers information
-            x = (x - self._mean) / self._scale
-
-            return torch.mm(x.to(self._device), self._principal_components.t())
+            return _compiled_to_pcs_with_torch(
+                x,
+                self._mean,
+                self._scale,
+                self._principal_components,
+                )
 
     def from_pcs(self, z: torch.Tensor) -> torch.Tensor:
         if not self._use_torch:
@@ -110,6 +150,100 @@ class IncrementalPCA(BasePCA):
 
     def load(self, path):
         self._pca = joblib.load(path)
+
+    def serialize_to_dict(self) -> dict:
+        """
+        Serializes a scikit-learn pipeline with a StandardScaler and IncrementalPCA.
+
+        Returns:
+            dict: A dictionary containing the serialized state of the pipeline.
+        """
+        
+        serialized_pipeline = {}
+        for name, step in self._pca.steps:
+            if isinstance(step, StandardScaler):
+                serialized_pipeline[name] = {
+                    "type": "StandardScaler",
+                    "mean_": step.mean_.tolist() if hasattr(step, "mean_") else None,
+                    "scale_": step.scale_.tolist() if hasattr(step, "scale_") else None,
+                    "var_": step.var_.tolist() if hasattr(step, "var_") else None,
+                    "n_samples_seen_": int(step.n_samples_seen_) if hasattr(step, "n_samples_seen_") else None
+                }
+            elif isinstance(step, IncrementalPCA):
+                serialized_pipeline[name] = {
+                    "type": "IncrementalPCA",
+                    "hyperparameters": step.get_params(),
+                    "fitted_parameters": {
+                        "components_": step.components_.tolist() if hasattr(step, "components_") else None,
+                        "explained_variance_": step.explained_variance_.tolist() if hasattr(step, "explained_variance_") else None,
+                        "explained_variance_ratio_": step.explained_variance_ratio_.tolist() if hasattr(step, "explained_variance_ratio_") else None,
+                        "singular_values_": step.singular_values_.tolist() if hasattr(step, "singular_values_") else None,
+                        "mean_": step.mean_.tolist() if hasattr(step, "mean_") else None,
+                        "n_components_": step.n_components_ if hasattr(step, "n_components_") else None,
+                        "n_samples_seen_": int(step.n_samples_seen_) if hasattr(step, "n_samples_seen_") else None
+                    }
+                }
+            else:
+                raise ValueError(f"Unsupported step type: {type(step)} in pipeline.")
+
+        # Add the other class attributes
+        serialized_pipeline["n_components"] = self.n_components
+        serialized_pipeline["principal_components"] = self._principal_components.tolist() if self._principal_components is not None else None
+        serialized_pipeline["mean"] = self._mean.tolist() if self._mean is not None else None
+        serialized_pipeline["scale"] = self._scale.tolist() if self._scale is not None else None
+        serialized_pipeline["use_torch"] = self._use_torch
+        serialized_pipeline["device"] = self._device
+
+        return serialized_pipeline
+
+    @classmethod
+    def load_pipeline_from_dict(cls, serialized_pipeline: dict) -> "IncrementalPCA":
+        """
+        Loads a scikit-learn pipeline from a serialized state dictionary.
+
+        Parameters:
+            serialized_pipeline (dict): The serialized state of the pipeline.
+        """
+
+        self = cls()
+        
+        for name, step_state in serialized_pipeline.items():
+            step = self._pca.named_steps[name]
+
+            if step_state["type"] == "StandardScaler":
+                if step_state.get("mean_") is not None:
+                    step.mean_ = np.array(step_state["mean_"])
+                if step_state.get("scale_") is not None:
+                    step.scale_ = np.array(step_state["scale_"])
+                if step_state.get("var_") is not None:
+                    step.var_ = np.array(step_state["var_"])
+                if step_state.get("n_samples_seen_") is not None:
+                    step.n_samples_seen_ = step_state["n_samples_seen_"]
+            
+            elif step_state["type"] == "IncrementalPCA":
+                step.set_params(**step_state["hyperparameters"])
+                fitted_params = step_state["fitted_parameters"]
+                for param, value in fitted_params.items():
+                    if value is not None:
+                        setattr(
+                            step,
+                            param, np.array(value) 
+                            if isinstance(value, list) else value
+                        )
+            else:
+                raise ValueError(f"Unsupported step type: {step_state['type']} in pipeline.")
+
+        # Add the other class attributes
+        self.n_components = serialized_pipeline["n_components"]
+        self._use_torch = serialized_pipeline["use_torch"]
+        self._device = serialized_pipeline["device"]
+
+        if self._use_torch:
+            self._principal_components = torch.Tensor(serialized_pipeline["principal_components"], device=self._device)
+            self._mean = torch.Tensor(serialized_pipeline["mean"], device=self._device)
+            self._scale = torch.Tensor(serialized_pipeline["scale"], device=self._device)
+
+        return self
 
     def reconstruct(
         self, x: torch.Tensor, num_components: Optional[int] = None
@@ -187,6 +321,10 @@ class IncrementalPCA(BasePCA):
         self._principal_components = self._principal_components.to(device)
         self._mean = self._mean.to(device)
         self._scale = self._scale.to(device)
+
+    @property
+    def device(self):
+        return self._device
 
     @property
     def scaler(self) -> StandardScaler:

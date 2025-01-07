@@ -614,6 +614,25 @@ class Dataset(data.Dataset):
 
         return images, labels
 
+    def get_preprocessed_items(
+            self,
+            idx: int
+        ) -> tuple[torch.Tensor | list[torch.Tensor], torch.Tensor, dict[str, Any]]:
+        """
+        Get the preprocessed image and label volumes at the specified index.
+
+        Parameters
+        ----------
+        idx : int
+            The index of the item to retrieve.
+
+        Returns
+        -------
+        Tuple[torch.Tensor, torch.Tensor]
+            A tuple containing the image, labels
+        """
+        return self.__getitem__(idx)
+    
     def __del__(self):
         if self._h5f_preprocessed is not None:
             self._h5f_preprocessed.close()
