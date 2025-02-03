@@ -82,7 +82,12 @@ seg_models_path = {
 
         "$RESULTS_DIR/subcortical_structures/segmentation/abide_stanford/dino/base/resnet_decoder/bs_16_lr_1em3_hier_2_aug_on_fly_num_ch_128_64_32_16_PCA_31_PCs",
         "$RESULTS_DIR/subcortical_structures/segmentation/abide_stanford/dino/base/resnet_decoder/bs_16_lr_1em3_hier_2_aug_on_fly_num_ch_128_64_32_16_PCA_46_PCs",
-        "$RESULTS_DIR/subcortical_structures/segmentation/abide_stanford/dino/base/resnet_decoder/bs_16_lr_1em3_hier_2_aug_on_fly_num_ch_128_64_32_16_PCA_127_PCs"
+        "$RESULTS_DIR/subcortical_structures/segmentation/abide_stanford/dino/base/resnet_decoder/bs_16_lr_1em3_hier_2_aug_on_fly_num_ch_128_64_32_16_PCA_127_PCs",
+
+        "$RESULTS_DIR/subcortical_structures/segmentation/abide_stanford/dino/giant/resnet_decoder/bs_16_lr_1em3_hier_2_aug_on_fly_num_ch_128_64_32_16_PCA_30_PCs",
+        "$RESULTS_DIR/subcortical_structures/segmentation/abide_stanford/dino/giant/resnet_decoder/bs_16_lr_1em3_hier_2_aug_on_fly_num_ch_128_64_32_16_PCA_56_PCs",
+        "$RESULTS_DIR/subcortical_structures/segmentation/abide_stanford/dino/giant/resnet_decoder/bs_16_lr_1em3_hier_2_aug_on_fly_num_ch_128_64_32_16_PCA_83_PCs",
+        "$RESULTS_DIR/subcortical_structures/segmentation/abide_stanford/dino/giant/resnet_decoder/bs_16_lr_1em3_hier_2_aug_on_fly_num_ch_128_64_32_16_PCA_229_PCs",
     ),
 
     # "hcp_t2": (

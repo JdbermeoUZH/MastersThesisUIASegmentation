@@ -961,7 +961,7 @@ class Dataset(data.Dataset):
         return self._seed
 
     @seed.setter
-    def set_seed(self, seed=None):
+    def seed(self, seed=None):
         self._seed = seed
 
     @property

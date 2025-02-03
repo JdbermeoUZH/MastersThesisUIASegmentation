@@ -32,7 +32,7 @@ class AgumentedTensorDataset(Dataset):
     def __len__(self):
         return len(self._data)
 
-    def __getitem__(self, idx) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
+    def __getitem__(self, idx) -> tuple[torch.Tensor, torch.Tensor]:
         seed = default(self._seed, get_seed())
 
         image = self._data[idx]  # Convert torch.Tensor to numpy array
@@ -54,10 +54,10 @@ class AgumentedTensorDataset(Dataset):
                 **self._aug_params,
             )
         
-        if self._returns_labels:
-            return image, label # type: ignore
-        else:
-            return image # type: ignore
+        if label is None:
+            label = ["none"] * len(image)
+
+        return image, label
 
     @property
     def augment(self):
@@ -66,6 +66,14 @@ class AgumentedTensorDataset(Dataset):
     @augment.setter
     def augment(self, augment: bool):
         self._augment = augment
+
+    @property
+    def seed(self):
+        return self._seed
+
+    @seed.setter
+    def seed(self, seed=None):
+        self._seed = seed
 
     @property
     def returns_labels(self):

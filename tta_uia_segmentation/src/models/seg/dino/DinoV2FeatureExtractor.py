@@ -134,6 +134,7 @@ class DinoV2FeatureExtractor(nn.Module):
     def forward(self, image, mask=None, pre=True, hierarchy: int = 0):
         if self._inference_mode:
             with torch.inference_mode():
+                breakpoint()
                 return self._forward(image, mask, pre, hierarchy)
         else:
             return self._forward(image, mask, pre, hierarchy)

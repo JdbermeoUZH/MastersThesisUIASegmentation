@@ -1,5 +1,6 @@
 import os
 import sys
+import copy
 import argparse
 
 import wandb
@@ -12,18 +13,29 @@ sys.path.append(os.path.normpath(os.path.join(
     os.path.dirname(__file__), '..', '..')))
 
 from tta_uia_segmentation.src.tta import TTADAE
-from tta_uia_segmentation.src.dataset.dataset_in_memory import get_datasets
+from tta_uia_segmentation.src.dataset.io import get_datasets
+from tta_uia_segmentation.src.dataset.utils import ensure_nd
 from tta_uia_segmentation.src.models.io import (
     define_and_possibly_load_norm_seg,
-    load_dae_and_atlas_from_configs_and_cpt,
-    load_domain_statistiscs
+    define_and_possibly_load_dino_seg,
+    load_dae_and_atlas_from_configs_and_cpt
 )
 from tta_uia_segmentation.src.utils.io import (
-    load_config, dump_config, print_config, write_to_csv,
+    load_config,
+    dump_config,
+    print_config, 
     rewrite_config_arguments)
-from tta_uia_segmentation.src.utils.utils import seed_everything, define_device, parse_bool
+from tta_uia_segmentation.src.utils.utils import (
+    seed_everything,
+    parse_bool,
+    assert_in,
+    default
+)
 from tta_uia_segmentation.src.utils.logging import setup_wandb
-from tta_uia_segmentation.src.utils.loss import DiceLoss, dice_score
+from tta_uia_segmentation.src.utils.loss import DiceLoss
+
+
+TTA_MODE = "dae"
 
 
 def preprocess_cmd_args() -> argparse.Namespace:
@@ -42,7 +54,12 @@ def preprocess_cmd_args() -> argparse.Namespace:
     # :================================================================================================:
     parser.add_argument('--start', type=int, help='starting volume index to be used for testing')
     parser.add_argument('--stop', type=int, help='stopping volume index to be used for testing (index not included)')
-    parser.add_argument('--logdir', type=str, help='Path to directory where logs and checkpoints are saved. Default: logs')  
+    parser.add_argument('--logdir', type=str, help='Path to directory where logs and checkpoints are saved. Default: logs') 
+    parser.add_argument(
+        "--wandb_run_name",
+        type=str,
+        help="Name of wandb run. Default: None",
+    ) 
     parser.add_argument('--dae_dir', type=str, help='Path to directory where DAE checkpoints are saved')
     parser.add_argument('--seg_dir', type=str, help='Path to directory where segmentation checkpoints are saved')
     parser.add_argument('--wandb_project', type=str, help='Name of wandb project to log to. Default: "tta"')
@@ -146,34 +163,39 @@ if __name__ == '__main__':
     # :=========================================================================:
     dataset_config, tta_config = get_configuration_arguments()
     
-    tta_mode                = 'dae'
     seg_dir                 = tta_config['seg_dir']
-    dae_dir                 = tta_config[tta_mode]['dae_dir']
+    dae_dir                 = tta_config[TTA_MODE]['dae_dir']
 
     params_dae              = load_config(os.path.join(dae_dir, 'params.yaml'))
     model_params_dae        = params_dae['model']['dae']
     train_params_dae        = params_dae['training']
     
-    params_seg              = load_config(os.path.join(seg_dir, 'params.yaml'))
-    model_params_norm       = params_seg['model']['normalization_2D']
-    model_params_seg        = params_seg['model']['segmentation_2D']
-    train_params_seg        = params_seg['training']
-    
-    params                  = { 
-                               'datset': dataset_config,
-                               'model': {'norm': model_params_norm, 'seg': model_params_seg, 'dae': model_params_dae},
-                               'training': {'seg': train_params_seg, 'dae': train_params_dae},
-                               'tta': tta_config
-                               }
-        
+    params_seg = load_config(os.path.join(seg_dir, "params.yaml"))
+    train_params_seg = params_seg["training"]
+    train_mode = train_params_seg["train_mode"]
+
+    model_params_seg = params_seg["model"]
+
+
+    params = {
+        "datset": dataset_config,
+        "model": model_params_seg,
+        "training": train_params_seg,
+        "tta": tta_config,
+    }
+
+
     seed                    = tta_config['seed']
     device                  = tta_config['device']
     wandb_log               = tta_config['wandb_log']
+    wandb_run_name = tta_config["wandb_run_name"]
     start_new_exp           = tta_config['start_new_exp']
-    logdir                  = tta_config[tta_mode]['logdir']
-    wandb_project           = tta_config[tta_mode]['wandb_project']  
-    classes_of_interest     = tta_config['classes_of_interest']
-    
+    logdir                  = tta_config[TTA_MODE]['logdir']
+    wandb_project           = tta_config[TTA_MODE]['wandb_project']  
+  
+    classes_of_interest = default(tta_config["classes_of_interest"], tuple())
+    classes_of_interest: tuple[int | str, ...] = tuple(classes_of_interest)
+           
     os.makedirs(logdir, exist_ok=True)
     dump_config(os.path.join(logdir, 'params.yaml'), params)
     print_config(params, keys=['datset', 'model', 'tta'])
@@ -181,64 +203,111 @@ if __name__ == '__main__':
     # Setup wandb logging
     # :=========================================================================:
     if wandb_log:
-        wandb_dir = setup_wandb(params, logdir, wandb_project, start_new_exp)
-    
+        wandb_dir = setup_wandb(
+            params=params,
+            logdir=logdir,
+            wandb_project=wandb_project,
+            start_new_exp=start_new_exp,
+            run_name=wandb_run_name)    
+    else:
+        wandb_dir = None
+
     # Define the dataset that is to be used for training
     # :=========================================================================:
-    print('Defining dataset and its datloader that will be used for TTA')
-    seed_everything(seed)
-    device                 = define_device(device)
-    dataset_name           = tta_config['dataset']
-    split                  = tta_config['split']
-    n_classes              = dataset_config[dataset_name]['n_classes']
-    bg_suppression_opts    = tta_config[tta_mode]['bg_suppression_opts']
-    aug_params             = tta_config[tta_mode]['augmentation']
-  
-    test_dataset, = get_datasets(
-        dataset_name    = dataset_name,
-        paths           = dataset_config[dataset_name]['paths_processed'],
-        paths_original  = dataset_config[dataset_name]['paths_original'],
-        splits          = [split],
-        image_size      = tta_config['image_size'],
-        resolution_proc = dataset_config[dataset_name]['resolution_proc'],
-        dim_proc        = dataset_config[dataset_name]['dim'],
-        n_classes       = n_classes,
-        aug_params      = aug_params,
-        deformation     = None,
-        load_original   = True,
-        bg_suppression_opts=bg_suppression_opts,
+    print("Defining dataset and its datloader that will be used for TTA")
+
+    dataset_name = tta_config["dataset"]
+    split = tta_config["split"]
+    dataset_type = tta_config["dataset_type"]
+
+    n_classes = dataset_config[dataset_name]["n_classes"]
+    aug_params = tta_config[TTA_MODE]["augmentation"]
+
+    dataset_kwargs = dict(
+        dataset_name=dataset_name,
+        paths_preprocessed=dataset_config[dataset_name]["paths_preprocessed"],
+        paths_original=dataset_config[dataset_name]["paths_original"],
+        resolution_proc=dataset_config[dataset_name]["resolution_proc"],
+        n_classes=n_classes,
+        dim_proc=dataset_config[dataset_name]["dim"],
+        aug_params=aug_params,
+        load_original=True,
     )
-        
-    print('Datasets loaded')
+
+    if dataset_type == "Normal":
+        dataset_kwargs['load_in_memory'] = tta_config["load_dataset_in_memory"]
+        dataset_kwargs["node_data_path"] = tta_config["node_data_path"]
+
+        dataset_kwargs["mode"] = tta_config["dataset_mode"]
+        dataset_kwargs["load_in_memory"] = tta_config["load_in_memory"]
+        dataset_kwargs["orientation"] = tta_config["eval_orientation"]
+        assert_in(
+            dataset_kwargs["orientation"], "orientation", ["depth", "height", "width"]
+        )
+
+    if dataset_type == "DinoFeatures":
+        dataset_kwargs["paths_preprocessed_dino"] = dataset_config[dataset_name][
+            "paths_preprocessed_dino"
+        ]
+        dataset_kwargs["hierarchy_level"] = train_params_seg[train_mode][
+            "hierarchy_level"
+        ]
+        dataset_kwargs["dino_model"] = train_params_seg[train_mode]["dino_model"]
+        del dataset_kwargs["aug_params"]
+
+    # So far only depth orientation is used
+    (test_dataset,) = get_datasets(
+        dataset_type=dataset_type, splits=[split], **dataset_kwargs
+    )
+
+    print("Datasets loaded")
+
 
     # Load models
     # :=========================================================================:
-    print('Loading segmentation model')
-    cpt_type = 'checkpoint_best' if tta_config['load_best_cpt'] \
-        else 'checkpoint_last'
+    print("Loading segmentation model")
+
+    cpt_type = "checkpoint_best" if tta_config["load_best_cpt"] else "checkpoint_last"
     cpt_seg_fp = os.path.join(seg_dir, train_params_seg[cpt_type])
-    
-    norm, seg = define_and_possibly_load_norm_seg(
-        n_classes = n_classes,
-        model_params_norm = model_params_norm,
-        model_params_seg = model_params_seg,
-        cpt_fp = cpt_seg_fp,
-        device = device,
-    )
-    
-    min_max_clip_q = tta_config[tta_mode]['min_max_quantile']   
-    norm_sd_statistics = load_domain_statistiscs(
-        cpt_fp = cpt_seg_fp,
-        frozen = True,
-        momentum = 0.96,
-        min_max_clip_q=min_max_clip_q,
-    )
+
+    if train_mode == "segmentation":
+        seg = define_and_possibly_load_norm_seg(
+            n_classes=n_classes,
+            model_params_norm=model_params_seg["normalization_2D"],  # type: ignore
+            model_params_seg=model_params_seg["segmentation_2D"],  # type: ignore
+            cpt_fp=cpt_seg_fp,
+            device=device,
+        )
+
+    elif train_mode == "segmentation_dino":
+        with_norm = (
+            train_params_seg["segmentation_dino"]["with_norm_module"]
+            if "with_norm_module" in train_params_seg["segmentation_dino"]
+            else False
+        )
+        if with_norm:
+            norm_cfg = model_params_seg["normalization_2D"]
+        else:
+            norm_cfg = None
+        
+        train_params_seg["segmentation_dino"]["precalculated_fts"] = False
+        
+        seg = define_and_possibly_load_dino_seg(
+            train_dino_cfg=train_params_seg["segmentation_dino"],
+            decoder_cfg=model_params_seg["resnet_decoder_dino"],
+            norm_cfg=norm_cfg,
+            n_classes=n_classes,
+            cpt_fp=cpt_seg_fp,
+            device=device,
+            load_dino_fe=True,
+        )
+    else:
+        raise ValueError(f"Invalid segmentation model train mode: {train_mode}")
 
     if wandb_log:
-        wandb.watch(
-            [norm, seg], 
+        wandb.watch([seg], 
             log='all', 
-            log_freq=5,
+            log_freq=1,
             criterion={
                 "gradients": {
                     "norm_too_high": lambda x: torch.norm(x) > 10.0,
@@ -269,85 +338,118 @@ if __name__ == '__main__':
 
     debug_mode                  = tta_config['debug_mode']
 
-    learning_rate               = tta_config[tta_mode]['learning_rate']
-    max_grad_norm               = tta_config[tta_mode]['max_grad_norm']
-    alpha                       = tta_config[tta_mode]['alpha']
-    beta                        = tta_config[tta_mode]['beta']
-    smooth                      = tta_config[tta_mode]['smooth']
-    epsilon                     = tta_config[tta_mode]['epsilon']
-    update_norm_td_statistics   = tta_config[tta_mode]['update_norm_td_statistics']
-    bg_supp_x_norm_eval         = tta_config[tta_mode]['bg_supp_x_norm_eval']
-    bg_supp_x_norm_tta_dae      = tta_config[tta_mode]['bg_supp_x_norm_tta_dae']
-    normalization_strategy      = tta_config[tta_mode]['normalization_strategy']
-    manually_norm_img_before_seg_tta = tta_config[tta_mode]['manually_norm_img_before_seg_tta']
-    manually_norm_img_before_seg_eval = tta_config[tta_mode]['manually_norm_img_before_seg_eval']
-    
+    learning_rate               = tta_config[TTA_MODE]['learning_rate']
+    max_grad_norm               = tta_config[TTA_MODE]['max_grad_norm']
+    alpha                       = tta_config[TTA_MODE]['alpha']
+    beta                        = tta_config[TTA_MODE]['beta']
+    smooth                      = tta_config[TTA_MODE]['smooth']
+    epsilon                     = tta_config[TTA_MODE]['epsilon']
+    fit_at_test_time            = tta_config[TTA_MODE]['fit_at_test_time']
+    bg_supp_x_norm_tta_dae      = tta_config[TTA_MODE]['bg_supp_x_norm_tta_dae']
+
+    use_only_dae_pl             = tta_config[TTA_MODE]['use_only_dae_pl']
+    use_only_atlas           = tta_config[TTA_MODE]['use_only_atlas']
+
     dice_loss = DiceLoss(smooth=smooth, epsilon=epsilon, debug_mode=debug_mode)
     
     dae_tta = TTADAE(
-        norm=norm,
         seg=seg,
         dae=dae,
-        atlas=atlas,
-        norm_sd_statistics=norm_sd_statistics,
         n_classes=n_classes,
+        atlas=atlas,
         rescale_factor=rescale_factor,
+        fit_at_test_time=fit_at_test_time,
+        aug_params=aug_params,
         loss_func=dice_loss,
         learning_rate=learning_rate,
         max_grad_norm=max_grad_norm,
         alpha=alpha,
         beta=beta,
-        wandb_log=wandb_log,
+        use_only_dae_pl=use_only_dae_pl,
+        use_only_atlas=use_only_atlas,
         classes_of_interest=classes_of_interest,
-        debug_mode=debug_mode,
+        seed=seed,
+        wandb_log=wandb_log,
         device=device,
-        update_norm_td_statistics=update_norm_td_statistics,
-        bg_supp_x_norm_eval=bg_supp_x_norm_eval,
-        bg_suppression_opts_eval=bg_suppression_opts,
         bg_supp_x_norm_tta_dae=bg_supp_x_norm_tta_dae,
-        bg_suppression_opts_tta_dae=bg_suppression_opts,
-        normalization_strategy=normalization_strategy,
-        manually_norm_img_before_seg_tta=manually_norm_img_before_seg_tta,
-        manually_norm_img_before_seg_eval=manually_norm_img_before_seg_eval,
+        debug_mode=debug_mode,
     )
     
     # Do TTA with a DAE
     # :=========================================================================:
-    num_steps                   = tta_config[tta_mode]['num_steps']
-    batch_size                  = tta_config[tta_mode]['batch_size']
+    num_steps                   = tta_config[TTA_MODE]['num_steps']
+    batch_size                  = tta_config[TTA_MODE]['batch_size']
     num_workers                 = tta_config['num_workers']
-    save_checkpoints            = tta_config[tta_mode]['save_checkpoints']
-    update_dae_output_every     = tta_config[tta_mode]['update_dae_output_every']
-    const_aug_per_volume        = tta_config[tta_mode]['const_aug_per_volume']
-    accumulate_over_volume      = tta_config[tta_mode]['accumulate_over_volume']
-    calculate_dice_every        = tta_config[tta_mode]['calculate_dice_every']
+    save_checkpoints            = tta_config[TTA_MODE]['save_checkpoints']
+    update_dae_output_every     = tta_config[TTA_MODE]['update_dae_output_every']
+    const_aug_per_volume        = tta_config[TTA_MODE]['const_aug_per_volume']
+    accumulate_over_volume      = tta_config[TTA_MODE]['accumulate_over_volume']
+    calculate_dice_every        = tta_config[TTA_MODE]['calculate_dice_every']
     
+    # Dictionaries to store dice scores
+    # : ========================================================================:
+    dice_scores_fg = {
+        "dice_score_fg_classes": [],
+        "dice_score_fg_classes_sklearn": [],
+    }
+
+    dice_scores_classes_of_interest = {
+        cls: copy.deepcopy(dice_scores_fg) for cls in classes_of_interest
+    } 
+
+    # Arguments related to visualization of the results
+    # :=========================================================================:
     slice_vols_for_viz = (((10, 58), (0, -1), (0, -1))) if dataset_name.startswith('vu') \
         else None
 
-    start_idx = 0
-    stop_idx = len(test_dataset.get_z_idxs_for_volumes())  # == number of volumes
-    if tta_config['start'] is not None:
-        start_idx = tta_config['start']
-    if tta_config['stop'] is not None:
-        stop_idx = tta_config['stop']
+    # Start the TTA loop per volume
+    # :=========================================================================:
+    start_idx = 0 if tta_config["start"] is None else tta_config["start"]
+    stop_idx = (
+        test_dataset.get_num_volumes()
+        if tta_config["stop"] is None
+        else tta_config["stop"]
+    )
+
+    save_predicted_vol_as_nifti = tta_config["save_predicted_vol_as_nifti"]
     
     print('---------------------TTA---------------------')
     print('start vol_idx:', start_idx)
     print('end vol_idx:', stop_idx)
         
-    for i in range(start_idx, stop_idx):
+    for vol_idx in range(start_idx, stop_idx):
 
         if debug_mode:
-            print('DEBUG: Check this is always the same for different volumes ' +
-            'layers.6.bias: ', dae_tta._state.norm_state_dict['layers.6.bias'])
+            print('DEBUG: Check this is always the same for different volumes ')
+            print(dae_tta.tta_fitted_params[-1])
 
         seed_everything(seed)
-        print(f'processing volume {i}')
+        print(f'processing volume {vol_idx}')
 
+        # Get the volume on which to run the adapation
+        x, *_ = test_dataset[vol_idx]
+        x = ensure_nd(5, x) # type: ignore
+        assert isinstance(x, torch.Tensor)
+
+        # Get the preprocessed vol for that has the same position as
+        # the original vol (preprocessed vol may have a translation in xy
+        x_preprocessed, *_ = test_dataset.get_preprocessed_original_volume(vol_idx)
+        preprocessed_pix_size = test_dataset.get_processed_pixel_size_w_orientation()
+
+        x_original, y_original_gt = test_dataset.get_original_volume(vol_idx)
+        gt_pix_size = test_dataset.get_original_pixel_size_w_orientation(vol_idx)
+
+        base_file_name = f"{test_dataset.dataset_name}_{split}_vol_{vol_idx:03d}"
+
+        # Run Adaptation
+        # :=========================================================================:
         dae_tta.tta(
-            dataset = test_dataset,
-            vol_idx = i,
+            x=x,
+            registered_x_preprocessed=x_preprocessed,
+            x_original=x_original,
+            y_gt=y_original_gt.float(),
+            preprocessed_pix_size=preprocessed_pix_size,
+            gt_pix_size=gt_pix_size,
             num_steps = num_steps,
             batch_size = batch_size,
             num_workers=num_workers,
@@ -356,62 +458,93 @@ if __name__ == '__main__':
             accumulate_over_volume = accumulate_over_volume,
             const_aug_per_volume = const_aug_per_volume,
             save_checkpoints = save_checkpoints,
-            logdir = logdir,
+            output_dir = logdir,
+            file_name=base_file_name,
             slice_vols_for_viz=slice_vols_for_viz,
+            store_visualization=True,
+            save_predicted_vol_as_nifti=False,
         )
         
-        # Get evaluation for last iteration with prediction in as Nifti volumes
-        print('\nEvaluating last iteration')
-        last_iter_dir = os.path.join(logdir, 'last_iteration')
+        # Persist results of adaptation run
+        os.makedirs(logdir, exist_ok=True)
+
+        # Store csv with dice scores for all classes
+        dae_tta.write_current_dice_scores(
+            vol_idx, logdir, dataset_name, iteration_type=""
+        )
+
+        for dice_score_name in dice_scores_fg:
+            dice_scores_fg[dice_score_name].append(
+                dae_tta.get_current_average_test_score(dice_score_name)
+            )
+
+        for cls in classes_of_interest:
+            for dice_score_name in dice_scores_fg:
+                dice_scores_classes_of_interest[cls][dice_score_name].append(
+                    dae_tta.get_current_test_score(
+                        dice_score_name, cls - 1 if "fg" in dice_score_name else cls  # type: ignore
+                    )
+                )
+
+        # Store results of the last iteration
+        # :=========================================================================:
+        print("\nEvaluating last iteration")
+        last_iter_dir = os.path.join(logdir, "last_iteration")
         os.makedirs(last_iter_dir, exist_ok=True)
 
         dae_tta.evaluate(
-            dataset=test_dataset,
-            vol_idx=i,
-            iteration=num_steps,
-            output_dir=last_iter_dir,
-            store_visualization=True,
-            save_predicted_vol_as_nifti=True,
+            x_preprocessed=x_preprocessed,
+            x_original=x_original,
+            y_gt=y_original_gt.float(),
+            preprocessed_pix_size=preprocessed_pix_size,
+            gt_pix_size=gt_pix_size,
             batch_size=batch_size,
             num_workers=num_workers,
+            classes_of_interest=classes_of_interest,
+            output_dir=logdir,
+            file_name=base_file_name,
+            store_visualization=True,
+            save_predicted_vol_as_nifti=save_predicted_vol_as_nifti,
             slice_vols_for_viz=slice_vols_for_viz,
         )
-        
-        # Store csv with dice scores for all classes 
-        dae_tta.write_current_dice_scores(i, last_iter_dir, dataset_name, iteration_type='last_iteration')
 
+        # Store csv with dice scores for all classes
+        dae_tta.write_current_dice_scores(
+            num_steps, last_iter_dir, dataset_name, iteration_type="last_iteration"
+        )
+        
+        # Store results of best scoring iteration (lowest dice btw. prediction and pseudo-label)
+        # :=========================================================================:
+        
         # Get evaluation for best scoring iteration with prediction in as Nifti volumes
         print('\nEvaluating best scoring iteration')
         best_score_iter_dir = os.path.join(logdir, 'best_scoring_iteration')
         os.makedirs(best_score_iter_dir, exist_ok=True)
 
-        dae_tta.load_best_state_norm()
+        dae_tta.load_best_state()
 
         dae_tta.evaluate(
-            dataset=test_dataset,
-            vol_idx=i,
-            iteration=dae_tta.get_current_iteration(),
-            output_dir=best_score_iter_dir,
-            store_visualization=True,
-            save_predicted_vol_as_nifti=True,
+            x_preprocessed=x_preprocessed,
+            x_original=x_original,
+            y_gt=y_original_gt.float(),
+            preprocessed_pix_size=preprocessed_pix_size,
+            gt_pix_size=gt_pix_size,
             batch_size=batch_size,
             num_workers=num_workers,
+            classes_of_interest=classes_of_interest,
+            output_dir=logdir,
+            file_name=base_file_name,
+            store_visualization=True,
+            save_predicted_vol_as_nifti=save_predicted_vol_as_nifti,
             slice_vols_for_viz=slice_vols_for_viz,
         )
 
-        # Store csv with dice scores for all classes at the best scoring iteration
-        dae_tta.write_current_dice_scores(i, best_score_iter_dir, dataset_name, iteration_type='best_scoring_iteration')
+        # Store csv with dice scores for all classes
+        dae_tta.write_current_dice_scores(
+            num_steps, last_iter_dir, dataset_name, iteration_type="last_iteration"
+        )
 
-        # Write the score of to a file
-        write_to_csv(
-            os.path.join(best_score_iter_dir, f'dice_scores_all_classes_wrt_pl_{dataset_name}.csv'),
-            np.hstack([[[f'volume_{i:02d}']], 
-                       [[dae_tta.get_current_iteration()]], 
-                       [[dae_tta.get_model_selection_score()]], 
-                       ]),
-            mode='a',
-        )   
-
+        # Reset the state to fit to new volume
         dae_tta.reset_state()
         print('--------------------------------------------')
             

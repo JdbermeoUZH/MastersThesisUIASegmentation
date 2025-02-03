@@ -648,30 +648,6 @@ class BaseTTASeg(TTAInterface):
             else classes_of_interest
         )
 
-        fitted_modules_state_dict = None
-
-        if fit_at_test_time == "normalizer":
-            assert (
-                self._seg.has_normalizer_module()
-            ), "Model does not have a normalizer module to fit at test time."
-
-            # get state dict of the normalizer module
-            fitted_modules_state_dict = self._seg.get_normalizer_state_dict()
-
-        elif fit_at_test_time == "bn_layers":
-            assert (
-                self._seg.has_bn_layers()
-            ), "Model does not have batch normalization layers to fit at test time."
-            fitted_modules_state_dict = self._seg.get_bn_layers_state_dict()
-
-        elif fit_at_test_time == "all":
-            fitted_modules_state_dict = {
-                k: v.state_dict() 
-                for k, v in self._seg.trainable_modules.items()
-            }
-
-        self._fit_at_test_time = fit_at_test_time
-
         # Evaluation metrics
         self._eval_metrics = eval_metrics
         self._eval_metrics_to_log = eval_metrics_to_log
@@ -686,8 +662,10 @@ class BaseTTASeg(TTAInterface):
         self._seed = default(seed, get_seed())
 
         # Start the State of the model
+        self._fit_at_test_time = fit_at_test_time
+
         self._state = BaseTTAState(
-            fitted_modules_state_dict=fitted_modules_state_dict,
+            fitted_modules_state_dict=self.tta_fitted_modules_state_dict,
         )
 
         # Logging settings
@@ -1212,6 +1190,7 @@ class BaseTTASeg(TTAInterface):
         x: torch.Tensor,
         batch_size: int,
         num_workers: int,
+        **dl_kwargs
     ) -> DataLoader[AgumentedTensorDataset]:
         """
         Convert a volume (NCDHW) to a DataLoader with the DCHW format.
@@ -1244,6 +1223,7 @@ class BaseTTASeg(TTAInterface):
                 ),
                 batch_size=batch_size,
                 num_workers=num_workers,
+                **dl_kwargs
             )
 
         return x_
@@ -1277,7 +1257,45 @@ class BaseTTASeg(TTAInterface):
         raise NotImplementedError("The method 'evaluate_dataset' is not implemented.")
 
     @property
-    def trainable_params_at_test_time(self) -> list[torch.nn.Parameter]:
-        raise NotImplementedError(
-            "The method 'trainable_params_at_test_time' is not implemented."
-        )
+    def tta_fitted_params(self) -> list[torch.nn.Parameter]:
+        if self._fit_at_test_time == "normalizer":
+            return list(self._seg.get_normalizer_module().parameters())
+
+        elif self._fit_at_test_time == "bn_layers":
+            return [
+                param for ly in self._seg.get_bn_layers().values() for param in list(ly.parameters())]
+
+        elif self._fit_at_test_time == "all":
+            # Set everything in the model to train mode
+            return self._seg.trainable_params
+        else:
+            raise ValueError("fit_at_test_time must one of ['normalizer', 'bn_layers', 'all'].")
+
+
+    @property
+    def tta_fitted_modules_state_dict(self) -> Optional[dict[str, OrderedDict[str, torch.Tensor]]]:
+        fitted_modules_state_dict = None
+        
+        if self._fit_at_test_time == "normalizer":
+            assert (
+                self._seg.has_normalizer_module()
+            ), "Model does not have a normalizer module to fit at test time."
+
+            # get state dict of the normalizer module
+            fitted_modules_state_dict = self._seg.get_normalizer_state_dict()
+
+        elif self._fit_at_test_time == "bn_layers":
+            assert (
+                self._seg.has_bn_layers()
+            ), "Model does not have batch normalization layers to fit at test time."
+            fitted_modules_state_dict = self._seg.get_bn_layers_state_dict()
+
+        elif self._fit_at_test_time == "all":
+            fitted_modules_state_dict = {
+                k: v.state_dict() 
+                for k, v in self._seg.trainable_modules.items()
+            }
+
+        return fitted_modules_state_dict
+    
+

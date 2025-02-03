@@ -395,7 +395,7 @@ class TTAEntropyMin(BaseTTASeg):
         self._learning_rate = learning_rate
         self._weight_decay = weight_decay
         self._optimizer = torch.optim.Adam(
-            self.trainable_params_at_test_time,
+            self.tta_fitted_params,
             lr=learning_rate,
             weight_decay=weight_decay,
         )
@@ -455,11 +455,13 @@ class TTAEntropyMin(BaseTTASeg):
         # Compute the class prior
         self._class_prior = class_counts / class_counts.sum()
 
+
     def _evaluation_mode(self) -> None:
         """
         Set the model to evaluation mode.
         """
         self._seg.eval_mode()
+
 
     def _tta_fit_mode(self) -> None:
         """
@@ -467,15 +469,19 @@ class TTAEntropyMin(BaseTTASeg):
         """
 
         if self._fit_at_test_time == "normalizer":
-            # Set everything in the model to eval mode
-            self._seg.eval_mode()
+            # Set everything but the normalizer to eval mode
+            for module in self._seg.get_all_modules_except_normalizer().values():
+                module.eval()
+                module.requires_grad_(False)
 
             # Set the normalizer to train mode
             self._seg.get_normalizer_module().train()
 
         elif self._fit_at_test_time == "bn_layers":
-            # Set everything in the model to eval mode
-            self._seg.eval_mode()
+            # Set everything but the bn layers to eval mode
+            for module in self._seg.get_all_modules_except_bn_layers().values():
+                module.eval()
+                module.requires_grad_(False)
 
             # Set the batch normalization layers to train mode
             for _, m in self._seg.get_bn_layers().items():
@@ -582,7 +588,7 @@ class TTAEntropyMin(BaseTTASeg):
             # Backpropagation on entropy min loss
             self._tta_fit_mode()
 
-            for step, x_batch in enumerate(x):
+            for step, (x_batch, *_) in enumerate(x):
                 x_batch = x_batch.to(self._device)
                 
                 # Forward pass
@@ -631,7 +637,7 @@ class TTAEntropyMin(BaseTTASeg):
         self._state.is_adapted = True
 
         if save_checkpoints:
-            assert output_dir is not None, "logdir must be provided to save the checkpoints."
+            assert output_dir is not None, "output_dir must be provided to save the checkpoints."
             assert file_name is not None, "file_name must be provided to save the checkpoints."
             self.save_state(
                 path=os.path.join(output_dir, f"tta_entropy_min_{file_name}_last.pth")
@@ -646,7 +652,7 @@ class TTAEntropyMin(BaseTTASeg):
             )          
 
     @property
-    def trainable_params_at_test_time(self) -> list[torch.nn.Parameter]:
+    def tta_fitted_params(self) -> list[torch.nn.Parameter]:
         """
         Return the trainable parameters at test time.
         """
@@ -668,7 +674,7 @@ class TTAEntropyMin(BaseTTASeg):
 
         # Reset optimizer state
         self._optimizer = torch.optim.Adam(
-            self.trainable_params_at_test_time,
+            self.tta_fitted_params,
             lr=self._learning_rate,
             weight_decay=self._weight_decay
         )

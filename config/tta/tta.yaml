@@ -40,34 +40,29 @@ dae:
   wandb_project: tta-dae # mt-tta-subcortical_structures-hcp_t2
   logdir: $RESULTS_DIR/subcortical_structures/tta/debugging/dae_only/9_06/reproduce_previous_results
   dae_dir: $MODEL_DIR/subcortical_structures/dae/hcp_t1
-  
+
+  alpha: 1.0
+  beta: 0.25
+  use_only_dae_pl: false
+  use_only_atlas: false
+  update_dae_output_every: 50
+
+  fit_at_test_time: "normalizer" # Options: bn_layers, all, normalizer
   accumulate_over_volume: True
   batch_size: 32
   num_steps: 1000 #1000  # 500 for subcortical_structures, 2700 for wmh
-  update_dae_output_every: 50
   calculate_dice_every: 25  # 25 for subcortical_structures, 135 for wmh (nuhs, umc, vu)
-  alpha: 1.0
-  beta: 0.25
   learning_rate: 0.001
-  max_grad_norm: null
+  max_grad_norm: 0.5
   save_checkpoints: True
   const_aug_per_volume: False
 
   # loss function parameters
-  smooth: 1e-5
+  smooth: 0
   epsilon: 1e-10
   
-  # Normalize intensities before segmentation
-  update_norm_td_statistics: True
-  manually_norm_img_before_seg_eval: True
-  manually_norm_img_before_seg_tta: False
-  normalization_strategy: standardize       # standardize, min_max, null
-  min_max_quantile: [0.025, 0.975]
-  classes_of_interest: null                 # 16 for wmh + synthseg, null for subcortical_structures and wmh  
-
   # Supress background x_norm 
-  bg_supp_x_norm_eval: True
-  bg_supp_x_norm_tta_dae: True
+  bg_supp_x_norm_tta_dae: False
   bg_suppression_opts:
     type: fixed_value  # possible values: fixed_value, random_value, (none if not used)
     bg_value: -0.5

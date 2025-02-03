@@ -113,26 +113,30 @@ class BaseSeg(torch.nn.Module, ABC):
         """
         pass
 
-    @abstractmethod
     def has_normalizer_module(self) -> bool:
         """
         Returns whether the model has a normalizer module.
         """
-        pass
+        raise NotImplementedError("BaseSeg has no implementation for has_normalizer_module")
 
-    @abstractmethod
     def get_normalizer_module(self) -> torch.nn.Module:
         """
         Returns the normalizer module of the model.
         """
-        pass
+        raise NotImplementedError("BaseSeg has no implementation for get_normalizer_module")
 
-    @abstractmethod
     def get_normalizer_state_dict(self) -> dict[str, Any]:
         """
         Returns the state dictionary of the normalizer module.
         """
-        pass
+        raise NotImplementedError("BaseSeg has no implementation for get_normalizer_module")
+    
+    def get_all_modules_except_normalizer(self) -> dict[str, torch.nn.Module]:
+        """
+        Returns all modules except the normalizer module.
+        """
+        raise NotImplementedError("BaseSeg has no implementation for get_all_modules_except_normalizer")
+    
 
     @property
     def trainable_params(self) -> List[torch.nn.Parameter]:
@@ -178,6 +182,10 @@ class BaseSeg(torch.nn.Module, ABC):
     def has_bn_layers(self) -> bool:
         return len(self.get_bn_layers()) > 0
     
+    def get_all_modules_except_bn_layers(self) -> dict[str, torch.nn.Module]:
+        bn_layers = self.get_bn_layers()
+        return {name: m for name, m in self.trainable_modules.items() if name not in bn_layers}
+
     @torch.inference_mode()
     def predict_mask(self, x: torch.Tensor, **preprocess_kwargs) -> torch.Tensor:
         """

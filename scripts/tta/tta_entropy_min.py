@@ -481,6 +481,7 @@ if __name__ == "__main__":
 
         seed_everything(seed)
         print(f"processing volume {vol_idx}")
+        
         # Get the volume on which to run the adapation
         x, *_ = test_dataset[vol_idx]
         x = ensure_nd(5, x) # type: ignore
@@ -569,6 +570,8 @@ if __name__ == "__main__":
         entropy_min_tta.write_current_dice_scores(
             num_steps, last_iter_dir, dataset_name, iteration_type="last_iteration"
         )
+
+        entropy_min_tta.reset_state()
 
         print("--------------------------------------------")
 

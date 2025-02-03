@@ -117,5 +117,8 @@ class NormSeg(BaseSeg):
     def get_normalizer_module(self) -> torch.nn.Module:
         return self._norm
     
+    def get_all_modules_except_normalizer(self) -> dict[str, torch.nn.Module]:
+        return {'_seg': self._seg}
+    
     def get_normalizer_state_dict(self) -> dict[str, Any]:
         return {'_norm': self._norm.state_dict()}
