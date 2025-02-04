@@ -60,6 +60,8 @@ def preprocess_cmd_args() -> argparse.Namespace:
         type=str,
         help="Name of wandb run. Default: None",
     ) 
+
+    parser.add_argument("--continuous_tta", type=parse_bool, help="Whether to run continuous TTA. Default: False")
     parser.add_argument('--dae_dir', type=str, help='Path to directory where DAE checkpoints are saved')
     parser.add_argument('--seg_dir', type=str, help='Path to directory where segmentation checkpoints are saved')
     parser.add_argument('--wandb_project', type=str, help='Name of wandb project to log to. Default: "tta"')
@@ -78,7 +80,7 @@ def preprocess_cmd_args() -> argparse.Namespace:
     parser.add_argument('--accumulate_over_volume', type=parse_bool, help='Whether to accumulate over volume. Default: True')
     parser.add_argument('--batch_size', type=int, help='Batch size for tta. Default: 4')
     parser.add_argument('--num_workers', type=int, help='Number of workers for dataloader. Default: 0')
-    parser.add_argument('--max_grad_norm', type=float, help='Maximum gradient norm. Default: 1.0')
+    parser.add_argument('--max_grad_norm', type=float,  nargs="?", const=None, help='Maximum gradient norm. Default: 1.0')
 
     # Loss function parameters
     parser.add_argument('--smooth', type=float, help='Smooth parameter for dice loss. Added to both numerator and denominator. Default: 0.')
@@ -162,6 +164,8 @@ if __name__ == '__main__':
     # Loading general parameters
     # :=========================================================================:
     dataset_config, tta_config = get_configuration_arguments()
+
+    continuous_tta          = tta_config['continuous_tta']
     
     seg_dir                 = tta_config['seg_dir']
     dae_dir                 = tta_config[TTA_MODE]['dae_dir']
@@ -416,7 +420,9 @@ if __name__ == '__main__':
     print('---------------------TTA---------------------')
     print('start vol_idx:', start_idx)
     print('end vol_idx:', stop_idx)
-        
+    print("Running TTA in mode: " + "continuous" if continuous_tta else "episodical")
+    print('--------------------------------------------')
+
     for vol_idx in range(start_idx, stop_idx):
 
         if debug_mode:
@@ -545,7 +551,9 @@ if __name__ == '__main__':
         )
 
         # Reset the state to fit to new volume
-        dae_tta.reset_state()
+        breakpoint()
+        if not continuous_tta:
+            dae_tta.reset_state()
         print('--------------------------------------------')
             
     if wandb_log:

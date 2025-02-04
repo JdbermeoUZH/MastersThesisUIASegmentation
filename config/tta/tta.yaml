@@ -1,4 +1,5 @@
 tta_mode: null                # Typically defined when running a tta type: no_tta, gnn, gt, dae, dae_and_diffusion
+continuous_tta: false         # If false, TTA is run for each volume (episodically). 
 
 start_new_exp: False
 wandb_log: True
@@ -53,7 +54,7 @@ dae:
   num_steps: 1000 #1000  # 500 for subcortical_structures, 2700 for wmh
   calculate_dice_every: 25  # 25 for subcortical_structures, 135 for wmh (nuhs, umc, vu)
   learning_rate: 0.001
-  max_grad_norm: 0.5
+  max_grad_norm: null
   save_checkpoints: True
   const_aug_per_volume: False
 

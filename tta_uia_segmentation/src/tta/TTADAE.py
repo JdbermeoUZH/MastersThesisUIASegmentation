@@ -219,6 +219,7 @@ class TTADAE(BaseTTASeg):
         use_only_atlas: bool = False,
         use_atlas_only_for_intit: bool = False,
         eval_metrics: OrderedDict[str, callable] = EVAL_METRICS,
+        eval_metrics_to_log: tuple[str, ...] = ('dice_score_fg_classes_sklearn',),
         classes_of_interest: Optional[tuple[int, ...]] = tuple(),
         viz_interm_outs: tuple[str, ...] = tuple(),
         seed: Optional[int] = None,
@@ -242,6 +243,7 @@ class TTADAE(BaseTTASeg):
             aug_params=aug_params,
             classes_of_interest=classes_of_interest,
             eval_metrics=eval_metrics,
+            eval_metrics_to_log=eval_metrics_to_log,
             viz_interm_outs=viz_interm_outs,
             wandb_log=wandb_log,
             device=device,
@@ -291,6 +293,7 @@ class TTADAE(BaseTTASeg):
             use_only_dae_pl=(self._alpha == 0 and self._beta == 0) or use_only_dae_pl,
             use_only_atlas=use_only_atlas,
             use_atlas_only_for_init=use_atlas_only_for_intit,
+            **self._state.__dict__ # Add the attributes of the parent class BaseTTAState
         )
 
         # Set the object in tta_fit_mode 
@@ -322,6 +325,7 @@ class TTADAE(BaseTTASeg):
 
             # Set the normalizer to train mode
             self._seg.get_normalizer_module().train()
+            self._seg.get_normalizer_module().requires_grad_(True)
 
         elif self._fit_at_test_time == "bn_layers":
             # Set everything but the bn layers to eval mode
@@ -332,10 +336,12 @@ class TTADAE(BaseTTASeg):
             # Set the batch normalization layers to train mode
             for _, m in self._seg.get_bn_layers().items():
                 m.train()
+                m.requires_grad_(True)
 
         elif self._fit_at_test_time == "all":
             # Set everything in the model to train mode
             self._seg.train_mode()
+            self._seg.requires_grad_(True)
 
     def tta(
         self,
@@ -455,10 +461,11 @@ class TTADAE(BaseTTASeg):
                         input_format='DCHW',
                         output_format='DCHW')
                     
+                # breakpoint()
                 loss = self._loss_func(mask, y_pl)
 
                 if accumulate_over_volume:
-                    loss /= len(x_b)
+                    loss /= len(x)
                 
                 loss.backward()
 
@@ -477,12 +484,12 @@ class TTADAE(BaseTTASeg):
                         torch.nn.utils.clip_grad_norm_(
                             self.tta_fitted_params, self._max_grad_norm)
                 self._optimizer.step()
-
+            
             tta_loss = (tta_loss / n_samples).item()
 
             self._state.add_test_loss(
                 iteration=step, loss_name='tta_loss', loss_value=tta_loss)
-            
+
             if self._wandb_log:
                 wandb.log({f'tta_loss/{file_name}': tta_loss, 'tta_step': step})
 
@@ -542,15 +549,6 @@ class TTADAE(BaseTTASeg):
 
         return self._state.y_pl
         
-    
-    def _define_custom_wandb_metrics(self):
-        wandb.define_metric("tta_step")
-        wandb.define_metric('dice_score_fg_sklearn_mean/*', step_metric='tta_step')
-        wandb.define_metric('tta_loss/*', step_metric='tta_step')
-        
-        if self._classes_of_interest is not None:
-            wandb.define_metric('dice_score_classes_of_interest/*', step_metric='tta_step')
-
     def reset_state(self) -> None:
         self._tta_fit_mode()
 

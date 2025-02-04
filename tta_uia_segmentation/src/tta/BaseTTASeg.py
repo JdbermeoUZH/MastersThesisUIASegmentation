@@ -663,7 +663,6 @@ class BaseTTASeg(TTAInterface):
 
         # Start the State of the model
         self._fit_at_test_time = fit_at_test_time
-
         self._state = BaseTTAState(
             fitted_modules_state_dict=self.tta_fitted_modules_state_dict,
         )
@@ -1118,9 +1117,8 @@ class BaseTTASeg(TTAInterface):
         fitted_modules_state_dict : dict[str, Any]
             State dict of the fitted modules.
         """
-        modules_to_load_state: Optional[dict[str, torch.nn.Module]] = None
         if self._fit_at_test_time == "normalizer":
-            self._seg.get_normalizer_module().load_state_dict(fitted_modules_state_dict)
+            self._seg.load_normalizer_state_dict(fitted_modules_state_dict)
 
         elif self._fit_at_test_time == "bn_layers":
             load_partial_weights(
@@ -1138,6 +1136,7 @@ class BaseTTASeg(TTAInterface):
         """
         Reset to the inital state of the model.
         """
+
         # Reset state
         self._state.reset()
 
@@ -1151,6 +1150,8 @@ class BaseTTASeg(TTAInterface):
         """
         Load the best state of the model.
         """
+        assert self._state.best_state is not None, "Best state is not defined."
+
         self._state.reset_to_state(self._state.best_state)
 
         if self._state.fitted_modules_state_dict is not None:

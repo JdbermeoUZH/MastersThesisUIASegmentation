@@ -122,3 +122,6 @@ class NormSeg(BaseSeg):
     
     def get_normalizer_state_dict(self) -> dict[str, Any]:
         return {'_norm': self._norm.state_dict()}
+
+    def load_normalizer_state_dict(self, state_dict: dict[str, Any]) -> None:
+        self._norm.load_state_dict(state_dict['_norm'])
